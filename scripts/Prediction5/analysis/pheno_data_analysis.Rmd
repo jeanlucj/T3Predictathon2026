@@ -1,0 +1,674 @@
+---
+title: "Apply genomic prediction"
+author: "Prediction5 Team"
+output: html_document
+df_print: kable
+date: '`r format(Sys.time(), "%d %B, %Y")`'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      engine.opts = list(bash = "-l"))
+```
+
+# Libraries
+
+```{r load libraries}
+suppressPackageStartupMessages(library(here)) # root directory
+suppressPackageStartupMessages(library(data.table)) # load data
+suppressPackageStartupMessages(library(apercu)) # ap
+suppressPackageStartupMessages(library(dplyr)) # formatting
+suppressPackageStartupMessages(library(ggplot2)) # plot
+suppressPackageStartupMessages(library(paletteer)) # plot palette
+suppressPackageStartupMessages(library(janitor)) # formating
+suppressPackageStartupMessages(library(purrr)) # list handling
+suppressPackageStartupMessages(library(bigstatsr)) # ggplot theme
+suppressPackageStartupMessages(library(ggbeeswarm)) # ggplot geom_quasirandom
+suppressPackageStartupMessages(library(gtsummary)) # print summary table
+suppressPackageStartupMessages(library(lme4)) # print summary table
+```
+
+
+# Set up root directory
+
+```{r current dir}
+here::i_am("analysis/pheno_data_analysis.Rmd")
+```
+
+
+This R chunk is used to assess how much time it takes to execute the R code in this document until the end:
+
+```{r time_0}
+t0 <- proc.time()
+```
+
+
+# Load data
+
+## From T3
+
+```{r}
+
+```
+
+
+<!-- ## Genomic data -->
+
+<!-- Load the cleaned and imputed genomic data, filtered for minor allele frequency at 5%. -->
+<!-- File generated in `combine_format_vcf`. -->
+
+<!-- ```{r load_geno} -->
+
+<!-- p2f.geno <- here("data","genotypic", "YT_Urb_25","clean","YT_Urb_25_genotypes_curated_numeric.rds") -->
+<!-- file.mtime(p2f.geno) -->
+<!-- geno <- readRDS(p2f.geno) -->
+<!-- dim(geno) -->
+<!-- ap(geno) -->
+<!-- geno.init <- geno -->
+<!-- geno <- janitor::remove_constant(geno) -->
+<!-- geno[,2:ncol(geno)] <- scale(geno[,2:ncol(geno)], center=T, scale=T) -->
+<!-- ap(geno) -->
+<!-- gid.geno <- rownames(geno) -->
+<!-- ``` -->
+
+
+
+## Phenotypic data
+
+
+The phenotypic data is the curated data for the SDSU breeding program. We extracted the BLUPs in the script `format_pheno_statgenSTA.Rmd`.
+
+```{r load_pheno_trials}
+p2f <- here("data","phenotypic","allAccessions_yield_raw.csv")
+
+pheno <- fread(p2f)
+dim(pheno)
+head(pheno)
+#(ngeno <- length(intersect(pheno$germplasmName,rownames(geno))))
+#pheno.geno <- pheno |> filter(germplasmName %in% rownames(geno))
+#setdiff(pheno$GID, rownames(geno))
+str(pheno)
+
+pheno$germplasmName = as.factor(pheno$germplasmName)
+pheno$year = as.factor(pheno$year)
+pheno$location = as.factor(pheno$location)
+
+## unique genotype and environments
+print(length(unique(pheno$germplasmName)))
+print(length(unique(pheno$studyDbId)))
+
+# any NAs in yield 
+colSums(is.na(pheno))
+
+## I extracted only three columns for data exploration
+# Keep only what we need, with concise names
+ph <- as.data.table(pheno)[, .(
+  gid  = germplasmName,
+  env  = studyDbId,
+  value
+)]
+ph[, value := as.numeric(value)]
+
+# experiment/env specific stats
+env_stats <- ph[, .(
+  n    = .N,
+  mean = mean(value, na.rm = TRUE),
+  sd   = sd(value,   na.rm = TRUE),
+  max  = max(value,  na.rm = TRUE),   
+  min = min(value,  na.rm = TRUE)  
+), by = env][order(env)]
+
+print(env_stats)
+
+
+p1 <- ggplot(env_stats, aes(mean)) +
+  geom_histogram(bins = 40, fill = "lightgray", color = "black") +
+  labs(title = "Distribution of environment means",
+       x = "Env mean (yield)", y = "Count") +
+  theme_bw(base_size = 13)
+
+p1
+
+
+
+p2 <- ggplot(env_stats, aes(mean, sd, color = n)) +
+  geom_point(alpha = 0.8, size = 2) +
+  scale_color_viridis_c() +
+  labs(title = "Environment spread vs level",
+       x = "Env mean", y = "Env SD", color = "n (plots)") +
+  theme_bw(base_size = 13)
+p2
+
+
+### adding CV and Se t =o the table
+setDT(env_stats)
+# Derived metrics
+env_stats[, `:=`(
+  cv   = 100 * sd / mean,                 # coefficient of variation (%)
+  se   = sd / sqrt(pmax(n, 1))           # standard error of env mean
+)]
+
+
+# flag the env based on cv, se, or less number of plots  (we can adjust the limits)
+env_stats[, flag := fifelse(n < 15, "low_n",
+                      fifelse(cv > 30, "high_cv",
+                      fifelse(sd == 0, "zero_sd", NA_character_)))]
+
+env_stats[, n_flags := (!is.na(flag)) + 0L]
+
+print(env_stats)
+fwrite(env_stats, here::here("output", "rawData_summaryByenv.csv"))
+# flag any env with less than 15 entries or high Cv
+suspected_errors <- env_stats[
+  n < 15 | cv > 30 | sd == 0
+][order(-n_flags, -cv)]
+
+fwrite(suspected_errors, here::here("output", "env_suspects_review.csv"))
+print(suspected_errors)
+
+
+## Connectivity
+#setDT(ph)
+#ph_small <- unique(ph[, .(env = factor(env), gid = factor(gid))])  
+
+#env_ix <- as.integer(ph_small$env)
+#gid_ix <- as.integer(ph_small$gid)
+#n_env  <- nlevels(ph_small$env)
+#n_gid  <- nlevels(ph_small$gid)
+#M <- sparseMatrix(i = env_ix, j = gid_ix, x = 1, dims = c(n_env, n_gid),
+#                  dimnames = list(levels(ph_small$env), levels(ph_small$gid)))
+
+#C_counts <- M %*% t(M)                    
+#C_counts <- as.matrix(C_counts)
+#C_counts
+
+
+
+## Based on data inspection, remove the suspect environments form the 'pheno' file
+
+## Note: I just removed the environments as a whole for time being. However, we can make corrects in the raw data or remove only outlier entries.
+
+bad_env = (suspected_errors$env)
+pheno_suspect_removed <- pheno[ !studyDbId %in% bad_env ]
+
+## for each program, what is the status of years and location
+prog_counts <- pheno_suspect_removed[, .(
+  n_obs       = .N,
+  n_genotypes = uniqueN(germplasmName),
+  n_years     = uniqueN(year[!is.na(year)]),
+  n_locations = uniqueN(location[!is.na(location)])
+), by = focal_trial][order(focal_trial)]
+prog_counts
+
+
+year_loc <- pheno_suspect_removed[, .N, by = .(focal_trial, year, location)][order(focal_trial, year, location)]
+year_loc
+
+
+
+
+##########################################################################################
+### get BLUEs for each program
+
+## Note: some program have only one location and some have multiple locations over years
+## Hence, different models from two groups
+
+
+# programs with exactly ONE location 
+one_loc_programs <- c(
+  "Cornell University",
+  "South Dakota State University- Winter Wheat",
+  "University of Illinois",
+  "University of Minnesota"
+)
+
+
+out_dir <- here("output", "BLUEs_by_program_oneLoc")
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+
+get_blues_oneLOC <- function(d) {
+  fit <- lmer(value ~ 0 + germplasmName + (1|year), data = d, REML = TRUE)
+  fe <- fixef(fit)                 
+  V  <- vcov(fit)                  
+  se <- sqrt(diag(V))
+
+  # to data.table
+  blues <- data.table(
+    germplasmName = sub("^germplasmName", "", names(fe)),
+    BLUE          = as.numeric(fe),
+    SE            = as.numeric(se)
+  )
+
+  n_tab <- d[, .N, by = germplasmName]
+  setnames(n_tab, "N", "n")
+
+  merge(blues, n_tab, by = "germplasmName", all.x = TRUE)
+}
+
+# loop over programs
+for (pg in one_loc_programs) {
+  cat("analyzing:", pg, "\n")
+  dpg <- pheno_suspect_removed[focal_trial == pg & !is.na(value)]
+  dpg <- droplevels(dpg)
+
+  res <- get_blues_oneLOC(dpg)
+
+ 
+fwrite(res, here("output","BLUEs_by_program_oneLoc",
+                 paste0(pg, "_BLUEs.csv")))
+}
+
+
+#### Programs with more than one locations
+multi_loc_programs <- c(
+  "Michigan State University",
+  "TAMU",
+  "USDA-ARS Kansas",
+  "University of Wisconsin",
+  "Washington State University"
+)
+
+out_dir <- here("output", "BLUEs_by_program_multiLoc")
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+get_blues_multiloc <- function(d) {
+  fit <- lmer(value ~ 0 + germplasmName + (1|year) + (1|location), data = d, REML = TRUE)   # genotype fixed, year & location random; NO intercept
+
+  fe <- fixef(fit)                 
+  V  <- vcov(fit)
+  se <- sqrt(diag(V))
+
+  blues <- data.table(
+    germplasmName = sub("^germplasmName", "", names(fe)),
+    BLUE          = as.numeric(fe),
+    SE            = as.numeric(se)
+  )
+
+  n_tab <- d[, .N, by = germplasmName][, .(germplasmName, n = N)]
+  merge(blues, n_tab, by = "germplasmName", all.x = TRUE)
+}
+
+# loop over programs
+for (pg in multi_loc_programs) {
+  cat("analyzing:", pg, "\n")
+  dpg <- pheno_suspect_removed[focal_trial == pg & !is.na(value)]
+  dpg <- droplevels(dpg)
+
+  res <- get_blues_multiloc(dpg)
+
+fwrite(res, here("output","BLUEs_by_program_multiLoc",
+                 paste0(pg, "_BLUEs.csv")))}
+
+
+
+```
+
+<!-- Add FHB traits, analyzed in `format_pheno_FHB.Rmd`. -->
+
+<!-- ```{r} -->
+<!-- p2f <- here("data","phenotypic",paste0("FHBMTtrials_2018-2024_adjusted_pheno_", -->
+<!--                                        "5traits.tsv")) -->
+<!-- file.mtime(p2f) -->
+<!-- phenoFHB <- read.table(file=p2f, header=T, sep="\t") -->
+<!-- dim(phenoFHB) -->
+<!-- pheno <- pheno %>%  -->
+<!--   left_join(phenoFHB, by="GID") %>% -->
+<!--   select(GID, everything()) %>% -->
+<!--   relocate(GID) -->
+<!-- ``` -->
+
+<!-- Export combined phenotypic data -->
+<!-- ```{r} -->
+<!-- p2f <- here("data","phenotypic", -->
+<!--             paste0(pop_code.trial,"-BLUPs_",c(ncol(pheno)-1),"traits.tsv")) -->
+<!-- write.table(pheno, file=p2f, sep="\t", quote=FALSE, row.names=FALSE) -->
+<!-- tools::md5sum(p2f) -->
+<!-- ``` -->
+
+
+<!-- # Load data -->
+
+<!-- ## Genomic data -->
+
+<!-- Load the cleaned and imputed genomic data, filtered for minor allele frequency at 5%. -->
+<!-- File generated in `combine_format_vcf`. -->
+
+<!-- ```{r load_geno} -->
+<!-- ninds.geno <- 1679 ; pop_code.geno <- "MSU2022-MSU2025-W3K" -->
+
+<!-- p2f.geno <- here("data","genotypic", "merged_3K", -->
+<!--                  paste0(pop_code.geno, "_genoMatrix_",ninds.geno,"inds.rds")) -->
+<!-- file.mtime(p2f.geno) -->
+<!-- geno <- readRDS(p2f.geno) -->
+<!-- dim(geno) -->
+<!-- geno.init <- geno -->
+<!-- geno <- janitor::remove_constant(geno) -->
+<!-- geno[,2:ncol(geno)] <- scale(geno[,2:ncol(geno)], center=T, scale=T) -->
+<!-- ap(geno) -->
+<!-- gid.geno <- rownames(geno) -->
+<!-- ``` -->
+
+
+
+<!-- ## Genotype information -->
+
+<!-- Genotype information was generated in `explore_format_pheno.Rmd`, and from the input of `combine_format_vcf.Rmd`. -->
+<!-- ```{r} -->
+<!-- geno.info <- fread(here("data","MSU2022-MSU2025-W3K_genotype_info.tsv"),data.table=F) -->
+<!-- head(geno.info) -->
+<!-- dim(geno.info) -->
+<!-- ``` -->
+
+
+<!-- # Genomic prediction -->
+
+<!-- Cross-validation parameters: -->
+<!-- ```{r CV_params} -->
+<!-- dim(pheno) ## 1126 x 12 -->
+<!-- stopifnot(!any(duplicated(pheno$GID))) -->
+<!-- ## params: -->
+<!-- ar <- "3k" ## genotypic array -->
+<!-- nreps <- 10 ## number of cross-validation repetitions -->
+<!-- nfolds <- 10 ## number of cross-validation folds -->
+<!-- nIter <- 10000 ## default 6000 -->
+<!-- burnIn <- 2000 ## default 1000 -->
+<!-- h <- 1 ## bandwidth parameter for RKHS -->
+<!-- rerun <- TRUE ## set to FALSE to avoid rerunning genomic prediction -->
+<!-- ntraits <- ncol(pheno)-1 -->
+<!-- (traits <- colnames(pheno)[-1]) ## verify that the trait names are correct -->
+<!-- ## list of possible GP methods -->
+<!-- methods <- c("rrBLUP","GBLUP","RKHS")#,"GBLUP",RKHS-KA","BayesA","BayesB","RandomForest","LASSO") -->
+<!-- nmeths <- length(methods) -->
+<!-- ``` -->
+
+<!-- Apply genomic prediction for all methods and traits. -->
+
+<!-- Description of the parameters: -->
+
+<!-- * **geno**: genotype matrix, with individuals as rows and markers as columns. It is better to scale the genotype matrix. -->
+
+<!-- * **pheno**: phenotype matrix, with individuals as rows and traits as columns, genotype name must be in a column named "GID". -->
+
+<!-- * **traits**: vector of the names of the traits to predict. -->
+
+<!-- * **GP.method**: method to use for genomic prediction. It can be one of the following: "rrBLUP", "RKHS", "RKHS-KA", "BayesA", "BayesB", "RandomForest", "LASSO". -->
+
+<!-- * **nreps**: number of repetitions of the cross-validation. -->
+
+<!-- * **nfolds**: number of folds of the cross-validation. -->
+
+<!-- * **p2d.temp**: path to the directory where the temporary files will be saved for computing Bayesian methods. -->
+
+<!-- * **h**: bandwidth for the RKHS method. It can be a single value or a vector of values to test. -->
+
+<!-- * **p2f.stats**: path to the file where the predictive ability results will be saved. -->
+
+<!-- * **nb.cores**: number of cores to use for parallelization. -->
+
+<!-- ```{r, apply_gp_all} -->
+<!-- gp.stats <- data.frame() -->
+<!-- #pop <- paste0(pop_code.geno,"_",pop_code.trial,"_statgenSTA_",par.gv) -->
+<!-- pop <- paste0(pop_code.trial,"_BLUPs") -->
+<!-- for(meth in methods){ -->
+
+<!--   p2f.stats <- here("output","genom_pred", -->
+<!--                     paste0(pop,"_GP_",meth,"_results_",ntraits, "traits_intraCV.tsv")) -->
+<!--   if(!file.exists(p2f.stats) |rerun){ -->
+<!--     write(paste(meth,"\n"),stderr()) -->
+<!--     out <- list() -->
+<!--     out[[meth]] <-  compute_GP_methods(geno=geno, pheno=pheno, -->
+<!--                                        traits=traits, GP.method=meth, -->
+<!--                                        nreps=nreps, nfolds=nfolds,  -->
+<!--                                        p2d.temp=here::here("output","genom_pred","temp"), -->
+<!--                                        h=h,p2f.stats=p2f.stats,  -->
+<!--                                        nb.cores=nb.cores) -->
+
+
+
+<!--     #gp.statsT <- purrr::map_dfr(outT, function(x) x$gp.stats) -->
+<!--     gp.stats <- rbind(gp.stats,out[[meth]]$gp.stats) -->
+
+<!--   } else{ -->
+<!--     gp.stats <- rbind(gp.stats, read.table(file=p2f.stats, sep="\t", header=TRUE)) -->
+
+<!--   } -->
+<!-- } -->
+
+<!-- ap(gp.stats) -->
+<!-- tapply(gp.stats$corP, gp.stats$trait, mean, na.rm=T) -->
+<!-- ``` -->
+
+<!-- Explore predicted vs. observed values -->
+
+<!-- ```{r} -->
+<!-- if(exists("out")){ -->
+<!--   obspred <- do.call(rbind,out[[1]]$obspred$YIELD) -->
+
+<!--   obspred <- obspred %>% group_by(GID) %>%  -->
+<!--     summarise(obs=mean(obs), pred=mean(pred)) -->
+<!--   #left_join(geno.info, by=GID) -->
+<!--   plotly::ggplotly(ggplot(obspred, aes(x=obs, y=pred,label=GID))+ -->
+<!--                      geom_point(alpha=0.6, size=1) +  -->
+<!--                      geom_smooth(method="lm", se=FALSE, color="black")+ -->
+<!--                      geom_rug(sides="bl")+ -->
+<!--                      paletteer::scale_color_paletteer_d("ggthemes::Jewel_Bright") + -->
+<!--                      ggpubr::stat_cor(method="pearson", size=3)+ -->
+<!--                      geom_abline(intercept=0, slope=1, color="red")+ -->
+<!--                      ggtitle("Predicted vs. observed values for MSU data", -->
+<!--                              subtitle=paste0(methods[1]," genomic selection method"))+ -->
+<!--                      theme_bigstatsr(size.rel=0.8)) -->
+<!-- } -->
+
+<!-- ``` -->
+
+
+
+<!-- # Combine all  -->
+
+<!-- ```{r} -->
+<!-- all.res <- gp.stats -->
+<!-- dim(all.res) -->
+<!-- head(all.res) -->
+<!-- all.res$GP.method <- factor(all.res$GP.method, levels=methods) -->
+<!-- purrr::map_dbl(all.res, n_distinct) -->
+<!-- tapply(all.res$corP, all.res$GP.method, mean) -->
+
+<!-- tapply(all.res$corP, all.res$trait, mean) -->
+
+
+<!-- summ.corP= all.res %>%  -->
+<!--   group_by(trait) %>% summarise(meanCorP=mean(corP)) -->
+
+<!-- print_table(summ.corP) -->
+<!-- ntraits <- length(traits) -->
+<!-- ##export the result table -->
+<!-- p2f <- here("output","genom_pred", -->
+<!--             paste0("GP_",nmeths,"meths_PredAb_",ntraits,"traits_intraCV.tsv")) -->
+<!-- write.table(all.res, file=p2f, sep="\t", quote=FALSE, row.names=FALSE) -->
+<!-- ``` -->
+
+
+<!-- # Plot -->
+
+<!-- ```{r} -->
+
+<!-- # ggplot(all.res, aes(x=trait, y=corP, color=GP.method))+ -->
+<!-- #   facet_wrap(~pop)+ -->
+<!-- #   geom_boxplot() + theme_bw() -->
+<!-- CPCOLS <- c("#008B00", "#EE82EE","red","lightseagreen", "#8B4500", "coral", "#4169E1") -->
+
+<!-- ggplot(all.res, -->
+<!--        aes(y=trait, x=corP, color=GP.method))+ -->
+<!--   #geom_boxplot(position=position_dodge(0.9)) + -->
+<!--   stat_summary(position=position_dodge(0.9),linewidth=1.2)+ -->
+<!--   geom_point(alpha=0.3,position=position_dodge(0.9), size=1) + -->
+<!--   #theme_bw() +  -->
+<!--   theme_bigstatsr(size.rel=0.8)+ -->
+<!--   xlab("Pearson correlation")+ -->
+<!--   ggtitle("Predictive ability for MSU data", -->
+<!--           subtitle=paste0(nmeths," methods 3K genotype array, 10-folds CV"))+ -->
+<!--   scale_color_manual(values=CPCOLS, name="GP methods")+ -->
+<!--   geom_hline(yintercept =seq(1.5,length(unique(all.res$trait))-0.5,1))+ -->
+<!--   scale_x_continuous(breaks=seq(0,1,0.1), limits=c(0,1))+ -->
+<!--   theme(axis.text.x=element_text(angle=0), -->
+<!--         text=element_text(size=13), -->
+<!--         panel.grid.major.y = element_blank(), -->
+<!--         axis.ticks.y=element_blank(), -->
+<!--         legend.position="bottom") -->
+<!-- ggsave(file=here("output","figures", -->
+<!--                  paste0("GP_PredAb_",nmeths,"meths_",ntraits,"traits_intraCV.png")), -->
+<!--        height=8,width=11, scale=0.8) -->
+<!-- ``` -->
+
+<!-- # Predict genotypic values -->
+
+<!-- Train the genomic selection model on the whole population using RKHS method and predict all the genotypic values. -->
+
+<!-- ## Model training -->
+
+<!-- ```{r pred_all_pop} -->
+<!-- sel.meth <- "RKHS" ; h <- 1 ## bandwidth parameter for RKHS -->
+
+<!-- p2d.temp=here::here("output","genom_pred","temp") -->
+<!-- geno <- as.matrix(geno) -->
+<!-- ## create the distance matrix (a bit similar to the GRM) for RKHS method -->
+<!-- D <- as.matrix(dist(geno,method="euclidean"))^2 -->
+<!-- D <- D/mean(D, na.rm=T) -->
+<!-- ### compute kernel -->
+<!-- K <- exp(-h*D) -->
+<!-- dim(K) -->
+<!-- ap(K) -->
+
+
+<!-- all.pred <- data.frame() -->
+<!-- for(tr in traits){ -->
+<!--   write(tr,stderr()) -->
+
+<!--   ## combine phenotypic data -->
+<!--   # pheno <- rbind(phenoN[!phenoN$GID %in% cmon.pheno,c("GID",tr)], -->
+<!--   #                phenoT[,c("GID",tr)]) -->
+<!--   ## estimate marker effects on the whole population -->
+<!--   yNA <- merge(data.frame(ind=rownames(geno)), -->
+<!--                pheno[,c("GID",tr)], by.x="ind", by.y="GID", all.x=TRUE) -->
+<!--   yNA <- yNA[[tr]] -->
+<!--   p2f.temp <- paste0(p2d.temp,"/RKHS_all_",tr) -->
+
+<!--   fit <- BGLR::BGLR(y=yNA,ETA=list(list(K=K,model='RKHS')), -->
+<!--                     nIter=nIter,burnIn=burnIn,saveAt=p2f.temp,verbose=FALSE) -->
+<!--   #as.data.frame(fit$yHat) -->
+<!--   tmp <- data.frame(GID=rownames(geno), trait=tr, yHat=fit$yHat) -->
+<!--   all.pred <- rbind(all.pred, tmp) -->
+<!-- } -->
+
+<!-- ## add genotype information -->
+<!-- all.pred <- merge(all.pred, geno.info, by="GID",all.x=T, all.y=F) -->
+
+<!-- ``` -->
+
+
+
+<!-- ## Explore the prediction -->
+
+<!-- Plot distribution -->
+<!-- ```{r plot_distrib} -->
+<!-- # all.pred$FIRST_YEAR[is.na(all.pred$FIRST_YEAR)] <- "Unknown" -->
+<!-- # ggplot(all.pred, aes(x=FIRST_YEAR, y=yHat, color=FIRST_YEAR))+ -->
+<!-- #   facet_wrap(~trait, scales="free_y")+ -->
+<!-- #   geom_quasirandom(alpha=0.3,size=1, color="grey85") +  -->
+<!-- #   geom_boxplot(fill=NA) + -->
+<!-- #   paletteer::scale_color_paletteer_d("rcartocolor::Prism")+ -->
+<!-- #   guides(color = guide_legend(override.aes = list(shape = 19)))+ -->
+<!-- #   ggtitle("Genotypic value distribution", -->
+<!-- #           subtitle="RKHS genomic selection method")+ -->
+<!-- #   ylab("Predicted genotypic value")+xlab("First year")+ -->
+<!-- #   theme_bigstatsr(size.rel=0.8)+  -->
+<!-- #   guides(color=guide_legend(override.aes=list(shape=19,size=2),nrow=2))+ -->
+<!-- #   scale_x_discrete(labels = scales::label_wrap(10))+ -->
+<!-- #   theme(axis.text.x=element_blank(), -->
+<!-- #         legend.position="inside", -->
+<!-- #         legend.title=element_blank(), -->
+<!-- #         legend.position.inside=c(0.65,0.12)) -->
+<!-- #  -->
+<!-- #  -->
+<!-- # p2f <- here("output","figures", -->
+<!-- #             paste0(pop,"_GP_PredVal_Distrib_",ntraits,"traits_wholeTrialPopGSTrain.png")) -->
+<!-- # ggsave(file=p2f,height=10,width=13, scale=0.8) -->
+
+<!-- ``` -->
+
+
+
+<!-- Transform to a wide format -->
+
+<!-- ```{r} -->
+<!-- info.cols <- colnames(geno.info) -->
+
+<!-- all.pred.wide <- all.pred %>%  -->
+<!--   group_by(across(all_of(c(info.cols,"trait")))) %>% -->
+<!--   summarize(yHat=mean(yHat, na.rm=T),.groups="drop") %>% -->
+<!--   #select(all_of(c("geno","trait","pheno","Pedigree","Parent1","Parent2","EXPT","yHat")))%>% -->
+<!--   tidyr::pivot_wider(names_from="trait", values_from="yHat") -->
+<!-- head(all.pred.wide) -->
+
+
+
+<!-- p2f <- here("output","genom_pred", -->
+<!--             paste0(pop_code.geno,"_GP_PredVal_",sel.meth,"_", -->
+<!--                    ntraits,"traits.tsv")) -->
+<!-- write.table(all.pred.wide, file=p2f, row.names=F, sep="\t", col.names=T) -->
+
+
+<!-- # Get the summary table for all traits -->
+<!-- gtsummary::tbl_summary(all.pred.wide, include=all_of(traits), by=FIRST_YEAR, -->
+<!--                        type = all_continuous() ~ "continuous2", -->
+<!--                        statistic = all_continuous() ~ c( -->
+<!--                          "{median} ({p25}, {p75})", -->
+<!--                          "{min}, {max}" -->
+<!--                        )) -->
+<!-- #add_p(pvalue_fun = label_style_pvalue(digits = 2)) -->
+<!-- ## print the highest 50 genotypic values for yield -->
+<!-- all.pred.wide %>% arrange(desc(YIELD)) %>% head(200) %>% print_table() -->
+
+<!-- ``` -->
+
+
+
+<!-- ## Export observed and predicted values -->
+
+<!-- ```{r export_obs_pred} -->
+<!-- ## combine all phenotypic data -->
+<!-- all.pheno <- pheno -->
+<!-- dim(all.pheno) -->
+<!-- obs.pred <- merge(all.pheno, all.pred.wide, by="GID", all=TRUE,suffixes=c(".Obs",".Pred")) -->
+<!-- obs.pred <- relocate(obs.pred, all_of(info.cols)) -->
+<!-- ## put observed and predicted values side by side -->
+<!-- obs.pred <- reduce(.x = traits,.f = ~ relocate(.x, starts_with(.y)),.init = obs.pred) |>  -->
+<!--   relocate(all_of(info.cols)) -->
+
+<!-- ## put at first columns identifying the genotype -->
+<!-- obs.pred <- relocate(obs.pred, GID) |> distinct() |>  -->
+<!--   group_by(across(all_of(info.cols))) |> -->
+<!--   summarize(across(where(is.numeric), ~ mean(.x, na.rm=T)),.groups="drop") |>  -->
+<!--   arrange(desc(YIELD.Pred)) -->
+<!-- ## print first 100 rows -->
+<!-- print_table(head(obs.pred, n=100)) -->
+
+<!-- ## remove some decimals to numeric columns -->
+<!-- obs.pred <- obs.pred |>  -->
+<!--   mutate(across(where(is.numeric), ~ round(.x, digits=2))) -->
+
+<!-- p2f <- here("output", paste0(pop_code.geno,"_GP_ObsPredVal_",ntraits,"traits.tsv")) -->
+<!-- write.table(obs.pred, file=p2f, row.names=F, sep="\t", col.names=T) -->
+<!-- ``` -->
+
+
+# Appendix
+
+```{r info}
+t1 <- proc.time(); t1 - t0
+print(sessionInfo(), locale=FALSE)
+```
+
+
+

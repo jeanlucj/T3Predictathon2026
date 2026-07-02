@@ -1,0 +1,730 @@
+---
+title: "genomic_analysis_markdown"
+author: "Prediction3 Team"
+date: "2025-10-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This script take the input genotyping variant call files pulled from T3/Wheat as generated in [Genomic_data_import.Rmd](Data/Genomic_data_import.Rmd). This analysis script generates genomic relationship matrices from that genotype data and uses that as an input into the Wishart EM algorithm to develop a combined GRM for all accessions for selected trials generated from [T3_trial_import_and_filtering.Rmd](Data/T3_trial_import_and_filtering.Rmd). Ultimately, a trial-wise genomic similarity matrix is developed to compare trials and select training data for each test set. 
+
+## Load Packages 
+```{r, message=FALSE}
+library(devtools) #install.packages("devtools")
+devtools::install_github("TriticeaeToolbox/BrAPI.R")
+library(BrAPI)
+library(tidyverse) #install.packages("tidyverse")
+library(janitor) #install.packages("janitor")
+library(readr) #install.packages("readr")
+library(here) #install.packages("here")
+library(vcfR) #install.packages("vcfR")
+library(stringr) #install.packages("stringr")
+devtools::install_github("cran/CovCombR")
+library(CovCombR)
+library(rrBLUP) #install.packages("rrBLUP")
+library(sommer) #install.packages("sommer")
+library(AGHmatrix) #install.packages("AGHmatrix")
+#library(asreml)
+```
+
+## Set BrAPI Server
+
+```{r}
+conn <- createBrAPIConnection("wheat.triticeaetoolbox.org", is_breedbase = TRUE)
+```
+
+## Load Genomic Data and Trial Data
+
+VCF files for the genotyping projects pulled from T3 that will be included in this analysis were downloaded in the "Genomic_data_import.Rmd" file and are stored in the /vcf_genotyped_data subdirectory. We will read in the VCF files and convert them to dosage matrices.
+
+First we will create paths to locate the stored vcf files
+
+```{r Load paths to vcf data, message=FALSE, warning=FALSE}
+genotyped_trials <- readr::read_csv(here::here("data","genotyped_phenotyped_trials.csv"))
+test_trials <- readr::read_csv(here::here("data", "test_trial_metadata.csv"))
+vcf_projects <- readr::read_csv(here::here("data","selected_geno_projects.csv"))
+selected_projects <- vcf_projects$selected_projects
+selected_projects <- selected_projects[selected_projects!="12856"]
+vcf_paths <-here::here(
+  "data",
+  "vcf_genotyped_data",
+  paste0("raw_project_", selected_projects, ".vcf"))
+```
+
+The following function follows paths to vcf files, determines if the files holds data, extracts the gt matrix, parses cells containing strings from GBS datasets, and stores the dosage scores in a dosage matrix named with the genotyping project id. This function can iterate through a vector of paths and stores the resulting matrices in a list.
+
+```{r Function to extract dosage matrices from vcf file paths}
+vcf_to_dosage_list <- function(paths) {
+  dosage_list <- list()
+ 
+  for (path in paths) {
+    result <- tryCatch({
+      message("→ Processing ", basename(path))
+      vcf <- vcfR::read.vcfR(path)
+     
+      # skip empty gt
+      if (is.null(vcf@gt) || ncol(vcf@gt) < 2) {
+        warning("Skipping ", basename(path), ": no genotype data")
+        return(NULL)  # <- use return instead of next
+      }
+     
+      gt <- vcf@gt[, -1]
+     
+      # parse genotype efficiently
+      if (any(grepl(":", gt))) {
+        gt <- sub(":.*", "", gt)  # vectorized
+        dim(gt) <- dim(vcf@gt[, -1])
+      }
+     
+      # normalize phased → unphased
+      gt <- gsub("\\|", "/", gt)
+
+      # convert to numeric dosage
+      mat <- matrix(NA_integer_, nrow = nrow(gt), ncol = ncol(gt))
+      rownames(mat) <- vcf@fix[, "ID"]
+      colnames(mat) <- colnames(vcf@gt)[-1]
+     
+      # vectorized mapping
+      mat[gt %in% c("0/0")] <- 0
+      mat[gt %in% c("0/1","1/0")] <- 1
+      mat[gt %in% c("1/1")] <- 2
+     
+      mat <- t(mat)
+     
+      proj_num <- stringr::str_extract(tools::file_path_sans_ext(basename(path)), "\\d+$")
+      dosage_list[[paste0("dosage_", proj_num)]] <- mat
+     
+      message("✓ Finished dosage_", proj_num)
+      NULL  # normal exit for tryCatch
+     
+    }, error = function(e) {
+      warning("Skipping ", basename(path), ": ", e$message)
+      NULL  # <- return NULL instead of next
+    })
+  }
+ 
+  return(dosage_list)
+}
+```
+
+We can run that function to get a list of the dosage matrices for the genotyping projects we are interested in.
+
+```{r Extract dosage matrices, message=FALSE,cache=TRUE}
+# Run
+dosage_matrices <- vcf_to_dosage_list(vcf_paths)
+```
+
+## Constructing a Trial Genomic Similarity Matrix
+
+### Create and filter GRMs for individual genotyping projects
+
+Now we need to convert all the dosage matrices into GRMs for each genotyping project
+
+```{r Construct genomic relationship matrices, message=FALSE}
+grm_list <- lapply(dosage_matrices, rrBLUP::A.mat)
+names(grm_list) <- paste0("grm_", stringr::str_extract(names(dosage_matrices), "\\d+$"))
+```
+
+
+To allow the code to run faster, we can filter the GRMs to include only 2 types of accessions i) accessions that are a part of our selected trials and/or ii) accessions that appear in multiple GRMs and will be used to calculate relative genomic relationships between non-overlapping accessions.
+
+First we will determine all accessions included in our selected trials
+```{r get trial accession names}
+accessions <- conn$wizard("accessions", list(trials = c(genotyped_trials$study_name, test_trials$study_name)))
+trial_accessions <- unique(accessions$data$names)
+```
+
+Next we will determine which accessions have been genotyped in multiple genotyping projects
+
+```{r determine accession overlap, warning=FALSE}
+grm_names <- names(grm_list)
+
+## Determine the number of overlapping accessions between GRMs
+accession_overlap <- matrix(NA, nrow = length(grm_names), ncol = length(grm_names), dimnames = list(grm_names, grm_names))
+accession_overlap <- as.data.frame(accession_overlap)
+
+for (grm1 in grm_names){
+  for (grm2 in grm_names){
+    accession_overlap[grm1,grm2]=length(intersect(rownames(grm_list$grm1), rownames(grm_list$grm2)))
+  }
+}
+
+## Determine the accession names of accessions genotyped across multiple GRMs
+overlap_accessions <- c()
+
+for (grm1 in grm_names){
+  for (grm2 in grm_names){
+    if (grm1 == grm2){
+      overlap_accessions=overlap_accessions
+    }
+    else{
+    overlap_accessions <- c(overlap_accessions, intersect(rownames(grm_list[[grm1]]), rownames(grm_list[[grm2]])))
+    }
+  }
+}
+
+overlap_accessions <- unique(overlap_accessions)
+
+```
+
+Now we will construct of vector of all accessions we will retain in our GRMs (included in our selected trials or genotyped across multiple GRMs)
+
+```{r determine accessions to retain in GRMs}
+trial_or_overlap_accessions <- union(trial_accessions,overlap_accessions)
+```
+
+We can filter our raw GRMs to include only accessions from our trial_or_overlap_accessions vector
+
+```{r filter GRMs, message=FALSE}
+filtered_grms <- list()
+
+for (grm in grm_names) {
+  mat <- grm_list[[grm]]
+  
+  filt <- mat[rownames(mat) %in% trial_or_overlap_accessions,
+              colnames(mat) %in% trial_or_overlap_accessions,
+              drop = FALSE]
+  
+  if (nrow(filt) > 0 && ncol(filt) > 0) {
+    filtered_grms[[paste0("filtered_grm_", stringr::str_extract(grm, "\\d+$"))]] <- filt
+  } else {
+    message("Skipping GRM '", grm, "' because it is empty after filtering")
+  }
+}
+```
+
+
+### Standardize and Invert GRMs
+
+We need can also standardize the GRMs by making sure the average value on the diagonals is equal to 1
+
+```{r}
+std_grm <- function(grm){
+  std_grm <- grm / mean(diag(grm))
+  return(std_grm)
+}
+standardized_grms <- lapply(filtered_grms,std_grm)
+```
+
+Now we can create G_inv matrices for all of the filtered GRMs
+
+```{r}
+ridge <- 1e-6 # Add a ridge to prevent singularity
+
+for (grm_name in names(filtered_grms)) {
+  mat <- filtered_grms[[grm_name]]
+  filtered_grms[[grm_name]] <- mat + diag(ridge, nrow(mat))
+}
+
+inverted_grms <- lapply(filtered_grms,solve)
+names(inverted_grms) <- paste0("filtered_grm_inv_", stringr::str_extract(names(filtered_grms), "\\d+$"))
+```
+
+### Combining GRMs
+
+We can combine GRMs of different genotype matrices using a set of functions to run a Wishart EM algorithm developed by Deniz Akdemir [https://github.com/denizakdemir/wishartem/blob/main/wishartem/em_covariance_combiner.R](https://github.com/denizakdemir/wishartem/blob/main/wishartem/em_covariance_combiner.R)
+
+```{r}
+#' @title EM Covariance Combiner
+#' @description Implementation of EM algorithm for combining partial covariance matrices.
+#' This function implements the EM algorithm for combining multiple partially observed
+#' covariance matrices into a single combined covariance matrix.
+#' 
+#' @param partial_covs List of partial covariance matrices
+#' @param var_indices List of variable indices for each partial covariance matrix
+#' @param degrees_freedom Optional numeric vector of degrees of freedom for each matrix (default: 100 for each)
+#' @param max_iter Maximum number of iterations for the EM algorithm (default: 100)
+#' @param tol Convergence tolerance for the EM algorithm (default: 1e-6)
+#' @param track_loglik Whether to track log-likelihood values during iterations (default: TRUE)
+#' 
+#' @return List containing:
+#'   - psi: The combined covariance matrix
+#'   - sampling_cov: Sampling covariance matrix for the combined covariance matrix
+#'   - loglik_path: Vector of log-likelihood values at each iteration (if track_loglik=TRUE)
+#' 
+#' @importFrom Matrix solve
+#' @importFrom stats cov
+#' @export
+EMCovarianceCombiner <- function(partial_covs, var_indices, degrees_freedom = NULL,
+                                max_iter = 100, tol = 1e-6, track_loglik = TRUE, compute_sampling_cov = FALSE) {
+  
+  # Validate inputs
+  if (length(partial_covs) == 0 || length(var_indices) == 0) {
+    stop("Empty input provided")
+  }
+  if (length(partial_covs) != length(var_indices)) {
+    stop("Number of covariance matrices must match number of index sets")
+  }
+  
+  # Determine total number of variables
+  n_vars <- max(sapply(var_indices, function(idx) max(idx))) + 1
+  
+  # Set default degrees of freedom if not provided
+  if (is.null(degrees_freedom)) {
+    degrees_freedom <- rep(100, length(partial_covs))
+  }
+  if (length(degrees_freedom) != length(partial_covs)) {
+    stop("Length of degrees_freedom must match number of matrices")
+  }
+  
+  # Initialize log-likelihood path
+  loglik_path <- if (track_loglik) numeric(0) else NULL
+  
+  # Initialize Psi (combined covariance matrix)
+  psi <- initialize_psi(partial_covs, var_indices, n_vars)
+  
+  # Compute initial log-likelihood if tracking
+  if (track_loglik) {
+    loglik <- compute_log_likelihood(psi, partial_covs, var_indices, degrees_freedom)
+    loglik_path <- c(loglik_path, loglik)
+  }
+  
+  # EM iterations
+  pb <- txtProgressBar(min = 0, max = max_iter, style = 3)
+  for (iter in 1:max_iter) {
+    setTxtProgressBar(pb, iter)
+    psi_old <- psi
+    
+    # E-step: Compute conditional expectations
+    expectations <- vector("list", length(partial_covs))
+    for (i in seq_along(partial_covs)) {
+      ya <- partial_covs[[i]]
+      idx <- var_indices[[i]]
+      nu <- degrees_freedom[i]
+      missing_idx <- setdiff(0:(n_vars-1), idx)
+      
+      # Calculate conditional expectation
+      exp_y <- compute_conditional_expectation(ya, psi, idx, missing_idx)
+      expectations[[i]] <- list(exp_y = exp_y, nu = nu)
+    }
+    
+    # M-step: Update Psi
+    psi_sum <- matrix(0, nrow = n_vars, ncol = n_vars)
+    total_nu <- sum(degrees_freedom)
+    
+    for (exp in expectations) {
+      psi_sum <- psi_sum + exp$nu * exp$exp_y
+    }
+    psi <- psi_sum / total_nu
+    
+    # Compute log-likelihood if tracking
+    if (track_loglik) {
+      loglik <- compute_log_likelihood(psi, partial_covs, var_indices, degrees_freedom)
+      loglik_path <- c(loglik_path, loglik)
+    }
+    
+    # Check convergence
+    if (max(abs(psi - psi_old)) < tol) {
+      message("\nConverged at iteration ", iter)
+      break
+    }
+  }
+  close(pb)
+  # Compute sampling covariance if requested
+if (compute_sampling_cov) {
+  message("Computing sampling covariance (this may take a while)...")
+  sampling_cov <- tryCatch({
+    compute_sampling_covariance(psi, partial_covs, var_indices, degrees_freedom)
+  }, error = function(e) {
+    warning("Error computing sampling covariance: ", e$message)
+    return(NULL)
+  })
+} else {
+  sampling_cov <- NULL
+}
+  
+  # Return results
+  return(list(
+    psi = psi,
+    sampling_cov = sampling_cov,
+    loglik_path = loglik_path
+  ))
+}
+
+#' Initialize the combined covariance matrix using available variances
+#' 
+#' @param partial_covs List of partial covariance matrices
+#' @param var_indices List of variable indices for each partial covariance matrix
+#' @param n_vars Total number of variables
+#' @return Initialized covariance matrix
+initialize_psi <- function(partial_covs, var_indices, n_vars) {
+  psi <- diag(n_vars)
+  
+  for (i in 0:(n_vars-1)) {
+    variances <- numeric(0)
+    
+    for (j in seq_along(partial_covs)) {
+      cov <- partial_covs[[j]]
+      idx <- var_indices[[j]]
+      
+      if (i %in% idx) {
+        i_local <- match(i, idx) - 1  # Convert to 0-based index
+        variances <- c(variances, cov[i_local + 1, i_local + 1])  # Convert back to 1-based for R
+      }
+    }
+    
+    if (length(variances) > 0) {
+      psi[i + 1, i + 1] <- mean(variances)  # 1-based indexing in R
+    }
+  }
+  
+  return(psi)
+}
+
+#' Compute conditional expectation for the E-step of the EM algorithm
+#' 
+#' @param ya Observed partial covariance matrix
+#' @param psi Current estimate of the combined covariance matrix
+#' @param obs_idx Indices of observed variables (0-based)
+#' @param missing_idx Indices of missing variables (0-based)
+#' @return Conditional expectation of the complete covariance matrix
+compute_conditional_expectation <- function(ya, psi, obs_idx, missing_idx) {
+  # Convert to 1-based indices for R
+  obs_idx_r <- obs_idx + 1
+  missing_idx_r <- missing_idx + 1
+  
+  n_total <- nrow(psi)
+  result <- matrix(0, nrow = n_total, ncol = n_total)
+  
+  # If there are no missing indices, just expand ya to full dimension
+  if (length(missing_idx) == 0) {
+    result[obs_idx_r, obs_idx_r] <- ya
+    return(result)
+  }
+  
+  # Extract submatrices from psi and bend to avoid singularity issues in solving
+  psi_aa <- psi[obs_idx_r, obs_idx_r, drop = FALSE]
+  psi_aa <- psi_aa + diag(1e-5, nrow(psi_aa))
+  psi_ab <- psi[obs_idx_r, missing_idx_r, drop = FALSE]
+  psi_bb <- psi[missing_idx_r, missing_idx_r, drop = FALSE]
+  
+  # Compute conditional expectations efficiently
+  # Use Matrix::solve for potential speedup with sparse matrices
+  psi_aa_inv <- solve(psi_aa)
+  b_matrix <- t(psi_ab) %*% psi_aa_inv
+  
+  # Fill observed part
+  result[obs_idx_r, obs_idx_r] <- ya
+  
+  # Fill cross-terms
+  exp_yab <- b_matrix %*% ya
+  result[missing_idx_r, obs_idx_r] <- exp_yab
+  result[obs_idx_r, missing_idx_r] <- t(exp_yab)
+  
+  # Fill missing part
+  result[missing_idx_r, missing_idx_r] <- psi_bb - b_matrix %*% psi_ab + b_matrix %*% ya %*% t(b_matrix)
+  
+  return(result)
+}
+
+#' Compute the observed data log-likelihood
+#' 
+#' @param psi Current estimate of the combined covariance matrix
+#' @param partial_covs List of partial covariance matrices
+#' @param var_indices List of variable indices for each partial covariance matrix
+#' @param degrees_freedom Degrees of freedom for each partial covariance matrix
+#' @return The observed data log-likelihood
+compute_log_likelihood <- function(psi, partial_covs, var_indices, degrees_freedom) {
+  log_lik <- 0.0
+  
+  for (i in seq_along(partial_covs)) {
+    ya <- partial_covs[[i]]
+    idx <- var_indices[[i]]
+    nu <- degrees_freedom[i]
+    
+    # Convert to 1-based indices for R
+    idx_r <- idx + 1
+    
+    # Extract the submatrix of psi corresponding to the observed variables
+    psi_subset <- psi[idx_r, idx_r, drop = FALSE]
+    psi_subset <- psi_subset + diag(1e-6, nrow(psi_subset))
+    
+    # Check if matrix is positive definite
+    eig <- try(eigen(psi_subset, symmetric = TRUE, only.values = TRUE)$values, silent = TRUE)
+    if (inherits(eig, "try-error") || any(eig <= 0)) {
+      return(-Inf)  # Non-positive definite matrix
+    }
+    
+    # Compute log-likelihood contribution (Wishart log-likelihood, ignoring constant terms)
+    logdet_psi <- sum(log(eig))  # More efficient than determinant()
+    
+    # Trace term using matrix inverse
+    psi_inv <- solve(psi_subset)
+    trace_term <- sum(diag(psi_inv %*% ya))
+    
+    # Add to log-likelihood (scaled by degrees of freedom)
+    log_lik <- log_lik - 0.5 * nu * (logdet_psi + trace_term)
+  }
+  
+  return(log_lik)
+}
+
+#' Map matrix indices to vector index for covariance parameters
+#' 
+#' @param i Row index (0-based)
+#' @param j Column index (0-based)
+#' @return Vector index
+matrix_to_vector_idx <- function(i, j) {
+  if (i < j) {
+    # Swap to ensure i >= j
+    tmp <- i
+    i <- j
+    j <- tmp
+  }
+  return(i * (i + 1) / 2 + j)
+}
+
+#' Compute the sampling covariance matrix for the combined covariance matrix
+#' 
+#' @param psi Combined covariance matrix
+#' @param partial_covs List of partial covariance matrices
+#' @param var_indices List of variable indices for each partial covariance matrix
+#' @param degrees_freedom Degrees of freedom for each partial covariance matrix
+#' @return Sampling covariance matrix for the combined covariance matrix
+compute_sampling_covariance <- function(psi, partial_covs, var_indices, degrees_freedom) {
+  n_vars <- nrow(psi)
+  n_params <- n_vars * (n_vars + 1) / 2  # Number of unique elements
+  
+  # Initialize matrices for sandwich formula
+  information <- matrix(0, nrow = n_params, ncol = n_params)
+  score_cov <- matrix(0, nrow = n_params, ncol = n_params)
+  
+  # Compute the inverse of psi once
+  psi_inv <- solve(psi)
+  
+  # Convert indices to 0-based for consistency with the matrix_to_vector_idx function
+  for (i in seq_along(partial_covs)) {
+    ya <- partial_covs[[i]]
+    idx <- var_indices[[i]]  # 0-based
+    nu <- degrees_freedom[i]
+    
+    missing_idx <- setdiff(0:(n_vars-1), idx)
+    
+    # Convert to 1-based for R computation
+    idx_r <- idx + 1
+    missing_idx_r <- missing_idx + 1
+    
+    # Get conditional expectation
+    exp_y <- compute_conditional_expectation(ya, psi, idx, missing_idx)
+    
+    # Compute score contribution
+    score <- exp_y - psi
+    
+    # Flatten the matrices efficiently
+    score_vec <- numeric(n_params)
+    
+    # Map the score matrix to vector form
+    for (i_idx in 0:(n_vars-1)) {
+      for (j_idx in 0:i_idx) {
+        idx_vec <- matrix_to_vector_idx(i_idx, j_idx) + 1  # +1 for R indexing
+        score_vec[idx_vec] <- score[i_idx + 1, j_idx + 1]  # +1 for R indexing
+      }
+    }
+    
+    # Update score covariance scaled by nu
+    score_cov <- score_cov + nu * tcrossprod(score_vec)
+    
+    # Compute the observed information matrix contribution - use efficient vectorization
+    for (i_idx in 0:(n_vars-1)) {
+      for (j_idx in 0:i_idx) {
+        idx1 <- matrix_to_vector_idx(i_idx, j_idx) + 1  # +1 for R indexing
+        
+        for (k_idx in 0:(n_vars-1)) {
+          for (l_idx in 0:k_idx) {
+            idx2 <- matrix_to_vector_idx(k_idx, l_idx) + 1  # +1 for R indexing
+            
+            # +1 for R indexing
+            info_val <- nu * (
+              psi_inv[i_idx + 1, k_idx + 1] * psi_inv[j_idx + 1, l_idx + 1] +
+              psi_inv[i_idx + 1, l_idx + 1] * psi_inv[j_idx + 1, k_idx + 1]
+            )
+            
+            information[idx1, idx2] <- information[idx1, idx2] + info_val
+          }
+        }
+      }
+    }
+  }
+  
+  # Compute sandwich covariance matrix
+  info_inv <- solve(information)
+  sampling_cov <- info_inv %*% score_cov %*% t(info_inv)
+  
+  return(sampling_cov)
+}
+
+```
+
+To run the algorithm, we need a numerical index value for each germplasm entry in all of the GRMs. We will just pull the T3 germplasm ID values.
+
+```{r}
+accession_index_map <- data.frame(
+  accession_name = unique(unlist(lapply(filtered_grms, colnames))),
+  accession_index = seq(0, length(unique(unlist(lapply(filtered_grms, colnames)))) - 1),
+  stringsAsFactors = FALSE
+)
+
+# Initialize lists to store names and indices
+grm_names_list <- list()
+grm_indices_list <- list()
+
+for (grm_name in names(filtered_grms)) {
+  mat <- filtered_grms[[grm_name]]
+  colnames_mat <- colnames(mat)
+  
+  # Store accession names
+  grm_names_list[[grm_name]] <- colnames_mat
+  
+  # Store indices in accession_index_map
+  grm_indices_list[[grm_name]] <- match(colnames_mat, accession_index_map$accession_name)
+}
+```
+
+Run the algorithm, extract the combined GRM, and relabel the accessions
+
+```{r}
+original_names <- sub("^filtered_", "", names(filtered_grms))
+
+valid_indices <- which(names(grm_list) %in% original_names)
+
+result <- EMCovarianceCombiner(partial_covs = standardized_grms,
+                               var_indices = grm_indices_list,
+                               degrees_freedom = sapply(dosage_matrices[valid_indices], nrow),
+                               compute_sampling_cov = FALSE)
+saveRDS(result, here::here("analysis","new_EMcombinedGRM_wDF.rds"))
+comb_grm <- result$psi[-1,-1]
+rownames(comb_grm) <- accession_index_map$accession_name
+colnames(comb_grm) <- accession_index_map$accession_name
+saveRDS(comb_grm, here::here("analysis","comb_grm_mat.rds"))
+```
+
+Now we want to create a loop that will loop through the trials we are interested in to create a trial-wise genomic similarity matrix (G).
+
+```{r}
+trial_names <- c(genotyped_trials$study_name, test_trials$study_name)
+
+accessions_by_trial <- lapply(trial_names, function(trial) {
+  conn$wizard("accessions", list(trials = trial))
+})
+
+names(accessions_by_trial) <- trial_names
+accession_names_by_trial <- lapply(accessions_by_trial, function(x) x$data$names)
+accession_names_by_trial <- lapply(accession_names_by_trial, unique)
+
+
+
+G <- matrix(data=NA, nrow=length(accession_names_by_trial), ncol=length(accession_names_by_trial), dimnames = list(names(accession_names_by_trial), names(accession_names_by_trial)))
+
+for (trial1 in names(accession_names_by_trial)){
+  for(trial2 in names(accession_names_by_trial)){
+    
+    ## pull accessions for each trial
+    trial1_acc <-accession_names_by_trial[[trial1]]
+    trial2_acc <- accession_names_by_trial[[trial2]]
+    
+    # Keep only accessions found in comb_grm
+    common_acc1 <- intersect(accession_names_by_trial[[trial1]], rownames(comb_grm))
+    common_acc2 <- intersect(accession_names_by_trial[[trial2]], colnames(comb_grm))
+
+    # Take only accessions present in both sets
+    pairwise_rel <- comb_grm[common_acc1, common_acc2, drop = FALSE]
+    average_rel <- mean(pairwise_rel, na.rm = TRUE)
+    G[trial1,trial2] <- average_rel
+  }
+}
+keep <- !is.na(diag(G))
+
+G_clean <- G[keep, keep]
+
+rescaled_G <- G_clean / mean(diag(G_clean))
+
+saveRDS(rescaled_G, "trial_Gmat.rds")
+
+
+
+```
+
+Plot G as a heatmap
+
+```{r}
+wsu_trials <- genotyped_trials |> dplyr::filter(program_name=="Washington State University")
+wsu_studies <- wsu_trials$study_name
+
+wsu_Gmat <- rescaled_G[wsu_studies, wsu_studies]
+
+non_wsu_Gmat <- rescaled_G[!rownames(rescaled_G) %in% wsu_studies,!colnames(rescaled_G) %in%wsu_studies]
+
+# Compute clustering orders (rows and columns)
+row_ord <- hclust(dist(non_wsu_Gmat))$order
+col_ord <- hclust(dist(t(non_wsu_Gmat)))$order
+
+# Reorder matrix by those cluster orders
+mat_ord <- non_wsu_Gmat[row_ord, col_ord, drop = FALSE]
+
+# Plot heatmap with no dendrograms, but ordered by clustering
+heatmap(
+  mat_ord,
+  Rowv = NA,  # no dendrogram
+  Colv = NA,  # no dendrogram
+  scale = "none",
+  cexRow = 1.2,
+  cexCol = 1,
+  margins = c(15, 15),
+  main = "Average Genomic Similarity of T3 Trials (G_rel)",
+)
+  
+
+row_ord_wsu <- hclust(dist(wsu_Gmat))$order
+col_ord_wsu <- hclust(dist(t(wsu_Gmat)))$order
+
+# Reorder matrix by those cluster orders
+mat_ord_wsu <- wsu_Gmat[row_ord_wsu, col_ord_wsu, drop = FALSE]
+
+# Plot heatmap with no dendrograms, but ordered by clustering
+heatmap(
+  mat_ord_wsu,
+  Rowv = NA,  # no dendrogram
+  Colv = NA,  # no dendrogram
+  scale = "none",
+  cexRow = 1.2,
+  cexCol = 1,
+  margins = c(15, 15),
+  main = "Average Genomic Similarity of WSU Trials (G_rel)",
+)
+```
+
+```{r}
+trial_gen_pca <- prcomp(non_wsu_Gmat, scale. = TRUE)
+
+cum_var <- cumsum(trial_gen_pca$sdev^2) / sum(trial_gen_pca$sdev^2)
+k <- which(cum_var >= 0.95)[1] #number of PCs to explain variance
+trial_gen_pca_scores <- trial_gen_pca$x[,1:k]
+pc_centeroid <- colMeans(trial_gen_pca_scores)
+trial_gen_sim_dist <- mahalanobis(trial_gen_pca_scores, center = pc_centeroid, cov= cov(trial_gen_pca_scores)) # calculates distance from the centroid of the PCA 
+trial_gen_dist <- data.frame(study_db_id = colnames(non_wsu_Gmat), distance = trial_gen_sim_dist)
+write_csv(trial_gen_dist, here::here("analysis","trial_gen_distances.csv"))
+
+trial_gen_pca_scores <- as.data.frame(trial_gen_pca_scores)
+trial_gen_pca_scores$trial <- rownames(non_wsu_Gmat)
+trial_gen_pca_scores <- trial_gen_pca_scores |> 
+  left_join(genotyped_trials |> dplyr::select(study_name,program_name), by = c("trial" = "study_name"))
+ggplot(trial_gen_pca_scores, aes(PC1,PC2,label=trial, color=program_name))+
+  geom_point()+
+  geom_text(vjust=-0.5)+
+  theme_minimal()+
+  labs(title="Genomic PCA of selected non-WSU T3 trials")
+
+# Inspect variance explained
+summary(trial_gen_pca)
+
+# Make a biplot
+biplot(trial_gen_pca, main = "PCA of Covariance Matrix")
+```
+
+
+

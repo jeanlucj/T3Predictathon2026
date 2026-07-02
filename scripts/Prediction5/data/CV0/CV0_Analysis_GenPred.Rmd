@@ -1,0 +1,88 @@
+---
+title: "CV0 Data Analysis & Genomic Predictions"
+author: "Prediction5 Team"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# CV0 Data Analysis & Genomic Predictions
+
+## Load Packages and Data
+
+```{r}
+rm(list=ls())
+
+# setwd("[path to Predictathon data/CV0 directory]")  # set this to your local path
+
+library(here)
+library(BrAPI)
+library(purrr)
+library(tidyverse)
+library(here)
+library(tidygeocoder)
+library(nasapower)
+library(rrBLUP)
+library(ggplot2)
+library(dplyr)
+library(ggpubr)
+library(ggsci)
+library(factoextra)
+library(cluster)
+library(apercu)
+
+Crk_GRM <- read_rds("24Crk_AY2-3_focalAccessions_GRM.rds")
+SVREC_GRM <- read_rds("25_Big6_SVREC_SVREC_focalAccessions_GRM.rds")
+Aurora_GRM <- read_rds("2025_AYT_Aurora_focalAccessions_GRM.rds")
+DVPWA_GRM <- read_rds("AWY1_DVPWA_2024_focalAccessions_GRM.rds")
+Cornell_GRM <- read_rds("CornellMaster_2025_McGowan_focalAccessions_GRM.rds")
+OHRWW_GRM <- read_rds("OHRWW_2025_SPO_focalAccessions_GRM.rds")
+STP1_GRM <- read_rds("STP1_2025_MCG_focalAccessions_GRM.rds")
+MANKS_GRM <- read_rds("TCAP_2025_MANKS_focalAccessions_GRM.rds")
+YT_URB_GRM <- read_rds("YT_Urb_25_focalAccessions_GRM.rds")
+yield_raw <- read.csv("allAccessions_yield_raw.csv")
+trial_metadata <- read.csv("allTrials_metadata.csv")
+env_cov <- read.csv("environmental_covariates.csv")
+trial_yields <- read.csv("allTrials_yield_raw.csv")
+```
+
+## Data Overlap
+
+```{r}
+focal_trials <- c("AWY1_DVPWA_2024", "TCAP_2025_MANKS", "25_Big6_SVREC_SVREC",
+                  "OHRWW_2025_SPO", "CornellMaster_2025_McGowan", "24Crk_AY2-3",
+                  "2025_AYT_Aurora","YT_Urb_25","STP1_2025_MCG")
+wheat <- getBrAPIConnection("T3/WheatCAP")
+focal_acc <-
+  wheat$wizard("accessions", list(trials=c(focal_trials)), verbose=T)
+focal_acc <- as.data.frame(cbind(focal_acc$data$ids, focal_acc$data$names))
+colnames(focal_acc)[1] = "acc_id"
+colnames(focal_acc)[2] = "acc_name"
+
+acc_summary <- yield_raw %>% group_by(germplasmName, isFocal) %>% 
+  summarise(
+    n = n()
+  )
+acc_summary
+
+phenotype_lines <- unique(yield_raw$germplasmName)
+genotyped_lines <- c(colnames(Crk_GRM),colnames(SVREC_GRM),colnames(Aurora_GRM),
+                     colnames(DVPWA_GRM),colnames(Cornell_GRM),
+                     colnames(OHRWW_GRM),colnames(STP1_GRM),colnames(MANKS_GRM),
+                     colnames(YT_URB_GRM))
+pheno_geno_shared <- intersect(phenotype_lines, genotyped_lines)
+all_shared <- intersect(pheno_geno_shared, focal_acc$acc_name)
+
+missing_lines <- focal_acc %>% filter(!(acc_name %in% all_shared))
+need_pheno <- focal_acc %>% filter(!(acc_name %in% phenotype_lines))
+need_geno <- focal_acc %>% filter(!(acc_name %in% phenotype_lines))
+write.csv(need_pheno, "need_phenoData.csv")
+write.csv(need_geno, "need_genoData.csv")
+```
+
+## gBLUP and Environmental Correction
+
+### Environmental Relationship Matrix
+
+```{r}
+
+```

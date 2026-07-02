@@ -1,0 +1,296 @@
+---
+title: "Predictathon"
+author: "Prediction5 Team"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Libraries
+
+```{r}
+suppressPackageStartupMessages(library(BrAPI)) # T3 connection)
+suppressPackageStartupMessages(library(purrr)) # handle lists
+suppressPackageStartupMessages(library(tidyverse)) # data handling
+suppressPackageStartupMessages(library(here)) # root directory
+suppressPackageStartupMessages(library(apercu)) # look at lists
+suppressPackageStartupMessages(library(progress)) # progress bar
+suppressPackageStartupMessages(library(data.table)) # fread read table
+
+```
+
+# Set up root directory
+
+TODO: need to move this script to analysis folder
+
+```{r current dir}
+here::i_am("analysis/phenotypic_data.Rmd")
+source(here("code","useful_functions.R"))
+```
+
+# WheatCAP Predictathon: Phenotypic Data
+
+## Accessing T3 Breedbase
+
+```{r}
+rm(list=ls())
+
+wheat <- createBrAPIConnection("wheat.triticeaetoolbox.org", is_breedbase=TRUE)
+wheat <- getBrAPIConnection("T3/Wheat")
+
+#wheat$get("/germplasm")
+focal_trials <- c("AWY1_DVPWA_2024", "TCAP_2025_MANKS", "25_Big6_SVREC_SVREC",
+                  "OHRWW_2025_SPO", "CornellMaster_2025_McGowan", "24Crk_AY2-3",
+                  "2025_AYT_Aurora","YT_Urb_25","STP1_2025_MCG")
+```
+
+## Accessing Trial Metadata
+
+```{r}
+
+
+check_val <- function(x) {
+  if (is.null(x) || length(x) == 0) return(NA)
+  return(x)
+}
+results_list <- list()
+for(trial_name in focal_trials){
+  resp <- wheat$get("/studies", query=list(studyName=trial_name))
+  if (length(resp$data) == 0) {
+    message(paste("Skipping: No data found for", trial_name))
+    next
+  }
+  trial_metadata <- resp$data[[1]]
+  row_data <- data.frame(
+    trial_name    = trial_name,
+    program       = check_val(trial_metadata$trialName),
+    trial_id      = check_val(trial_metadata$studyDbId),
+    location      = check_val(trial_metadata$locationName),
+    year         = check_val(unlist(trial_metadata$seasons)),
+    planting_date = check_val(trial_metadata$startDate),
+    harvest_date  = check_val(trial_metadata$endDate),
+    design        = check_val(trial_metadata$experimentalDesign$PUI),
+    stringsAsFactors = FALSE
+  )
+  results_list[[trial_name]] <- row_data
+}
+focal_metadata <- do.call(rbind, results_list)
+```
+
+## CV00: Gather Program Phenotypic Data
+
+### Grabbing all Trials for our Programs of Interest
+
+```{r}
+programs <- focal_metadata$program
+all_trials_list <- list()
+for (prog in programs) {
+  resp <- wheat$get("/studies", query = list(programName=prog, pages="all", pageSize=1000))
+  if (length(resp$data) == 0) next
+  ## create a data frame summarizing trial id, name, location, year, program
+  prog_trials <- lapply(resp$data, function(x) {
+    data.frame(studyDbId = x$studyDbId, 
+               name = x$studyName, 
+               location = x$locationName,
+               year=paste(unlist(x$seasons), collapse=", "), 
+               program = prog)
+  })
+  prog_trials <- do.call(rbind, prog_trials)
+  ## if there are too many trials, select those from the same year and location as focal trial
+  if(nrow(prog_trials) > 20){
+    focal_years <- focal_metadata %>% filter(program == prog) |> pull(year)
+    focal_locations <- focal_metadata %>% filter(program == prog) %>% pull(location) %>% unique()
+    prog_trials <- prog_trials %>% 
+      filter(year %in% focal_years | location %in% focal_locations)
+  }
+  
+  all_trials_list[[prog]] <- prog_trials
+}
+## look first five elements
+ap(all_trials_list)
+lapply(all_trials_list, nrow)
+all_trials <- bind_rows(all_trials_list, .id="focal_trial")
+all_trials$isFocal <- ifelse(all_trials$name %in% focal_trials, TRUE, FALSE)
+table(all_trials$isFocal)
+all(focal_trials %in% all_trials$name)
+
+## export trial names to pull genotypic data from it
+p2f <- here("data","allTrials_metadata.csv") # path to file
+write.table(all_trials, p2f, sep=",", row.names=F, quote=F)
+
+all_trials <- all_trials %>% filter(!name %in% focal_metadata$trial_name)
+trial_ids <- all_trials$id
+vars_rm <- "season"
+```
+
+### Yield Data for All Trials
+
+```{r}
+
+# 
+# all_observations <- data.frame()
+# 
+# pb <- txtProgressBar(min=1, max=length(trial_ids), style = 3)
+# ## this trial id is long: 10703
+# ## this trial id times out: 10710, 10876
+# trial_ids <- trial_ids[!trial_ids %in% c("10703","10710","10876")]
+# 
+# for(i in seq_along(trial_ids)){
+#   setTxtProgressBar(pb, i)
+#   #write(paste0("Processing trial ", i, " of ", length(trial_ids)), stdout())
+#   search <- try(wheat$search("/observations", body=list(studyDbIds = c(trial_ids[i]))))
+#   results <- search$combined_data
+#   results <- results %>%
+#     map(function(item){
+#       item[vars_rm] <- NULL
+#       return(item)
+#     }) %>% 
+#     bind_rows
+#   if(nrow(results) >0){
+#     results <- results %>% filter(observationVariableName == "Grain yield - kg/ha|CO_321:0001218")
+#     all_observations <- bind_rows(all_observations, results)
+#   }
+# }
+# close(pb)
+# 
+# ## export all trials yield
+# p2f <- here("data","phenotypic","allTrials_yield_raw.csv") # path to file
+# write.table(all_observations, p2f, sep=",", row.names=F, quote=F)
+```
+
+Modifications compared to previous version:
+
+-   Print the iteration number to track progress and see if some trials are causing problems
+-   Test if trial data has yield variable
+-   Replace `rbind` with `bind_rows` for handling when columns names differ
+
+## CV0: Pull Phenotype Data for Focal Accessions
+
+Alternatives to load yield data more efficiently (?)
+
+1.  Use the \$get
+
+```         
+resp <- wheat$get("/observations",
+query=list(germplasmDbId=focal_ids[1],
+observationVariableDbIds = list("84527"),
+studyDbId=all_trials$id[1]), 
+
+page="all", pageSize=500)
+```
+
+2.  Use the search
+
+```         
+search <- try(wheat$search("/observations", body=list(
+germplasmDbIds = c(focal_ids), 
+observationVariableDbIds = list("84527"),
+studyDbIds=all_trials$id,
+pageSize=10000
+)))
+```
+
+```{r}
+p2f <- here("data","phenotypic","allAccessions_yield_raw.csv") 
+if(file.exists(p2f)){
+  results <- fread(p2f, header=T, sep=",")
+} else {
+  
+  wheat <- getBrAPIConnection("T3/WheatCAP")
+  focal_acc <- wheat$wizard("accessions", list(trials=c(focal_trials)), verbose=T)
+  focal_acc <- as.data.frame(cbind(focal_acc$data$ids, focal_acc$data$names))
+  colnames(focal_acc)[1] = "acc_id"
+  colnames(focal_acc)[2] = "acc_name"
+  focal_ids <- focal_acc$acc_id
+  wheat <- getBrAPIConnection("T3/Wheat")
+  vars_rm <- "season"
+  
+  search <- try(wheat$search("/observations", body=list(
+    #germplasmDbIds = c(focal_ids), 
+    observationVariableDbIds = list(84527),
+    studyDbIds=all_trials$studyDbId,
+    # page="all",
+    pageSize=100000
+  )))
+  
+  
+  results <- search$combined_data
+  results <- results %>%
+    map(function(item){
+      item[vars_rm] <- NULL
+      return(item)
+    }) %>% 
+    bind_rows
+  ## export all accessions yield
+  write.table(results, p2f, sep=",", row.names=F, quote=F)
+}
+
+```
+
+Add the trial metadata in that file if not already present
+
+```{r}
+colN <- colnames(results)
+if(!"location" %in% colN){
+  results <- results |> 
+    mutate(studyDbId = as.character(studyDbId)) |> 
+    left_join(all_trials, by=c("studyDbId"="studyDbId"))
+  ## export all accessions yield with trial metadata
+  write.table(results, p2f, sep=",", row.names=F, quote=TRUE, col.names=TRUE)
+}
+#rm(all_trials_list, focal_acc, focal_metadata)
+```
+
+# Combine and filter phenotypic data from J-L Jannink
+
+For each target trial, select phenotypic data for the genotyped lines and add trial metadata (location, start/end dates) to it. Then combine phenotypic data from all trials into one file.
+
+```{r}
+for(tri in focal_trials){
+  #tri=focal_trials[1]
+  all.files <- list.files(here("data","phenotypic",tri))
+  ## for now, select all phenotype files
+  sel.files <- all.files[grepl("phenotypes", all.files)]
+  p2fs <- paste0(here("data","phenotypic",tri),"/",sel.files)
+  dat.tri <- map_dfr(p2fs, fread)
+  ap(dat.tri)
+  
+  ## add the trial location & year
+  p2f.met <- paste0(here("data","phenotypic",tri),"/",grep("metadata", all.files, value=T))
+  trial.info <- fread(p2f.met, header=T, sep=",")
+  
+  ## load combined geno for this trial
+  p2f <- here("data","genotypic", tri,"clean",
+              paste0(tri,"_combined_GRM.rds"))
+  geno.tri <- readRDS(p2f)
+  gid.geno.tri <- rownames(geno.tri)
+  length(gid.geno.tri)
+  length(intersect(unique(dat.tri$germplasm_name), gid.geno.tri))
+  
+  ## select phenotypic data from the genotyped inds
+  dat.tri.sel <- dat.tri |> 
+    filter(germplasm_name %in% gid.geno.tri) |> 
+    left_join(trial.info |> 
+                select(study_db_id,location_name, study_name,program_name),
+              by=c("study_db_id")) |> 
+    rename(year=season)
+  
+  write(paste0("Trial ", tri, ": ", dim(dat.tri.sel)[1], " phenotypic records for ",
+               length(unique(dat.tri.sel$germplasm_name)), " genotyped lines"), stdout())
+  p2f.save <- here("data","phenotypic",tri,
+              paste0(tri,"_pheno_genoSelected.csv"))
+  write.table(dat.tri.sel, p2f.save, sep=",", row.names=F, quote=T, col.names=TRUE)
+}
+
+## combine phenotypic data into one list
+pheno.all <- map_dfr(focal_trials, function(tri){
+  p2f <- here("data","phenotypic",tri,
+              paste0(tri,"_pheno_genoSelected.csv"))
+  dat <- fread(p2f, header=T, sep=",") |> 
+    mutate(trial.target=tri)
+  return(dat)
+})
+write.table(pheno.all, here("data","phenotypic","allTrials_pheno_genoSelected.csv"), 
+            sep=",", row.names=F, quote=T, col.names=TRUE)
+```
+For 24Crk_AY2-3, we have less lines than with the initial phenotypic data file, for all other trials we have more genotypes.
+

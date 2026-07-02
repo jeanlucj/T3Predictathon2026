@@ -1,0 +1,10 @@
+study_db_id,study_name,study_type,study_description,location_name,trial_db_id,start_date,end_date,program_name,common_crop_name,experimental_design
+10673,2025_AYT_Aurora,phenotyping_trial,2025 AYT Yield Trial @ Aurora,"Aurora, SD",351,2024-09-13T00:00:00Z,2025-07-30T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,RCBD
+10674,24Crk_AY2-3,Advanced Yield Trial,AY2/AY3,"Crookston, MN",347,2024-05-04T00:00:00Z,NA,University of Minnesota,Wheat,Augmented
+10675,25_Big6_SVREC_SVREC,Advanced Yield Trial,25_Big6_SVREC,"Saginaw Valley Research and Extension Center, MI",363,2024-09-22T00:00:00Z,2025-07-10T00:00:00Z,Michigan State University,Wheat,Alpha
+10678,AWY1_DVPWA_2024,Advanced Yield Trial,"Low rainfall advanced soft white winter wheat yield trial @ Davenport, WA","Davenport, WA",353,2023-09-15T00:00:00Z,2024-08-07T00:00:00Z,Washington State University,Wheat,Alpha
+10676,CornellMaster_2025_McGowan,Preliminary Yield Trial,CornellMaster_2025_McGowan: Cornell 2025 Winter Wheat Master Nursery,"Ithaca, NY - McGowan",327,2024-09-17T00:00:00Z,2025-07-16T00:00:00Z,Cornell University,Wheat,MAD
+10679,OHRWW_2025_SPO,NA,2025 OWW@Spooner,"Spooner, WI",9412,2024-10-10T00:00:00Z,2025-08-05T00:00:00Z,University of Wisconsin,Wheat,Alpha
+10681,STP1_2025_MCG,NA,2025 South Texas Preliminary Yield Trial at McGregor,"McGregor, TX",352,2024-11-14T00:00:00Z,2025-05-23T00:00:00Z,TAMU,Wheat,RCBD
+10680,TCAP_2025_MANKS,phenotyping_trial,TCAP,"Manhattan, KS",10346,2024-10-24T00:00:00Z,2025-07-03T00:00:00Z,USDA-ARS Kansas,Wheat,p-rep
+10677,YT_Urb_25,phenotyping_trial,Yield trial to evaluate IL breeding lines,"Urbana, IL",367,2024-10-03T00:00:00Z,2025-06-25T00:00:00Z,University of Illinois,Wheat,p-rep

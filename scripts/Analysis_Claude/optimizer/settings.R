@@ -1,0 +1,94 @@
+# settings.R
+#
+# Every knob in one place. The driver and the optimizer read from here, so you
+# tune the run by editing this file (or overriding fields after sourcing it).
+
+optimizer_settings <- function() {
+  list(
+    # ---- mode -------------------------------------------------------------
+    # TRUE  = synthetic offline world (fast; for verifying the machinery).
+    # FALSE = real T3 pipeline on real data (network + heavy model fits).
+    simulate = TRUE,
+
+    # ---- which CV schemes to score each evaluation under ------------------
+    schemes = c("CV0", "CV00"),
+
+    # ---- search behaviour -------------------------------------------------
+    n_random_init       = 25,    # random configs before the surrogate takes over
+    incumbent_min_reps  = 2,     # trials a config needs before it can be "incumbent"
+    reeval_prob         = 0.15,  # chance an iteration re-evaluates the incumbent
+    ei_xi               = 0.01,  # Expected-Improvement exploration constant
+    n_elites            = 8,     # elites that seed crossover/mutation
+    n_cross             = 60, n_mut = 60, n_rand = 60,  # candidate pool sizes
+    ntree               = 300,   # trees in the random-forest surrogate
+
+    # ---- budget / background control -------------------------------------
+    max_iters     = Inf,         # stop after this many evaluations
+    max_hours     = Inf,         # ... or this much wall-clock, whichever first
+    checkpoint_every = 1,        # write report snapshot every N iterations
+
+    # ---- real-mode trial sampling (ignored when simulate = TRUE) ----------
+    crop_name        = "Wheat",
+    # The trait to optimize prediction of, as it appears in T3 ("name|CO_id").
+    # Not limited to yield -- set this to any numeric trait to optimize that.
+    focal_trait      = "Grain yield - kg/ha|CO_321:0001218",
+    # T3 observationVariableDbId for the focal trait. Used to fetch ONLY trials
+    # that measured it (server-side filter on the studies search), instead of
+    # the whole crop catalogue. Find it once with:
+    #   conn$wizard("trials", list(traits = "<dbid>"))   # confirms it narrows trials
+    # Grain yield - kg/ha is 84527 on wheat.triticeaetoolbox.org. Set NULL to
+    # disable the filter and sample from all trials (the old, slower behaviour).
+    focal_trait_db_id = "84527",
+    min_trial_acc    = 30,       # skip trials with fewer genotyped accessions
+    min_train_trials = 3,        # skip focal trials we cannot assemble a training set for
+    max_sample_fail  = 25,       # consecutive trial-sampling failures before halting
+                                 # (guards against a too-restrictive domain or a
+                                 #  down network spinning the loop forever)
+    # Known-feasible trials used as a BUG ORACLE: check_canaries() runs the most
+    # permissive config on these and expects success. A canary that comes back
+    # infeasible can only mean the code is hiding real data. NULL = no canary
+    # check. These are the nine Predictathon focal trials (studyDbId on
+    # wheat.triticeaetoolbox.org), resolved by studyName:
+    #   2025_AYT_Aurora 10673, 24Crk_AY2-3 10674, 25_Big6_SVREC_SVREC 10675,
+    #   CornellMaster_2025_McGowan 10676, YT_Urb_25 10677, AWY1_DVPWA_2024 10678,
+    #   OHRWW_2025_SPO 10679, TCAP_2025_MANKS 10680, STP1_2025_MCG 10681.
+    # Named studyName -> studyDbId so diagnostics can map to the participant
+    # submission folders (named by studyName) for the anchor.
+    canary_trials    = c(`2025_AYT_Aurora`            = "10673",
+                         `24Crk_AY2-3`                = "10674",
+                         `25_Big6_SVREC_SVREC`        = "10675",
+                         `CornellMaster_2025_McGowan` = "10676",
+                         `YT_Urb_25`                  = "10677",
+                         `AWY1_DVPWA_2024`            = "10678",
+                         `OHRWW_2025_SPO`             = "10679",
+                         `TCAP_2025_MANKS`            = "10680",
+                         `STP1_2025_MCG`              = "10681"),
+    # The three trials expected to be marginal for several methods (soft-warn,
+    # not hard CANARY ALARM, when they fail).
+    canary_weak_trials = c("10674", "10678", "10681"),
+    brapi_host       = "wheat.triticeaetoolbox.org",
+
+    # ---- target domain: which trials the pipeline is being optimized FOR --
+    # The optimizer maximizes mean accuracy over random focal trials drawn from
+    # this domain. Leave a field NULL to place no constraint on it; supply a
+    # vector to restrict random sampling so the resulting pipeline is tailored
+    # to that subpopulation (e.g. one breeding program's recent trials at a few
+    # locations). Only the FOCAL trial is constrained -- a pipeline may still
+    # pull training trials from anywhere. Example:
+    #   target_domain = list(programs  = c("Cornell", "OSU"),
+    #                        years     = 2018:2025,
+    #                        locations = c("Ithaca", "Wooster"))
+    target_domain = list(
+      programs  = NULL,          # character vector of programName values, or NULL
+      years     = NULL,          # integer vector of years, or NULL
+      locations = NULL           # character vector of locationName values, or NULL
+    ),
+
+    # ---- paths ------------------------------------------------------------
+    db_path     = here::here("state", "evals.sqlite"),
+    stop_file   = here::here("state", "STOP"),
+    report_path = here::here("state", "report.md"),
+    log_dir     = here::here("logs"),
+    cache_dir   = here::here("cache")
+  )
+}

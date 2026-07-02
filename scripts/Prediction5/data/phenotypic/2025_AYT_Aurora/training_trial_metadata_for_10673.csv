@@ -1,0 +1,302 @@
+study_name,study_db_id,program_name,study_type,location_name,location_db_id,latitude,longitude,elevation,start_date,end_date,experimental_design
+RPN_2023_Alliance,10973,University of Nebraska,NA,"Alliance, NE",34,42.24911,-103.01468,1276,2022-09-21T00:00:00Z,NA,RCBD
+ARS-NRPN-2024-ALLIANCE,10168,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Alliance, NE",34,42.24911,-103.01468,1276,NA,NA,RCBD
+HWWpanel_2013_Ardmore,7667,TCAP Cooperative,phenotyping_trial,"Ardmore, OK",38,34.184525,-97.093864,265,2012-10-12T00:00:00Z,2013-06-25T00:00:00Z,RCBD
+2023_Elite_AURORA,9621,South Dakota State University- Winter Wheat,phenotyping_trial,"Aurora, SD",280,44.309135,-96.67161,475,2022-09-12T00:00:00Z,2023-07-27T00:00:00Z,RCBD
+2022_AYT_Aurora,9424,South Dakota State University- Winter Wheat,phenotyping_trial,"Aurora, SD",280,44.309135,-96.67161,475,2021-09-21T00:00:00Z,2022-07-21T00:00:00Z,RCBD
+2022_Elite_AURORA,9422,South Dakota State University- Winter Wheat,phenotyping_trial,"Aurora, SD",280,44.309135,-96.67161,475,2021-09-13T00:00:00Z,2022-07-21T00:00:00Z,RCBD
+2023_AYT_Aurora,9622,South Dakota State University- Winter Wheat,phenotyping_trial,"Aurora, SD",280,44.309135,-96.67161,475,2022-09-12T00:00:00Z,2023-07-27T00:00:00Z,RCBD
+UMN-WHEAT-2020-BECKER,8208,University of Minnesota,phenotyping_trial,"Becker, MN",257,45.392284,-93.87648,NA,NA,NA,RCBD
+SDK-WHEAT-2016-BERESFORD,6998,South Dakota State University- Winter Wheat,phenotyping_trial,"Beresford, SD",42,43.08054,-96.77366,459,2015-09-06T00:00:00Z,2016-07-14T00:00:00Z,CRD
+SDK-WHEAT-2017-BERESFORD,7098,South Dakota State University- Winter Wheat,phenotyping_trial,"Beresford, SD",42,43.08054,-96.77366,459,2016-09-21T00:00:00Z,2017-07-19T00:00:00Z,CRD
+SDK-WHEAT-2014-BERESFORD,6793,South Dakota State University- Winter Wheat,phenotyping_trial,"Beresford, SD",42,43.08054,-96.77366,459,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2015-BERESFORD,7960,South Dakota State University- Winter Wheat,phenotyping_trial,"Beresford, SD",42,43.08054,-96.77366,459,2014-01-01T00:00:00Z,2015-12-31T00:00:00Z,CRD
+SDK-WHEAT-2010-BERESFORD,6892,South Dakota State University- Winter Wheat,phenotyping_trial,"Beresford, SD",42,43.08054,-96.77366,459,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+SDK-WHEAT-2018-BISON,6967,South Dakota State University- Winter Wheat,phenotyping_trial,"Bison, SD",44,45.409748,-102.513084,805,2017-09-28T00:00:00Z,2018-08-01T00:00:00Z,CRD
+SDK-WHEAT-2016-BISON,7134,South Dakota State University- Winter Wheat,phenotyping_trial,"Bison, SD",44,45.409748,-102.513084,805,2015-09-21T00:00:00Z,2016-08-01T00:00:00Z,CRD
+SDK-WHEAT-2017-BISON,7872,South Dakota State University- Winter Wheat,phenotyping_trial,"Bison, SD",44,45.409748,-102.513084,805,2016-09-29T00:00:00Z,2017-07-17T00:00:00Z,CRD
+SDK-WHEAT-2015-BISON,7639,South Dakota State University- Winter Wheat,phenotyping_trial,"Bison, SD",44,45.409748,-102.513084,805,2014-01-01T00:00:00Z,2015-12-31T00:00:00Z,CRD
+SDK-WHEAT-2014-BISON,7309,South Dakota State University- Winter Wheat,phenotyping_trial,"Bison, SD",44,45.409748,-102.513084,805,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2010-BISON,6770,South Dakota State University- Winter Wheat,phenotyping_trial,"Bison, SD",44,45.409748,-102.513084,805,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+HRWElite_2023_BLAVA,10903,Virginia Tech,phenotyping_trial,"Blacksburg, VA",45,37.198273,-80.56826,514,NA,NA,RCBD
+UniformHRW_2023_BLAVA,11015,Virginia Tech,phenotyping_trial,"Blacksburg, VA",45,37.198273,-80.56826,514,NA,NA,RCBD
+UniformHRW_2022_BLAVA,10807,Virginia Tech,phenotyping_trial,"Blacksburg, VA",45,37.198273,-80.56826,514,NA,NA,RCBD
+HRWElite_2022_BLAVA,10764,Virginia Tech,phenotyping_trial,"Blacksburg, VA",45,37.198273,-80.56826,514,NA,NA,RCBD
+ARS-NRPN-2024-BOZEMAN,10173,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Bozeman, MT",46,45.676,-111.157,1453,NA,NA,RCBD
+SDK-WHEAT-2016-BROOKINGS-FUNG,6989,South Dakota State University- Winter Wheat,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2015-01-01T00:00:00Z,2016-12-31T00:00:00Z,CRD
+SDK-WHEAT-2014-BROOKINGS,7256,South Dakota State University- Winter Wheat,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2018-BROOKINGS,6522,South Dakota State University- Winter Wheat,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2017-09-19T00:00:00Z,2018-07-18T00:00:00Z,CRD
+SDK-WHEAT-2009-BROOKINGS-IMS,7590,South Dakota State University- Winter Wheat,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+SDK-WHEAT-2014-BROOKINGS-FUNG,8042,South Dakota State University- Winter Wheat,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2015-BROOKINGS,7564,South Dakota State University- Winter Wheat,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2014-01-01T00:00:00Z,2015-12-31T00:00:00Z,CRD
+SDK-WHEAT-2017-BROOKINGS,7535,South Dakota State University- Winter Wheat,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2016-09-20T00:00:00Z,2017-07-25T00:00:00Z,CRD
+SDK-WHEAT-2018-BROOKINGS-INT,7539,South Dakota State University- Winter Wheat,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2017-01-01T00:00:00Z,2018-12-31T00:00:00Z,CRD
+SDK-WHEAT-2010-BROOKINGS,7340,South Dakota State University- Winter Wheat,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+SDK-WHEAT-2010-BROOKINGS-IMS,7209,South Dakota State University- Winter Wheat,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+SDK-WHEAT-2015-BROOKINGS-FUNG,7697,South Dakota State University- Winter Wheat,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2014-01-01T00:00:00Z,2015-12-31T00:00:00Z,CRD
+SDK-WHEAT-2017-BROOKINGS-FUNG,7221,South Dakota State University- Winter Wheat,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2016-01-01T00:00:00Z,2017-12-31T00:00:00Z,CRD
+SDK-WHEAT-2009-BROOKINGS-CPT,8082,South Dakota State University- Winter Wheat,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+SDK-WHEAT-2016-BROOKINGS,7058,South Dakota State University- Winter Wheat,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2015-09-14T00:00:00Z,2016-07-13T00:00:00Z,CRD
+ARS-NRPN-2024-BROOKINGS,10160,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,NA,NA,RCBD
+HWWpanel_2012_Bushland,7246,TCAP Cooperative,phenotyping_trial,"Bushland, TX",50,35.1833,-102.1,1177,2011-11-03T00:00:00Z,2012-06-10T00:00:00Z,MAD
+NDK-WHEAT-2010-CARRINGTON,7532,North Dakota State University,phenotyping_trial,"Carrington, ND",52,47.45728,-98.89331,461,2009-09-29T00:00:00Z,2010-07-28T00:00:00Z,CRD
+NDK-WHEAT-2009-CARRINGTON,6621,North Dakota State University,phenotyping_trial,"Carrington, ND",52,47.45728,-98.89331,461,2008-09-19T00:00:00Z,2009-08-10T00:00:00Z,CRD
+NDK-WHEAT-2013-CARRINGTON,7937,North Dakota State University,phenotyping_trial,"Carrington, ND",52,47.45728,-98.89331,461,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+NDK-WHEAT-2011-CARRINGTON,7665,North Dakota State University,phenotyping_trial,"Carrington, ND",52,47.45728,-98.89331,461,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+NDK-WHEAT-2007-CARRINGTON,7403,North Dakota State University,phenotyping_trial,"Carrington, ND",52,47.45728,-98.89331,461,2006-09-14T00:00:00Z,2007-07-30T00:00:00Z,CRD
+NDK-WHEAT-2020-CARRINGTON,8210,North Dakota State University,phenotyping_trial,"Carrington, ND",52,47.45728,-98.89331,461,NA,NA,RCBD
+NDK-WHEAT-2017-CARRINGTON,7204,North Dakota State University,phenotyping_trial,"Carrington, ND",52,47.45728,-98.89331,461,2016-01-01T00:00:00Z,2017-12-31T00:00:00Z,CRD
+NDK-WHEAT-2014-CARRINGTON,7072,North Dakota State University,phenotyping_trial,"Carrington, ND",52,47.45728,-98.89331,461,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+NDK-WHEAT-2008-CARRINGTON,7479,North Dakota State University,phenotyping_trial,"Carrington, ND",52,47.45728,-98.89331,461,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+NDK-WHEAT-2018-CARRINGTON,6604,North Dakota State University,phenotyping_trial,"Carrington, ND",52,47.45728,-98.89331,461,2017-09-14T00:00:00Z,2018-07-23T00:00:00Z,CRD
+NDK-WHEAT-2012-CARRINGTON,7354,North Dakota State University,phenotyping_trial,"Carrington, ND",52,47.45728,-98.89331,461,2011-01-01T00:00:00Z,2012-12-31T00:00:00Z,CRD
+NDK-WHEAT-2015-CARRINGTON,7046,North Dakota State University,phenotyping_trial,"Carrington, ND",52,47.45728,-98.89331,461,2014-09-22T00:00:00Z,2015-07-27T00:00:00Z,CRD
+ARS-NRPN-2024-CASSELTON,10162,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Casselton, ND",53,46.90053,-97.2112,285,NA,NA,RCBD
+NDK-WHEAT-2020-CASSELTON,8212,North Dakota State University,phenotyping_trial,"Casselton, ND",53,46.90053,-97.2112,285,NA,NA,RCBD
+UMN-WHEAT-2013-CROOKSTON,7226,University of Minnesota,phenotyping_trial,"Crookston, MN",65,47.778,-96.61,260,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+UMN-WHEAT-2016-CROOKSTON,7287,University of Minnesota,phenotyping_trial,"Crookston, MN",65,47.778,-96.61,260,2015-01-01T00:00:00Z,2016-12-31T00:00:00Z,CRD
+UMN-WHEAT-2010-CROOKSTON,7619,University of Minnesota,phenotyping_trial,"Crookston, MN",65,47.778,-96.61,260,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+UMN-WHEAT-2011-CROOKSTON,6822,University of Minnesota,phenotyping_trial,"Crookston, MN",65,47.778,-96.61,260,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-NRPN-2023-CROOKSTON,9668,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Crookston, MN",65,47.778,-96.61,260,NA,NA,RCBD
+UMN-WHEAT-2015-CROOKSTON,6899,University of Minnesota,phenotyping_trial,"Crookston, MN",65,47.778,-96.61,260,2014-01-01T00:00:00Z,2015-12-31T00:00:00Z,CRD
+UMN-WHEAT-2017-CROOKSTON,6945,University of Minnesota,phenotyping_trial,"Crookston, MN",65,47.778,-96.61,260,2016-01-01T00:00:00Z,2017-12-31T00:00:00Z,CRD
+UMN-WHEAT-2014-CROOKSTON,7156,University of Minnesota,phenotyping_trial,"Crookston, MN",65,47.778,-96.61,260,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+UMN-WHEAT-2009-CROOKSTON,6608,University of Minnesota,phenotyping_trial,"Crookston, MN",65,47.778,-96.61,260,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+UMN-WHEAT-2012-CROOKSTON,7460,University of Minnesota,phenotyping_trial,"Crookston, MN",65,47.778,-96.61,260,2011-01-01T00:00:00Z,2012-12-31T00:00:00Z,CRD
+SDK-WHEAT-2016-DAKOTA_LAKES,6597,South Dakota State University- Winter Wheat,phenotyping_trial,"Dakota Lakes, SD",67,45.00678,-99.96555,632,2015-01-01T00:00:00Z,2016-12-31T00:00:00Z,CRD
+2023_Elite_Dakota_Lakes,9624,South Dakota State University- Winter Wheat,phenotyping_trial,"Dakota Lakes, SD",67,45.00678,-99.96555,632,2022-09-22T00:00:00Z,2023-07-14T00:00:00Z,RCBD
+2022_Elite_Dakota_Lakes,9420,South Dakota State University- Winter Wheat,phenotyping_trial,"Dakota Lakes, SD",67,45.00678,-99.96555,632,2021-09-28T00:00:00Z,2022-07-19T00:00:00Z,RCBD
+2023_AYT_Dakota_Lakes,9623,South Dakota State University- Winter Wheat,phenotyping_trial,"Dakota Lakes, SD",67,45.00678,-99.96555,632,2022-09-22T00:00:00Z,2023-07-14T00:00:00Z,RCBD
+2022_AYT_Dakota_Lakes,9421,South Dakota State University- Winter Wheat,phenotyping_trial,"Dakota Lakes, SD",67,45.00678,-99.96555,632,2021-09-28T00:00:00Z,2022-07-19T00:00:00Z,RCBD
+ARS-NRPN-2024-DAKOTA_LAKES,10171,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Dakota Lakes, SD",67,45.00678,-99.96555,632,NA,NA,RCBD
+Org_Dan_23,10946,University of Illinois,phenotyping_trial,"Danforth, IL",250,40.811398,-87.96713,193,2022-10-18T00:00:00Z,2023-07-05T00:00:00Z,CRD
+OWW_2020_DANIL,10284,University of Wisconsin,NA,"Danforth, IL",250,40.811398,-87.96713,193,2019-10-03T00:00:00Z,2020-07-07T00:00:00Z,RCBD
+Org_Dan_21,10336,University of Illinois,phenotyping_trial,"Danforth, IL",250,40.811398,-87.96713,193,2020-09-25T00:00:00Z,2021-07-08T00:00:00Z,p-rep
+OWW_2021_DANIL,10295,University of Wisconsin,NA,"Danforth, IL",250,40.811398,-87.96713,193,2020-09-09T00:00:00Z,2021-07-08T00:00:00Z,RCBD
+NDK-WHEAT-2016-DICKINSON,7601,North Dakota State University,phenotyping_trial,"Dickinson, ND",71,46.87918,-102.78962,734,2015-09-22T00:00:00Z,2016-07-20T00:00:00Z,CRD
+NDK-WHEAT-2013-DICKINSON,7274,North Dakota State University,phenotyping_trial,"Dickinson, ND",71,46.87918,-102.78962,734,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+NDK-WHEAT-2009-DICKINSON,6889,North Dakota State University,phenotyping_trial,"Dickinson, ND",71,46.87918,-102.78962,734,2008-09-26T00:00:00Z,2009-08-24T00:00:00Z,CRD
+NDK-WHEAT-2015-DICKINSON,7792,North Dakota State University,phenotyping_trial,"Dickinson, ND",71,46.87918,-102.78962,734,2014-09-22T00:00:00Z,2015-08-10T00:00:00Z,CRD
+NDK-WHEAT-2011-DICKINSON,7859,North Dakota State University,phenotyping_trial,"Dickinson, ND",71,46.87918,-102.78962,734,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+NDK-WHEAT-2008-DICKINSON,6633,North Dakota State University,phenotyping_trial,"Dickinson, ND",71,46.87918,-102.78962,734,2007-09-18T00:00:00Z,2008-07-31T00:00:00Z,CRD
+NDK-WHEAT-2017-DICKINSON,7289,North Dakota State University,phenotyping_trial,"Dickinson, ND",71,46.87918,-102.78962,734,2016-09-09T00:00:00Z,2017-07-20T00:00:00Z,CRD
+NDK-WHEAT-2020-DICKINSON,8214,North Dakota State University,phenotyping_trial,"Dickinson, ND",71,46.87918,-102.78962,734,NA,NA,RCBD
+NDK-WHEAT-2012-DICKINSON,7556,North Dakota State University,phenotyping_trial,"Dickinson, ND",71,46.87918,-102.78962,734,2011-01-01T00:00:00Z,2012-12-31T00:00:00Z,CRD
+NDK-WHEAT-2014-DICKINSON,6840,North Dakota State University,phenotyping_trial,"Dickinson, ND",71,46.87918,-102.78962,734,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+NDK-WHEAT-2018-DICKINSON,6536,North Dakota State University,phenotyping_trial,"Dickinson, ND",71,46.87918,-102.78962,734,2017-09-20T00:00:00Z,2018-08-02T00:00:00Z,CRD
+NDK-WHEAT-2007-DICKINSON,6583,North Dakota State University,phenotyping_trial,"Dickinson, ND",71,46.87918,-102.78962,734,2006-09-20T00:00:00Z,2007-07-31T00:00:00Z,CRD
+SDK-WHEAT-2017-FAITH,6863,South Dakota State University- Winter Wheat,phenotyping_trial,"Faith, SD",80,45.055832,-101.73139,744,2016-09-28T00:00:00Z,2017-07-18T00:00:00Z,CRD
+SDK-WHEAT-2016-FAITH,7905,South Dakota State University- Winter Wheat,phenotyping_trial,"Faith, SD",80,45.055832,-101.73139,744,2015-09-25T00:00:00Z,2016-07-25T00:00:00Z,CRD
+SDK-WHEAT-2018-FAITH,7116,South Dakota State University- Winter Wheat,phenotyping_trial,"Faith, SD",80,45.055832,-101.73139,744,2017-09-29T00:00:00Z,2018-07-31T00:00:00Z,CRD
+NDK-WHEAT-2012-FORMAN,7602,North Dakota State University,phenotyping_trial,"Forman, ND",85,46.058636,-97.633286,381,2011-01-01T00:00:00Z,2012-12-31T00:00:00Z,CRD
+NDK-WHEAT-2015-FORMAN,7144,North Dakota State University,phenotyping_trial,"Forman, ND",85,46.058636,-97.633286,381,2014-01-01T00:00:00Z,2015-12-31T00:00:00Z,CRD
+NDK-WHEAT-2010-FORMAN,6796,North Dakota State University,phenotyping_trial,"Forman, ND",85,46.058636,-97.633286,381,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+NDK-WHEAT-2013-FORMAN,6541,North Dakota State University,phenotyping_trial,"Forman, ND",85,46.058636,-97.633286,381,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+NDK-WHEAT-2011-FORMAN,8035,North Dakota State University,phenotyping_trial,"Forman, ND",85,46.058636,-97.633286,381,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+NDK-WHEAT-2014-FORMAN,8016,North Dakota State University,phenotyping_trial,"Forman, ND",85,46.058636,-97.633286,381,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-NRPN-2024-FORT_COLLINS,10166,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Fort Collins, CO",87,40.651867,-104.99901,1551,NA,NA,RCBD
+HWWpanel_2013_FortCollins_Dry,6821,TCAP Cooperative,phenotyping_trial,"Fort Collins, CO",87,40.651867,-104.99901,1551,2012-10-02T00:00:00Z,2013-07-17T00:00:00Z,MAD
+HWWpanel_2013_FortCollins_Irr,7071,TCAP Cooperative,phenotyping_trial,"Fort Collins, CO",87,40.651867,-104.99901,1551,2012-10-02T00:00:00Z,2013-07-17T00:00:00Z,MAD
+SDK-WHEAT-2018-GEDDES,6789,South Dakota State University- Winter Wheat,phenotyping_trial,"Geddes, SD",91,43.265087,-98.66359,469,2017-10-10T00:00:00Z,2018-07-23T00:00:00Z,CRD
+SDK-WHEAT-2017-GEDDES,6950,South Dakota State University- Winter Wheat,phenotyping_trial,"Geddes, SD",91,43.265087,-98.66359,469,2016-10-13T00:00:00Z,2017-07-18T00:00:00Z,CRD
+SDK-WHEAT-2016-GEDDES,7490,South Dakota State University- Winter Wheat,phenotyping_trial,"Geddes, SD",91,43.265087,-98.66359,469,2015-10-06T00:00:00Z,2016-07-14T00:00:00Z,CRD
+ARS-NRPN-2023-GOEHNER,9698,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Goehner, NE",290,40.834553,-97.214966,470,NA,NA,RCBD
+HWWpanel_2012_Greeley_Irr,7235,TCAP Cooperative,phenotyping_trial,"Greeley, CO",97,40.423313,-104.70913,1426,2012-10-19T00:00:00Z,2012-07-13T00:00:00Z,MAD
+HWWpanel_2012_Greeley_Dry,7843,TCAP Cooperative,phenotyping_trial,"Greeley, CO",97,40.423313,-104.70913,1426,2012-10-19T00:00:00Z,2012-07-03T00:00:00Z,MAD
+SDK-WHEAT-2018-HAYES,7886,South Dakota State University- Winter Wheat,phenotyping_trial,"Hayes, SD",103,44.37026,-101.02153,611,2017-09-21T00:00:00Z,2018-07-19T00:00:00Z,CRD
+SDK-WHEAT-2016-HAYES,7655,South Dakota State University- Winter Wheat,phenotyping_trial,"Hayes, SD",103,44.37026,-101.02153,611,2015-09-23T00:00:00Z,2016-07-14T00:00:00Z,CRD
+SDK-WHEAT-2015-HAYES,7522,South Dakota State University- Winter Wheat,phenotyping_trial,"Hayes, SD",103,44.37026,-101.02153,611,2014-01-01T00:00:00Z,2015-12-31T00:00:00Z,CRD
+SDK-WHEAT-2010-HAYES,6610,South Dakota State University- Winter Wheat,phenotyping_trial,"Hayes, SD",103,44.37026,-101.02153,611,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+SDK-WHEAT-2009-HAYES,6631,South Dakota State University- Winter Wheat,phenotyping_trial,"Hayes, SD",103,44.37026,-101.02153,611,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+HWWpanel_2013_Hays,7615,TCAP Cooperative,phenotyping_trial,"Hays, KS",104,38.87917,-99.32677,623,2012-10-10T00:00:00Z,2013-07-03T00:00:00Z,MAD
+NDK-WHEAT-2010-HETTINGER,7992,North Dakota State University,phenotyping_trial,"Hettinger, ND",107,46.057785,-102.78506,847,2009-10-08T00:00:00Z,2010-08-07T00:00:00Z,CRD
+NDK-WHEAT-2018-HETTINGER,6939,North Dakota State University,phenotyping_trial,"Hettinger, ND",107,46.057785,-102.78506,847,2017-09-29T00:00:00Z,2018-08-03T00:00:00Z,CRD
+NDK-WHEAT-2015-HETTINGER,7628,North Dakota State University,phenotyping_trial,"Hettinger, ND",107,46.057785,-102.78506,847,2014-09-22T00:00:00Z,2015-08-03T00:00:00Z,CRD
+NDK-WHEAT-2016-HETTINGER,7127,North Dakota State University,phenotyping_trial,"Hettinger, ND",107,46.057785,-102.78506,847,2015-09-21T00:00:00Z,2016-07-19T00:00:00Z,CRD
+NDK-WHEAT-2007-HETTINGER,7371,North Dakota State University,phenotyping_trial,"Hettinger, ND",107,46.057785,-102.78506,847,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+NDK-WHEAT-2014-HETTINGER,7902,North Dakota State University,phenotyping_trial,"Hettinger, ND",107,46.057785,-102.78506,847,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+NDK-WHEAT-2017-HETTINGER,7862,North Dakota State University,phenotyping_trial,"Hettinger, ND",107,46.057785,-102.78506,847,2016-09-14T00:00:00Z,2017-07-17T00:00:00Z,CRD
+NDK-WHEAT-2009-HETTINGER,6590,North Dakota State University,phenotyping_trial,"Hettinger, ND",107,46.057785,-102.78506,847,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+NDK-WHEAT-2008-HETTINGER,8025,North Dakota State University,phenotyping_trial,"Hettinger, ND",107,46.057785,-102.78506,847,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+NDK-WHEAT-2012-HETTINGER,7357,North Dakota State University,phenotyping_trial,"Hettinger, ND",107,46.057785,-102.78506,847,2011-01-01T00:00:00Z,2012-12-31T00:00:00Z,CRD
+HWWpanel_2012_Mead,5751,TCAP Cooperative,phenotyping_trial,"Ithaca, NE",117,41.16135,-96.4254,353,2011-10-04T00:00:00Z,2012-06-28T00:00:00Z,CRD
+SDK-WHEAT-2010-KENNEBEC,8080,South Dakota State University- Winter Wheat,phenotyping_trial,"Kennebec, SD",120,43.85862,-99.82433,553,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+SDK-WHEAT-2014-KENNEBEC,6857,South Dakota State University- Winter Wheat,phenotyping_trial,"Kennebec, SD",120,43.85862,-99.82433,553,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2009-KENNEBEC,6591,South Dakota State University- Winter Wheat,phenotyping_trial,"Kennebec, SD",120,43.85862,-99.82433,553,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+SDK-WHEAT-2015-KENNEBEC,7511,South Dakota State University- Winter Wheat,phenotyping_trial,"Kennebec, SD",120,43.85862,-99.82433,553,2014-01-01T00:00:00Z,2015-12-31T00:00:00Z,CRD
+SDK-WHEAT-2016-KENNEBEC,6661,South Dakota State University- Winter Wheat,phenotyping_trial,"Kennebec, SD",120,43.85862,-99.82433,553,2015-09-23T00:00:00Z,2016-07-21T00:00:00Z,CRD
+UMN-WHEAT-2016-KIMBALL,7988,University of Minnesota,phenotyping_trial,"Kimball, MN",123,45.36261,-94.30993,348,2015-01-01T00:00:00Z,2016-12-31T00:00:00Z,CRD
+UMN-WHEAT-2015-KIMBALL,7562,University of Minnesota,phenotyping_trial,"Kimball, MN",123,45.36261,-94.30993,348,2014-01-01T00:00:00Z,2015-12-31T00:00:00Z,CRD
+UMN-WHEAT-2019-KIMBALL,6193,University of Minnesota,phenotyping_trial,"Kimball, MN",123,45.36261,-94.30993,348,NA,NA,RCBD
+UMN-WHEAT-2018-KIMBALL,7778,University of Minnesota,phenotyping_trial,"Kimball, MN",123,45.36261,-94.30993,348,2017-01-01T00:00:00Z,2018-12-31T00:00:00Z,CRD
+UMN-WHEAT-2015-LAMBERTON,8002,University of Minnesota,phenotyping_trial,"Lamberton, MN",129,44.282497,-95.26934,335,2014-01-01T00:00:00Z,2015-12-31T00:00:00Z,CRD
+UMN-WHEAT-2017-LAMBERTON,7770,University of Minnesota,phenotyping_trial,"Lamberton, MN",129,44.282497,-95.26934,335,2016-01-01T00:00:00Z,2017-12-31T00:00:00Z,CRD
+UMN-WHEAT-2019-LAMBERTON,6192,University of Minnesota,phenotyping_trial,"Lamberton, MN",129,44.282497,-95.26934,335,NA,NA,RCBD
+UMN-WHEAT-2016-LAMBERTON,7758,University of Minnesota,phenotyping_trial,"Lamberton, MN",129,44.282497,-95.26934,335,2015-01-01T00:00:00Z,2016-12-31T00:00:00Z,CRD
+UMN-WHEAT-2020-LAMBERTON,8206,University of Minnesota,phenotyping_trial,"Lamberton, MN",129,44.282497,-95.26934,335,NA,NA,RCBD
+UMN-WHEAT-2010-LAMBERTON,7751,University of Minnesota,phenotyping_trial,"Lamberton, MN",129,44.282497,-95.26934,335,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+UMN-WHEAT-2014-LAMBERTON,6947,University of Minnesota,phenotyping_trial,"Lamberton, MN",129,44.282497,-95.26934,335,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+UMN-WHEAT-2009-LAMBERTON,7153,University of Minnesota,phenotyping_trial,"Lamberton, MN",129,44.282497,-95.26934,335,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+NDK-WHEAT-2014-LANGDON,7761,North Dakota State University,phenotyping_trial,"Langdon, ND",130,48.76,-98.37,492,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+NDK-WHEAT-2011-LANGDON,8050,North Dakota State University,phenotyping_trial,"Langdon, ND",130,48.76,-98.37,492,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+NDK-WHEAT-2013-LANGDON,7052,North Dakota State University,phenotyping_trial,"Langdon, ND",130,48.76,-98.37,492,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+NDK-WHEAT-2015-LANGDON,7365,North Dakota State University,phenotyping_trial,"Langdon, ND",130,48.76,-98.37,492,2014-09-15T00:00:00Z,2015-08-07T00:00:00Z,CRD
+NDK-WHEAT-2016-LANGDON,8076,North Dakota State University,phenotyping_trial,"Langdon, ND",130,48.76,-98.37,492,2015-09-10T00:00:00Z,2016-08-10T00:00:00Z,CRD
+NDK-WHEAT-2010-LANGDON,6916,North Dakota State University,phenotyping_trial,"Langdon, ND",130,48.76,-98.37,492,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+NDK-WHEAT-2008-LANGDON,7295,North Dakota State University,phenotyping_trial,"Langdon, ND",130,48.76,-98.37,492,2007-09-12T00:00:00Z,2008-08-21T00:00:00Z,CRD
+NDK-WHEAT-2012-LANGDON,6540,North Dakota State University,phenotyping_trial,"Langdon, ND",130,48.76,-98.37,492,2011-01-01T00:00:00Z,2012-12-31T00:00:00Z,CRD
+NDK-WHEAT-2017-LANGDON,6999,North Dakota State University,phenotyping_trial,"Langdon, ND",130,48.76,-98.37,492,2016-09-15T00:00:00Z,2017-08-08T00:00:00Z,CRD
+NDK-WHEAT-2009-LANGDON,8010,North Dakota State University,phenotyping_trial,"Langdon, ND",130,48.76,-98.37,492,2008-09-16T00:00:00Z,2009-08-25T00:00:00Z,CRD
+NDK-WHEAT-2007-LANGDON,7170,North Dakota State University,phenotyping_trial,"Langdon, ND",130,48.76,-98.37,492,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+NDK-WHEAT-2020-LANGDON,8213,North Dakota State University,phenotyping_trial,"Langdon, ND",130,48.76,-98.37,492,NA,NA,RCBD
+UMN-WHEAT-2014-LECENTER,8090,University of Minnesota,phenotyping_trial,"Le Center, MN",134,44.360046,-93.7814,315,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+UMN-WHEAT-2018-LECENTER,7376,University of Minnesota,phenotyping_trial,"Le Center, MN",134,44.360046,-93.7814,315,2017-01-01T00:00:00Z,2018-12-31T00:00:00Z,CRD
+UMN-WHEAT-2017-LECENTER,7391,University of Minnesota,phenotyping_trial,"Le Center, MN",134,44.360046,-93.7814,315,2016-01-01T00:00:00Z,2017-12-31T00:00:00Z,CRD
+UMN-WHEAT-2015-LECENTER,7224,University of Minnesota,phenotyping_trial,"Le Center, MN",134,44.360046,-93.7814,315,2014-01-01T00:00:00Z,2015-12-31T00:00:00Z,CRD
+UMN-WHEAT-2016-LECENTER,7965,University of Minnesota,phenotyping_trial,"Le Center, MN",134,44.360046,-93.7814,315,2015-01-01T00:00:00Z,2016-12-31T00:00:00Z,CRD
+UMN-WHEAT-2019-LECENTER,6191,University of Minnesota,phenotyping_trial,"Le Center, MN",134,44.360046,-93.7814,315,NA,NA,RCBD
+UMN-WHEAT-2013-LECENTER,7919,University of Minnesota,phenotyping_trial,"Le Center, MN",134,44.360046,-93.7814,315,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+ARS-NRPN-2024-LINCOLN,10164,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Lincoln, NE",138,40.80686,-96.68168,360,NA,NA,RCBD
+NDK-WHEAT-2009-LISBON,7731,North Dakota State University,phenotyping_trial,"Lisbon, ND",140,46.455975,-97.63692,359,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+NDK-WHEAT-2007-LISBON,6750,North Dakota State University,phenotyping_trial,"Lisbon, ND",140,46.455975,-97.63692,359,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+NDK-WHEAT-2008-LISBON,6632,North Dakota State University,phenotyping_trial,"Lisbon, ND",140,46.455975,-97.63692,359,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-NRPN-2024-LUNDS_VALLEY,10170,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Lunds Valley, ND",308,48.50685,-102.53823,681,NA,NA,RCBD
+OHRWW_2023_MAD,10941,University of Wisconsin,phenotyping_trial,"Madison, WI",314,43.064213,-89.53479,328.9,2022-09-29T00:00:00Z,2023-07-10T00:00:00Z,Alpha
+OWW_2020_MAD,10280,University of Wisconsin,NA,"Madison, WI",314,43.064213,-89.53479,328.9,2019-09-25T00:00:00Z,2020-07-17T00:00:00Z,Alpha
+NDK-WHEAT-2010-MANDAN,8113,North Dakota State University,phenotyping_trial,"Mandan, ND",142,46.71312,-100.95258,572,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+NDK-WHEAT-2009-MANDAN,7149,North Dakota State University,phenotyping_trial,"Mandan, ND",142,46.71312,-100.95258,572,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+NDK-WHEAT-2011-MANDAN,7494,North Dakota State University,phenotyping_trial,"Mandan, ND",142,46.71312,-100.95258,572,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+NDK-WHEAT-2007-MANDAN,7361,North Dakota State University,phenotyping_trial,"Mandan, ND",142,46.71312,-100.95258,572,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+NDK-WHEAT-2008-MANDAN,7045,North Dakota State University,phenotyping_trial,"Mandan, ND",142,46.71312,-100.95258,572,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+NDK-WHEAT-2012-MANDAN,7790,North Dakota State University,phenotyping_trial,"Mandan, ND",142,46.71312,-100.95258,572,2011-01-01T00:00:00Z,2012-12-31T00:00:00Z,CRD
+HWWpanel_2012_Manhattan_Irr,7249,TCAP Cooperative,phenotyping_trial,"Manhattan, KS",143,39.11,-96.45,341,2011-11-18T00:00:00Z,2012-07-03T00:00:00Z,Augmented
+HWWpanel_2012_Manhattan_Dry,7512,TCAP Cooperative,phenotyping_trial,"Manhattan, KS",143,39.11,-96.45,341,2011-11-18T00:00:00Z,2012-07-03T00:00:00Z,Augmented
+SDK-WHEAT-2014-MARTIN,6851,South Dakota State University- Winter Wheat,phenotyping_trial,"Martin, SD",145,43.172157,-101.73407,1004,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2016-MARTIN,6581,South Dakota State University- Winter Wheat,phenotyping_trial,"Martin, SD",145,43.172157,-101.73407,1004,2015-09-22T00:00:00Z,2016-07-22T00:00:00Z,CRD
+SDK-WHEAT-2017-MARTIN,6677,South Dakota State University- Winter Wheat,phenotyping_trial,"Martin, SD",145,43.172157,-101.73407,1004,2016-09-21T00:00:00Z,2017-08-04T00:00:00Z,CRD
+SDK-WHEAT-2018-MARTIN,7720,South Dakota State University- Winter Wheat,phenotyping_trial,"Martin, SD",145,43.172157,-101.73407,1004,2017-10-11T00:00:00Z,2018-08-08T00:00:00Z,CRD
+SDK-WHEAT-2015-MARTIN,6736,South Dakota State University- Winter Wheat,phenotyping_trial,"Martin, SD",145,43.172157,-101.73407,1004,2014-01-01T00:00:00Z,2015-12-31T00:00:00Z,CRD
+SDK-WHEAT-2014-MCLAUGHLIN,6513,South Dakota State University- Winter Wheat,phenotyping_trial,"McLaughlin, SD",148,45.81444,-100.81041,611,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2015-MCLAUGHLIN,7355,South Dakota State University- Winter Wheat,phenotyping_trial,"McLaughlin, SD",148,45.81444,-100.81041,611,2014-01-01T00:00:00Z,2015-12-31T00:00:00Z,CRD
+NDK-WHEAT-2017-MINOT,7384,North Dakota State University,phenotyping_trial,"Minot, ND",152,48.084625,-101.41901,645,2016-09-20T00:00:00Z,2017-07-24T00:00:00Z,CRD
+NDK-WHEAT-2018-MINOT,7102,North Dakota State University,phenotyping_trial,"Minot, ND",152,48.084625,-101.41901,645,2017-01-01T00:00:00Z,2018-12-31T00:00:00Z,CRD
+NDK-WHEAT-2016-MINOT,6791,North Dakota State University,phenotyping_trial,"Minot, ND",152,48.084625,-101.41901,645,2015-09-23T00:00:00Z,2016-07-29T00:00:00Z,CRD
+NDK-WHEAT-2015-MINOT,6869,North Dakota State University,phenotyping_trial,"Minot, ND",152,48.084625,-101.41901,645,2014-09-22T00:00:00Z,2015-08-04T00:00:00Z,CRD
+NDK-WHEAT-2013-MINOT,7483,North Dakota State University,phenotyping_trial,"Minot, ND",152,48.084625,-101.41901,645,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+NDK-WHEAT-2014-MINOT,7067,North Dakota State University,phenotyping_trial,"Minot, ND",152,48.084625,-101.41901,645,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+NDK-WHEAT-2020-MINOT,8211,North Dakota State University,phenotyping_trial,"Minot, ND",152,48.084625,-101.41901,645,NA,NA,RCBD
+NDK-WHEAT-2009-MINOT,7935,North Dakota State University,phenotyping_trial,"Minot, ND",152,48.084625,-101.41901,645,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+NDK-WHEAT-2012-MINOT,8071,North Dakota State University,phenotyping_trial,"Minot, ND",152,48.084625,-101.41901,645,2011-01-01T00:00:00Z,2012-12-31T00:00:00Z,CRD
+NDK-WHEAT-2011-MINOT,7582,North Dakota State University,phenotyping_trial,"Minot, ND",152,48.084625,-101.41901,645,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-NRPN-2024-MOCCASIN,10161,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Moccasin, MT",153,34.99842,-84.01824,811,NA,NA,RCBD
+ARS-NRPN-2023-MOCCASIN,9724,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Moccasin, MT",153,34.99842,-84.01824,811,NA,NA,RCBD
+SDK-WHEAT-2018-MT_VERNON,6785,South Dakota State University- Winter Wheat,phenotyping_trial,"Mt Vernon, SD",155,43.72153,-98.26416,422,2017-10-10T00:00:00Z,2018-07-17T00:00:00Z,CRD
+ARS-NRPN-2024-NORTH_PLATTE,10167,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"North Platte, NE",165,40.04972,-100.75166,844,NA,NA,RCBD
+SDK-WHEAT-2015-ONIDA,7857,South Dakota State University- Winter Wheat,phenotyping_trial,"Onida, SD",167,44.722874,-99.979546,582,2014-01-01T00:00:00Z,2015-12-31T00:00:00Z,CRD
+SDK-WHEAT-2010-ONIDA,7091,South Dakota State University- Winter Wheat,phenotyping_trial,"Onida, SD",167,44.722874,-99.979546,582,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+SDK-WHEAT-2009-ONIDA,7861,South Dakota State University- Winter Wheat,phenotyping_trial,"Onida, SD",167,44.722874,-99.979546,582,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+SDK-WHEAT-2016-ONIDA,7240,South Dakota State University- Winter Wheat,phenotyping_trial,"Onida, SD",167,44.722874,-99.979546,582,2015-09-11T00:00:00Z,2016-07-12T00:00:00Z,CRD
+SDK-WHEAT-2017-ONIDA,7921,South Dakota State University- Winter Wheat,phenotyping_trial,"Onida, SD",167,44.722874,-99.979546,582,2016-09-16T00:00:00Z,2017-07-11T00:00:00Z,CRD
+SDK-WHEAT-2014-ONIDA,7216,South Dakota State University- Winter Wheat,phenotyping_trial,"Onida, SD",167,44.722874,-99.979546,582,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2009-PIERRE,6545,South Dakota State University- Winter Wheat,phenotyping_trial,"Pierre, SD",174,44.334072,-100.09419,475,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+SDK-WHEAT-2014-PIERRE,7784,South Dakota State University- Winter Wheat,phenotyping_trial,"Pierre, SD",174,44.334072,-100.09419,475,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2018-PIERRE,7143,South Dakota State University- Winter Wheat,phenotyping_trial,"Pierre, SD",174,44.334072,-100.09419,475,2017-09-21T00:00:00Z,2018-07-17T00:00:00Z,CRD
+SDK-WHEAT-2017-PIERRE,6626,South Dakota State University- Winter Wheat,phenotyping_trial,"Pierre, SD",174,44.334072,-100.09419,475,2016-09-15T00:00:00Z,2017-07-14T00:00:00Z,CRD
+SDK-WHEAT-2010-PIERRE,7694,South Dakota State University- Winter Wheat,phenotyping_trial,"Pierre, SD",174,44.334072,-100.09419,475,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+SDK-WHEAT-2009-PLATTE,6523,South Dakota State University- Winter Wheat,phenotyping_trial,"Platte, SD",242,43.386,-98.942,488,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+SDK-WHEAT-2010-PLATTE,7971,South Dakota State University- Winter Wheat,phenotyping_trial,"Platte, SD",242,43.386,-98.942,488,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+NDK-WHEAT-2018-PROSPER,7162,North Dakota State University,phenotyping_trial,"Prosper, ND",183,46.96,-97.2,285,2017-01-01T00:00:00Z,2018-12-31T00:00:00Z,CRD
+NDK-WHEAT-2016-PROSPER,7212,North Dakota State University,phenotyping_trial,"Prosper, ND",183,46.96,-97.2,285,2015-09-28T00:00:00Z,2016-12-31T00:00:00Z,CRD
+NDK-WHEAT-2012-PROSPER,6743,North Dakota State University,phenotyping_trial,"Prosper, ND",183,46.96,-97.2,285,2011-01-01T00:00:00Z,2012-12-31T00:00:00Z,CRD
+NDK-WHEAT-2010-PROSPER,7644,North Dakota State University,phenotyping_trial,"Prosper, ND",183,46.96,-97.2,285,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+NDK-WHEAT-2014-PROSPER,7172,North Dakota State University,phenotyping_trial,"Prosper, ND",183,46.96,-97.2,285,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+NDK-WHEAT-2007-PROSPER,6830,North Dakota State University,phenotyping_trial,"Prosper, ND",183,46.96,-97.2,285,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+NDK-WHEAT-2011-PROSPER,7656,North Dakota State University,phenotyping_trial,"Prosper, ND",183,46.96,-97.2,285,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+NDK-WHEAT-2008-PROSPER,6873,North Dakota State University,phenotyping_trial,"Prosper, ND",183,46.96,-97.2,285,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+NDK-WHEAT-2009-PROSPER,8063,North Dakota State University,phenotyping_trial,"Prosper, ND",183,46.96,-97.2,285,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+NDK-WHEAT-2013-PROSPER,7820,North Dakota State University,phenotyping_trial,"Prosper, ND",183,46.96,-97.2,285,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+UMN-WHEAT-2013-ROSEAU,8030,University of Minnesota,phenotyping_trial,"Roseau, MN",191,48.704838,-95.75038,329,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+UMN-WHEAT-2012-ROSEAU,7587,University of Minnesota,phenotyping_trial,"Roseau, MN",191,48.704838,-95.75038,329,2011-01-01T00:00:00Z,2012-12-31T00:00:00Z,CRD
+UMN-WHEAT-2019-ROSEAU,6190,University of Minnesota,phenotyping_trial,"Roseau, MN",191,48.704838,-95.75038,329,NA,NA,RCBD
+UMN-WHEAT-2011-ROSEAU,7983,University of Minnesota,phenotyping_trial,"Roseau, MN",191,48.704838,-95.75038,329,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+UMN-WHEAT-2016-ROSEAU,7911,University of Minnesota,phenotyping_trial,"Roseau, MN",191,48.704838,-95.75038,329,2015-01-01T00:00:00Z,2016-12-31T00:00:00Z,CRD
+UMN-WHEAT-2010-ROSEAU,7756,University of Minnesota,phenotyping_trial,"Roseau, MN",191,48.704838,-95.75038,329,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+SDK-WHEAT-2009-SELBY,6531,South Dakota State University- Winter Wheat,phenotyping_trial,"Selby, SD",197,45.43463,-100.09817,584,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+SDK-WHEAT-2010-SELBY,6559,South Dakota State University- Winter Wheat,phenotyping_trial,"Selby, SD",197,45.43463,-100.09817,584,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+SDK-WHEAT-2017-SELBY,8081,South Dakota State University- Winter Wheat,phenotyping_trial,"Selby, SD",197,45.43463,-100.09817,584,2016-09-18T00:00:00Z,2017-07-26T00:00:00Z,CRD
+SDK-WHEAT-2018-SELBY,6758,South Dakota State University- Winter Wheat,phenotyping_trial,"Selby, SD",197,45.43463,-100.09817,584,2017-09-14T00:00:00Z,2018-07-25T00:00:00Z,CRD
+SDK-WHEAT-2016-SELBY,6703,South Dakota State University- Winter Wheat,phenotyping_trial,"Selby, SD",197,45.43463,-100.09817,584,2015-09-11T00:00:00Z,2016-07-28T00:00:00Z,CRD
+SDK-WHEAT-2010-SELBY-IMS,7484,South Dakota State University- Winter Wheat,phenotyping_trial,"Selby, SD",197,45.43463,-100.09817,584,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+SDK-WHEAT-2015-SELBY,6878,South Dakota State University- Winter Wheat,phenotyping_trial,"Selby, SD",197,45.43463,-100.09817,584,2014-01-01T00:00:00Z,2015-12-31T00:00:00Z,CRD
+RPN_2023_Sidney,10975,University of Nebraska,NA,"Sidney, NE",199,41.28879,-103.01318,1310,2022-09-20T00:00:00Z,NA,RCBD
+ARS-NRPN-2024-SIDNEY,10172,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Sidney, NE",199,41.28879,-103.01318,1310,NA,NA,RCBD
+SDK-WHEAT-2017-SOUTH_SHORE,7662,South Dakota State University- Winter Wheat,phenotyping_trial,"South Shore, SD",201,45.105892,-97.101746,563,2016-09-09T00:00:00Z,2017-07-24T00:00:00Z,CRD
+SDK-WHEAT-2018-SOUTH_SHORE,6577,South Dakota State University- Winter Wheat,phenotyping_trial,"South Shore, SD",201,45.105892,-97.101746,563,2017-09-19T00:00:00Z,2018-07-30T00:00:00Z,CRD
+SDK-WHEAT-2016-SOUTH_SHORE,7956,South Dakota State University- Winter Wheat,phenotyping_trial,"South Shore, SD",201,45.105892,-97.101746,563,2015-09-15T00:00:00Z,2016-07-18T00:00:00Z,CRD
+UMN-WHEAT-2016-STPAUL,7109,University of Minnesota,phenotyping_trial,"St. Paul, MN",203,45,-93,311,2015-01-01T00:00:00Z,2016-12-31T00:00:00Z,CRD
+UMN-WHEAT-2010-STPAUL,7944,University of Minnesota,phenotyping_trial,"St. Paul, MN",203,45,-93,311,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+UMN-WHEAT-2020-STPAUL,8205,University of Minnesota,phenotyping_trial,"St. Paul, MN",203,45,-93,311,NA,NA,RCBD
+UMN-WHEAT-2015-STPAUL,6990,University of Minnesota,phenotyping_trial,"St. Paul, MN",203,45,-93,311,2014-01-01T00:00:00Z,2015-12-31T00:00:00Z,CRD
+UMN-WHEAT-2018-STPAUL,7285,University of Minnesota,phenotyping_trial,"St. Paul, MN",203,45,-93,311,2017-01-01T00:00:00Z,2018-12-31T00:00:00Z,CRD
+UMN-WHEAT-2017-STPAUL,7996,University of Minnesota,phenotyping_trial,"St. Paul, MN",203,45,-93,311,2016-01-01T00:00:00Z,2017-12-31T00:00:00Z,CRD
+UMN-WHEAT-2012-STPAUL,7392,University of Minnesota,phenotyping_trial,"St. Paul, MN",203,45,-93,311,2011-01-01T00:00:00Z,2012-12-31T00:00:00Z,CRD
+ARS-NRPN-2024-ST_PAUL,10169,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"St. Paul, MN",203,45,-93,311,NA,NA,RCBD
+UMN-WHEAT-2009-STPAUL,7567,University of Minnesota,phenotyping_trial,"St. Paul, MN",203,45,-93,311,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+UMN-WHEAT-2014-STPAUL,7032,University of Minnesota,phenotyping_trial,"St. Paul, MN",203,45,-93,311,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2017-STURGIS,6766,South Dakota State University- Winter Wheat,phenotyping_trial,"Sturgis, SD",205,44.36917,-103.36166,963,2016-09-22T00:00:00Z,2017-07-11T00:00:00Z,CRD
+SDK-WHEAT-2016-STURGIS,6845,South Dakota State University- Winter Wheat,phenotyping_trial,"Sturgis, SD",205,44.36917,-103.36166,963,2015-09-25T00:00:00Z,2016-07-11T00:00:00Z,CRD
+SDK-WHEAT-2018-STURGIS,7048,South Dakota State University- Winter Wheat,phenotyping_trial,"Sturgis, SD",205,44.36917,-103.36166,963,2017-09-29T00:00:00Z,2018-07-30T00:00:00Z,CRD
+SDK-WHEAT-2010-STURGIS,7842,South Dakota State University- Winter Wheat,phenotyping_trial,"Sturgis, SD",205,44.36917,-103.36166,963,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+SDK-WHEAT-2015-STURGIS,7205,South Dakota State University- Winter Wheat,phenotyping_trial,"Sturgis, SD",205,44.36917,-103.36166,963,2014-01-01T00:00:00Z,2015-12-31T00:00:00Z,CRD
+SDK-WHEAT-2014-STURGIS,7375,South Dakota State University- Winter Wheat,phenotyping_trial,"Sturgis, SD",205,44.36917,-103.36166,963,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+HWWpanel_2013_Tipton,9600,National Small Grains Collection,phenotyping_trial,"Tipton, OK",210,34.443157,-99.13334,391,NA,NA,Augmented
+HWWpanel_2012_Tipton,5491,TCAP Cooperative,phenotyping_trial,"Tipton, OK",210,34.443157,-99.13334,391,2011-11-01T00:00:00Z,2012-06-05T00:00:00Z,Augmented
+SDK-WHEAT-2018-VIVIAN,6759,South Dakota State University- Winter Wheat,phenotyping_trial,"Vivian, SD",213,44.0075,-100.30806,617,2017-10-10T00:00:00Z,2018-07-26T00:00:00Z,CRD
+SDK-WHEAT-2017-VIVIAN,7776,South Dakota State University- Winter Wheat,phenotyping_trial,"Vivian, SD",213,44.0075,-100.30806,617,2016-09-20T00:00:00Z,2017-07-10T00:00:00Z,CRD
+SDK-WHEAT-2015-WALL,7999,South Dakota State University- Winter Wheat,phenotyping_trial,"Wall, SD",215,44.01377,-102.238396,855,2014-01-01T00:00:00Z,2015-12-31T00:00:00Z,CRD
+SDK-WHEAT-2010-WALL,8099,South Dakota State University- Winter Wheat,phenotyping_trial,"Wall, SD",215,44.01377,-102.238396,855,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+SDK-WHEAT-2017-WALL,7915,South Dakota State University- Winter Wheat,phenotyping_trial,"Wall, SD",215,44.01377,-102.238396,855,2016-09-27T00:00:00Z,2017-07-13T00:00:00Z,CRD
+SDK-WHEAT-2018-WALL,7308,South Dakota State University- Winter Wheat,phenotyping_trial,"Wall, SD",215,44.01377,-102.238396,855,2017-10-04T00:00:00Z,2018-07-20T00:00:00Z,CRD
+SDK-WHEAT-2014-WALL,7828,South Dakota State University- Winter Wheat,phenotyping_trial,"Wall, SD",215,44.01377,-102.238396,855,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2009-WALL,6639,South Dakota State University- Winter Wheat,phenotyping_trial,"Wall, SD",215,44.01377,-102.238396,855,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+SDK-WHEAT-2016-WALL,7885,South Dakota State University- Winter Wheat,phenotyping_trial,"Wall, SD",215,44.01377,-102.238396,855,2015-10-12T00:00:00Z,2016-07-15T00:00:00Z,CRD
+HRWElite_2023_WARVA,10934,Virginia Tech,phenotyping_trial,"Warsaw, VA",218,37.96954,-76.76652,36,NA,NA,RCBD
+UniformHRW_2022_WARVA,10834,Virginia Tech,phenotyping_trial,"Warsaw, VA",218,37.96954,-76.76652,36,NA,NA,RCBD
+UniformHRW_2023_WARVA,10995,Virginia Tech,phenotyping_trial,"Warsaw, VA",218,37.96954,-76.76652,36,NA,NA,RCBD
+HRWElite_2022_WARVA,10752,Virginia Tech,phenotyping_trial,"Warsaw, VA",218,37.96954,-76.76652,36,NA,NA,RCBD
+ARS-NRPN-2023-WICHITA,9686,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Wichita, KS",221,37.651974,-97.258995,419,NA,NA,RCBD
+ARS-NRPN-2024-WICHITA,10163,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Wichita, KS",221,37.651974,-97.258995,419,NA,NA,RCBD
+NDK-WHEAT-2013-WILLISTON,8040,North Dakota State University,phenotyping_trial,"Williston, ND",222,48.22573,-103.64905,627,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+NDK-WHEAT-2012-WILLISTON,7823,North Dakota State University,phenotyping_trial,"Williston, ND",222,48.22573,-103.64905,627,2011-01-01T00:00:00Z,2012-12-31T00:00:00Z,CRD
+NDK-WHEAT-2011-WILLISTON,7717,North Dakota State University,phenotyping_trial,"Williston, ND",222,48.22573,-103.64905,627,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+NDK-WHEAT-2008-WILLISTON,6774,North Dakota State University,phenotyping_trial,"Williston, ND",222,48.22573,-103.64905,627,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+NDK-WHEAT-2018-WILLISTON,6968,North Dakota State University,phenotyping_trial,"Williston, ND",222,48.22573,-103.64905,627,2017-09-13T00:00:00Z,2018-07-23T00:00:00Z,CRD
+NDK-WHEAT-2010-WILLISTON,6847,North Dakota State University,phenotyping_trial,"Williston, ND",222,48.22573,-103.64905,627,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+NDK-WHEAT-2007-WILLISTON,8043,North Dakota State University,phenotyping_trial,"Williston, ND",222,48.22573,-103.64905,627,2006-09-13T00:00:00Z,2007-07-23T00:00:00Z,CRD
+ARS-NRPN-2023-WILLISTON,9756,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Williston, ND",222,48.22573,-103.64905,627,NA,NA,RCBD
+NDK-WHEAT-2020-WILLISTON,8209,North Dakota State University,phenotyping_trial,"Williston, ND",222,48.22573,-103.64905,627,NA,NA,RCBD
+NDK-WHEAT-2009-WILLISTON,7953,North Dakota State University,phenotyping_trial,"Williston, ND",222,48.22573,-103.64905,627,2008-09-11T00:00:00Z,2009-07-21T00:00:00Z,CRD
+NDK-WHEAT-2016-WILLISTON,6675,North Dakota State University,phenotyping_trial,"Williston, ND",222,48.22573,-103.64905,627,2015-09-18T00:00:00Z,2016-07-24T00:00:00Z,CRD
+NDK-WHEAT-2015-WILLISTON,6687,North Dakota State University,phenotyping_trial,"Williston, ND",222,48.22573,-103.64905,627,2014-09-18T00:00:00Z,2015-07-24T00:00:00Z,CRD
+SDK-WHEAT-2016-WINNER_INTENSIVE,6569,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner intensive, SD",225,43.331764,-99.80328,625,2015-01-01T00:00:00Z,2016-12-31T00:00:00Z,CRD
+SDK-WHEAT-2017-WINNER_INTENSIVE,7466,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner intensive, SD",225,43.331764,-99.80328,625,2016-01-01T00:00:00Z,2017-12-31T00:00:00Z,CRD
+2022_Elite_Winner,9419,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2021-09-25T00:00:00Z,2022-07-15T00:00:00Z,RCBD
+SDK-WHEAT-2014-WINNER-FUNG,6771,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2017-WINNER,7684,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2016-09-14T00:00:00Z,2017-07-19T00:00:00Z,CRD
+SDK-WHEAT-2014-WINNER,7017,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2018-WINNER,6547,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2017-09-28T00:00:00Z,2018-07-23T00:00:00Z,CRD
+2022_AYT_Winner,9423,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2021-09-25T00:00:00Z,2022-07-15T00:00:00Z,RCBD
+2023_Elite_Winner,9625,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2022-09-24T00:00:00Z,2023-07-24T00:00:00Z,RCBD
+ARS-NRPN-2024-WINNER,10165,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,NA,NA,RCBD
+2023_AYT_Winner,9620,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2022-09-24T00:00:00Z,2023-07-24T00:00:00Z,RCBD
+SDK-WHEAT-2015-WINNER,7753,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2014-01-01T00:00:00Z,2015-12-31T00:00:00Z,CRD
+SDK-WHEAT-2009-WINNER-CPT,7250,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+SDK-WHEAT-2009-WINNER-IMS,6898,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+SDK-WHEAT-2015-WINNER-FUNG,8029,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2014-01-01T00:00:00Z,2015-12-31T00:00:00Z,CRD
+SDK-WHEAT-2018-WINNER-INT,7990,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2017-01-01T00:00:00Z,2018-12-31T00:00:00Z,CRD
+SDK-WHEAT-2016-WINNER,7768,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2015-10-12T00:00:00Z,2016-07-14T00:00:00Z,CRD
+NDK-WHEAT-2017-WISHEK,7458,North Dakota State University,phenotyping_trial,"Wishek, ND",227,46.191723,-99.61313,680,2016-01-01T00:00:00Z,2017-12-31T00:00:00Z,CRD
+NDK-WHEAT-2015-WISHEK,6901,North Dakota State University,phenotyping_trial,"Wishek, ND",227,46.191723,-99.61313,680,2014-09-24T00:00:00Z,2015-07-31T00:00:00Z,CRD
+NDK-WHEAT-2016-WISHEK,7276,North Dakota State University,phenotyping_trial,"Wishek, ND",227,46.191723,-99.61313,680,2015-09-22T00:00:00Z,2016-07-25T00:00:00Z,CRD
+NDK-WHEAT-2013-WISHEK,7806,North Dakota State University,phenotyping_trial,"Wishek, ND",227,46.191723,-99.61313,680,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+NDK-WHEAT-2014-WISHEK,6656,North Dakota State University,phenotyping_trial,"Wishek, ND",227,46.191723,-99.61313,680,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD

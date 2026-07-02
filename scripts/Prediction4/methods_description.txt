@@ -1,0 +1,164 @@
+T3 / WheatCAP Prediction Challenge — Methods Description
+==========================================================
+Author: [redacted]
+Affiliation: [redacted]
+Code repository: [redacted]
+Main script: predict.py (Python 3.10+; dependencies: numpy, pandas, scipy, scikit-learn)
+
+----------------------------------------------------------------------
+1. Data retrieval
+----------------------------------------------------------------------
+
+Programmatic access via BrAPI v1 on T3/Wheat:
+
+  • GET  /brapi/v1/studies/{studyId}/germplasm
+       — focal trial accession list (germplasmName) for each prediction trial.
+
+  • GET  /brapi/v1/studies/{studyId}
+       — focal trial latitude, longitude, startDate, endDate (for weather).
+
+Local inputs (per challenge-provided study bundles):
+
+  • Training phenotypes: CSV files under unzipped/study{study_id}/,
+    filtered to trait "Grain yield - kg/ha|CO_321:0001218".
+
+  • Training trial metadata: training_trial_metadata_*.csv (locations, dates).
+
+  • Focal genotypes: VCF files under "Genotype Data for Prediction Trials/"
+    (competition download).
+
+  • Supplementary training VCFs: URLs from training_vcf_names_*.csv; files are
+    cached under training_vcf_cache/ and merged when they share sufficient
+    markers with the focal VCF (same SNP set).
+
+Public weather: Open-Meteo Historical API (archive-api.open-meteo.com) for
+daily temperature and precipitation over each trial’s growing window, with
+JSON caching under weather_cache/.
+
+
+----------------------------------------------------------------------
+2. One-step vs two-step model
+----------------------------------------------------------------------
+
+Two-step:
+
+  Step 1 — Phenotype layer (BLUEs):
+    For each CV scenario, training observations exclude the focal trial;
+    CV00 additionally excludes any observation on focal-trial accessions.
+    Trial effects are removed (adjusted_ij = y_ij − trial_mean_j + grand_mean).
+    Per-accession targets are aggregated as weighted means of adjusted values:
+    training trials that are environmentally more similar to the focal trial
+    (see Section 4-B) receive higher weight (G×E-informed BLUEs).
+
+  Step 2 — Genomic prediction:
+    GRM-based GBLUP on the focal (+ merged) VCF samples using all retained SNPs
+    after QC (see Section 5).
+
+
+----------------------------------------------------------------------
+3. Cross-validation scenarios (CV0 / CV00)
+----------------------------------------------------------------------
+
+Implemented exactly as in Jarquin et al. (2017) / challenge specification:
+
+  • CV0: the focal trial is excluded from training; other trials may contribute,
+    including phenotypes on lines that also appear in the focal trial.
+
+  • CV00: the focal trial is excluded, and all phenotypes on focal-trial
+    accessions in other trials are excluded before fitting.
+
+
+----------------------------------------------------------------------
+4. Environmental data and G×E
+----------------------------------------------------------------------
+
+4-A  Weather features (per trial location and date window)
+
+  From Open-Meteo daily series: temperature_2m_mean/max/min, precipitation_sum.
+  Derived scalar features include: temp_mean, temp_std, growing degree days
+  (GDD, base 0 °C), heat_days (T_max > 32 °C), frost_days (T_min < −2 °C),
+  precip_total, precip_days; elevation is taken from training metadata when
+  present.
+
+4-B  G×E weighting (no uniform yield shift)
+
+  A vector of weather features is built for the focal trial and for each
+  training trial (when coordinates and dates allow). Features are scaled and
+  Euclidean distances to the focal trial are converted to Gaussian similarity
+  weights w ∈ (0, 1]. These weights are applied when aggregating adjusted
+  phenotypes to accession-level BLUEs (Step 1).
+
+  Note: We do NOT apply a single additive “environmental correction” to all
+  predicted yields. Such a constant shift does not change Pearson correlation
+  between predictions and observed values; the environmental signal is
+  incorporated through weighted BLUEs instead.
+
+
+----------------------------------------------------------------------
+5. Genotype QC and GRM-based GBLUP
+----------------------------------------------------------------------
+
+  • Genotypes are read from VCF (biallelic SNPs; GT 0/1, unphased or phased).
+
+  • Markers are filtered by minor allele frequency (MAF > 0.01) and missing
+    call rate per marker (< 0.5); remaining missing values are mean-imputed.
+
+  • Genotypes are column-centred; the genomic relationship matrix is
+        G = X X' / p
+    where p is the number of SNPs after QC (no random marker subsampling).
+
+  • GBLUP: predict breeding values by solving the mixed-model equivalent on the
+    training set with genomic relationship G_tt among training individuals,
+    ridge term λ I, and BLUP prediction to non-training rows via G_all,train.
+
+  • λ is selected by leave-one-out cross-validation on the training set
+    (grid search on log-spaced λ).
+
+  • Small ridge on the diagonal of G (1e-4) is added for numerical stability.
+
+  • If fewer than three training individuals overlap the VCF, predictions fall
+    back to the global mean of training BLUEs.
+
+
+----------------------------------------------------------------------
+6. Blending observed BLUE with genomic prediction
+----------------------------------------------------------------------
+
+For accessions present in the training set, final predictions blend genomic
+GBLUP with the accession BLUE:
+
+    prediction = w × BLUE + (1 − w) × GBLUP
+
+Per-trial weights w (blend_obs) are chosen so that trials with small training
+overlap rely more on BLUE (e.g. w ≈ 0.95 for very data-limited trials) and
+trials with large training overlap rely more on the genomic signal (e.g.
+w ≈ 0.50 for YT_Urb_25). Default w = 0.70 when a trial is not listed.
+
+
+----------------------------------------------------------------------
+7. Software
+----------------------------------------------------------------------
+
+  Python 3.10+, numpy, pandas, scipy (environmental distances), scikit-learn
+  (SimpleImputer). Standard library: urllib, json, csv.
+
+
+----------------------------------------------------------------------
+8. Team members
+----------------------------------------------------------------------
+
+  [redacted]
+  — algorithm design, data processing, pipeline implementation,
+  documentation.
+
+
+----------------------------------------------------------------------
+References
+----------------------------------------------------------------------
+
+  Jarquin, D., et al. 2017. Increasing genomic-enabled prediction accuracy by
+  modeling genotype × environment interactions in Kansas wheat. The Plant
+  Genome 10(2). doi: 10.3835/plantgenome2016.12.0130.
+
+  VanRaden, P.M. 2008. Efficient methods to compute genomic predictions.
+  Journal of Dairy Science 91:4414–4423.

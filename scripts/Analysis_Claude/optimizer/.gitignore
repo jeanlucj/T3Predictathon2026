@@ -1,0 +1,9 @@
+# Transient run artifacts -- regenerated locally, not version-controlled. Keep
+# the folders (via .gitkeep) so a fresh clone has them ready, but ignore their
+# (potentially large) contents.
+state/*
+cache/*
+logs/*
+!state/.gitkeep
+!cache/.gitkeep
+!logs/.gitkeep

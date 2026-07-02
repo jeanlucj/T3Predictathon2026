@@ -1,0 +1,18 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+.DS_Store
+
+# Unmodified real participant submissions (not anonymous) -- keep local only.
+T3_predictathon_scripts/
+
+# Manuscript drafts -- not version-controlled here.
+writing/
+
+# Prompt/question records: keep only the anonymized copies; originals hold PII.
+docs/Claude_code_prompts.txt
+docs/Claude_code_questions.txt
+
+# Internal anonymization audit log (names real people by design).
+scripts/Anonymizing_functionality_impact.md

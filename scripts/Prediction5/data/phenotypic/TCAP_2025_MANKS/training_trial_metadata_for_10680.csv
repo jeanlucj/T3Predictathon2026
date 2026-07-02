@@ -1,0 +1,303 @@
+study_name,study_db_id,program_name,study_type,location_name,location_db_id,latitude,longitude,elevation,start_date,end_date,experimental_design
+ARS-SRPN-2011-AKRON,5524,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Akron, CO",33,40.149033,-103.13501,1381,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-AKRON,5493,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Akron, CO",33,40.149033,-103.13501,1381,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-AKRON,5688,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Akron, CO",33,40.149033,-103.13501,1381,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-AKRON,5924,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Akron, CO",33,40.149033,-103.13501,1381,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2013-AKRON,5987,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Akron, CO",33,40.149033,-103.13501,1381,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-AKRON,5550,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Akron, CO",33,40.149033,-103.13501,1381,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-AKRON,5487,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Akron, CO",33,40.149033,-103.13501,1381,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-ALLIANCE,5395,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Alliance, NE",34,42.24911,-103.01468,1276,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-ALLIANCE,5490,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Alliance, NE",34,42.24911,-103.01468,1276,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-ALLIANCE,5843,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Alliance, NE",34,42.24911,-103.01468,1276,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-ALLIANCE,5825,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Alliance, NE",34,42.24911,-103.01468,1276,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-NRPN-2014-ALLIANCE,5952,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Alliance, NE",34,42.24911,-103.01468,1276,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-ALLIANCE,5560,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Alliance, NE",34,42.24911,-103.01468,1276,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2013-ALLIANCE,6180,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Alliance, NE",34,42.24911,-103.01468,1276,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+ARS-SRPN-2011-ALLIANCE,6009,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Alliance, NE",34,42.24911,-103.01468,1276,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-NRPN-2024-ALLIANCE,10168,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Alliance, NE",34,42.24911,-103.01468,1276,NA,NA,RCBD
+ARS-SRPN-2014-ARCHER,5415,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Archer, WY",37,41.092358,-104.93627,1952,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-ARCHER,5443,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Archer, WY",37,41.092358,-104.93627,1952,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-ARCHER,6000,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Archer, WY",37,41.092358,-104.93627,1952,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-ARCHER,5463,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Archer, WY",37,41.092358,-104.93627,1952,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-ARCHER,5549,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Archer, WY",37,41.092358,-104.93627,1952,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+HWWpanel_2013_Ardmore,7667,TCAP Cooperative,phenotyping_trial,"Ardmore, OK",38,34.184525,-97.093864,265,2012-10-12T00:00:00Z,2013-06-25T00:00:00Z,RCBD
+SDK-WHEAT-2014-BERESFORD,6793,South Dakota State University- Winter Wheat,phenotyping_trial,"Beresford, SD",42,43.08054,-96.77366,459,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2014-BISON,7309,South Dakota State University- Winter Wheat,phenotyping_trial,"Bison, SD",44,45.409748,-102.513084,805,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-NRPN-2024-BOZEMAN,10173,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Bozeman, MT",46,45.676,-111.157,1453,NA,NA,RCBD
+ARS-NRPN-2014-BOZEMAN,5884,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Bozeman, MT",46,45.676,-111.157,1453,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-BROOKINGS,5585,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-BROOKINGS,5735,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2011-BROOKINGS,5383,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-BROOKINGS,5930,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+SDK-WHEAT-2006-BROOKINGS,6726,South Dakota State University- Winter Wheat,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2005-01-01T00:00:00Z,2006-12-31T00:00:00Z,CRD
+SDK-WHEAT-2014-BROOKINGS,7256,South Dakota State University- Winter Wheat,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-NRPN-2014-BROOKINGS,5914,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2008-BROOKINGS,7379,South Dakota State University- Winter Wheat,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2013-BROOKINGS,5921,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+SDK-WHEAT-2008-BROOKINGS-IMS,7050,South Dakota State University- Winter Wheat,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+SDK-WHEAT-2009-BROOKINGS-CPT,8082,South Dakota State University- Winter Wheat,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-BROOKINGS,6148,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+SDK-WHEAT-2014-BROOKINGS-FUNG,8042,South Dakota State University- Winter Wheat,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-BROOKINGS,6136,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+SDK-WHEAT-2009-BROOKINGS-IMS,7590,South Dakota State University- Winter Wheat,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-NRPN-2024-BROOKINGS,10160,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Brookings, SD",47,44.31,-96.8,494,NA,NA,RCBD
+ARS-SRPN-2010-BURLINGTON,5433,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Burlington, CO",49,39.30611,-102.26936,1273,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-BURLINGTON,5663,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Burlington, CO",49,39.30611,-102.26936,1273,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-BURLINGTON,5569,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Burlington, CO",49,39.30611,-102.26936,1273,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-BURLINGTON,5919,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Burlington, CO",49,39.30611,-102.26936,1273,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-SRPN-2011-BURLINGTON,5968,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Burlington, CO",49,39.30611,-102.26936,1273,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-BURLINGTON,6040,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Burlington, CO",49,39.30611,-102.26936,1273,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-BUSHLAND,5953,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Bushland, TX",50,35.1833,-102.1,1177,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-BUSHLAND,5716,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Bushland, TX",50,35.1833,-102.1,1177,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-BUSHLAND,6010,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Bushland, TX",50,35.1833,-102.1,1177,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-BUSHLAND,5412,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Bushland, TX",50,35.1833,-102.1,1177,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+HWWpanel_2012_Bushland,7246,TCAP Cooperative,phenotyping_trial,"Bushland, TX",50,35.1833,-102.1,1177,2011-11-03T00:00:00Z,2012-06-10T00:00:00Z,MAD
+ARS-SRPN-2011-BUSHLAND,5676,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Bushland, TX",50,35.1833,-102.1,1177,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-BUSHLAND-IRRIGATED,6055,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Bushland, TX - Irrigated",278,35.191223,-102.08753,1143,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2011-BUSHLAND-IRRIGATED,5729,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Bushland, TX - Irrigated",278,35.191223,-102.08753,1143,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-BUSHLAND-IRRIGATED,5822,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Bushland, TX - Irrigated",278,35.191223,-102.08753,1143,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-BUSHLAND-IRRIGATED,6128,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Bushland, TX - Irrigated",278,35.191223,-102.08753,1143,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-BUSHLAND-IRRIGATED,6178,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Bushland, TX - Irrigated",278,35.191223,-102.08753,1143,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-BUSHLAND-IRRIGATED,5870,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Bushland, TX - Irrigated",278,35.191223,-102.08753,1143,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-NRPN-2024-CASSELTON,10162,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Casselton, ND",53,46.90053,-97.2112,285,NA,NA,RCBD
+ARS-SRPN-2010-CHILLICOTHE,6171,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Chillicothe, TX",56,34.25647,-99.51676,429,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-CHILLICOTHE,5380,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Chillicothe, TX",56,34.25647,-99.51676,429,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-CHILLICOTHE,5525,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Chillicothe, TX",56,34.25647,-99.51676,429,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-CHILLICOTHE,5418,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Chillicothe, TX",56,34.25647,-99.51676,429,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2013-CLAY_CENTER,5977,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Clay Center, NE",59,40.34,-98.08,507,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-CLAY_CENTER,6065,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Clay Center, NE",59,40.34,-98.08,507,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-CLAY_CENTER,5982,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Clay Center, NE",59,40.34,-98.08,507,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2011-CLAY_CENTER,6101,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Clay Center, NE",59,40.34,-98.08,507,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-CLAY_CENTER,5390,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Clay Center, NE",59,40.34,-98.08,507,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-CLAY_CENTER,5903,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Clay Center, NE",59,40.34,-98.08,507,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-CLAY_CENTER,6080,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Clay Center, NE",59,40.34,-98.08,507,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-CLOVIS,5654,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Clovis, NM",61,34.497242,-103.294975,1357,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-CLOVIS-IRRIGATED,6089,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Clovis, NM",61,34.497242,-103.294975,1357,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-CLOVIS-IRRIGATED,5657,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Clovis, NM",61,34.497242,-103.294975,1357,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-CLOVIS,6043,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Clovis, NM",61,34.497242,-103.294975,1357,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-CLOVIS,6013,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Clovis, NM",61,34.497242,-103.294975,1357,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-SRPN-2011-CLOVIS,5934,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Clovis, NM",61,34.497242,-103.294975,1357,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-CLOVIS-IRRIGATED,5494,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Clovis, NM",61,34.497242,-103.294975,1357,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2011-CLOVIS-IRRIGATED,6154,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Clovis, NM",61,34.497242,-103.294975,1357,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-CLOVIS-IRRIGATED,5858,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Clovis, NM",61,34.497242,-103.294975,1357,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+20_AeTa_Colby_Irrigated_Yield_Trials,10274,Kansas State University,phenotyping_trial,"Colby, KS",62,39.392,-101.047,964,NA,NA,RCBD
+20_AeTa_Colby_Dryland_Yield_Trials,10283,Kansas State University,phenotyping_trial,"Colby, KS",62,39.392,-101.047,964,NA,NA,RCBD
+22COLKS_TDicQual,10693,USDA-ARS Kansas,Advanced Yield Trial,"Colby, KS",62,39.392,-101.047,964,2021-09-29T00:00:00Z,2022-07-06T00:00:00Z,RCBD
+ARS-SRPN-2007-COLBY,5834,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Colby, KS",62,39.392,-101.047,964,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+18_AeTa_Colby_Dryland_Yield_Trials,14408,Kansas State University,phenotyping_trial,"Colby, KS",62,39.392,-101.047,964,NA,NA,MAD
+ARS-SRPN-2008-COLBY,5559,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Colby, KS",62,39.392,-101.047,964,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+22COLKS_TCAP_C,10703,USDA-ARS Kansas,Advanced Yield Trial,"Colby, KS",62,39.392,-101.047,964,2021-09-29T00:00:00Z,2022-07-07T00:00:00Z,Augmented
+23_TdGD_Colby_Yield_Trials,10844,Kansas State University,phenotyping_trial,"Colby, KS",62,39.392,-101.047,964,NA,NA,p-rep
+ARS-SRPN-2010-COLBY,5908,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Colby, KS",62,39.392,-101.047,964,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+19_AeTa_Colby_Dryland_Yield_Trials,14410,Kansas State University,phenotyping_trial,"Colby, KS",62,39.392,-101.047,964,NA,NA,RCBD
+TCAP_2023_COLKS,11022,USDA-ARS Kansas,phenotyping_trial,"Colby, KS",62,39.392,-101.047,964,2022-09-22T00:00:00Z,2023-07-18T00:00:00Z,p-rep
+23COLKS_TDicQual,10870,USDA-ARS Kansas,Advanced Yield Trial,"Colby, KS",62,39.392,-101.047,964,2022-09-22T00:00:00Z,2023-07-18T00:00:00Z,RCBD
+18_AeTa_Colby_Irrigated_Yield_Trials,14407,Kansas State University,phenotyping_trial,"Colby, KS",62,39.392,-101.047,964,NA,NA,MAD
+19_AeTa_Colby_Irrigated_Yield_Trials,14409,Kansas State University,phenotyping_trial,"Colby, KS",62,39.392,-101.047,964,NA,NA,RCBD
+ARS-SRPN-2014-COLBY,6059,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Colby, KS",62,39.392,-101.047,964,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-COLBY,5806,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Colby, KS",62,39.392,-101.047,964,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-COLUMBIA,5911,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Columbia, MO",63,38.3719,-92.1972,210,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-COLUMBIA,5403,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Columbia, MO",63,38.3719,-92.1972,210,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2013-COLUMBIA,5582,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Columbia, MO",63,38.3719,-92.1972,210,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-COLUMBIA,5772,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Columbia, MO",63,38.3719,-92.1972,210,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-COLUMBIA,5680,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Columbia, MO",63,38.3719,-92.1972,210,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2011-COLUMBIA,5765,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Columbia, MO",63,38.3719,-92.1972,210,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-CRAWFORDSVILLE,5891,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Crawfordsville, IA",64,41.20951,-91.551285,216,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-CRAWFORDSVILLE,5499,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Crawfordsville, IA",64,41.20951,-91.551285,216,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-NRPN-2014-CROOKSTON,6021,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Crookston, MN",65,47.778,-96.61,260,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-NRPN-2024-DAKOTA_LAKES,10171,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Dakota Lakes, SD",67,45.00678,-99.96555,632,NA,NA,RCBD
+ARS-SRPN-2010-DAKOTA_LAKES,6100,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Dakota Lakes, SD",67,45.00678,-99.96555,632,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2013-DAKOTA_LAKES,5869,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Dakota Lakes, SD",67,45.00678,-99.96555,632,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+ARS-SRPN-2011-DAKOTA_LAKES,5879,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Dakota Lakes, SD",67,45.00678,-99.96555,632,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-DAKOTA_LAKES,5398,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Dakota Lakes, SD",67,45.00678,-99.96555,632,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-DAKOTA_LAKES,5378,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Dakota Lakes, SD",67,45.00678,-99.96555,632,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-ENID,5969,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Enid, OK",77,36.40268,-97.843094,382,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-FARMINGTON,5993,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Farmington, NM",81,36.740322,-108.17869,1633,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2011-FARMINGTON,5805,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Farmington, NM",81,36.740322,-108.17869,1633,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-FARMINGTON,5627,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Farmington, NM",81,36.740322,-108.17869,1633,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-FARMINGTON,5509,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Farmington, NM",81,36.740322,-108.17869,1633,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2013-FARMINGTON,5468,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Farmington, NM",81,36.740322,-108.17869,1633,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-FARMINGTON,5465,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Farmington, NM",81,36.740322,-108.17869,1633,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-FARMINGTON,6007,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Farmington, NM",81,36.740322,-108.17869,1633,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-FORT_COBB,5785,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Fort Cobb, OK",86,35.10063,-98.44173,387,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-FORT_COBB,5578,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Fort Cobb, OK",86,35.10063,-98.44173,387,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-FORT_COBB,5709,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Fort Cobb, OK",86,35.10063,-98.44173,387,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2011-FORT_COBB,5423,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Fort Cobb, OK",86,35.10063,-98.44173,387,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-FORT_COBB,5430,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Fort Cobb, OK",86,35.10063,-98.44173,387,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2011-FORT_COLLINS,6144,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Fort Collins, CO",87,40.651867,-104.99901,1551,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-FORT_COLLINS,5508,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Fort Collins, CO",87,40.651867,-104.99901,1551,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+HWWpanel_2013_FortCollins_Dry,6821,TCAP Cooperative,phenotyping_trial,"Fort Collins, CO",87,40.651867,-104.99901,1551,2012-10-02T00:00:00Z,2013-07-17T00:00:00Z,MAD
+ARS-SRPN-2010-FORT_COLLINS,6106,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Fort Collins, CO",87,40.651867,-104.99901,1551,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-FORT_COLLINS,6141,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Fort Collins, CO",87,40.651867,-104.99901,1551,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+HWWpanel_2013_FortCollins_Irr,7071,TCAP Cooperative,phenotyping_trial,"Fort Collins, CO",87,40.651867,-104.99901,1551,2012-10-02T00:00:00Z,2013-07-17T00:00:00Z,MAD
+ARS-SRPN-2013-FORT_COLLINS,5588,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Fort Collins, CO",87,40.651867,-104.99901,1551,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+23FTC_DTD,10884,USDA-ARS Kansas,phenotyping_trial,"Fort Collins, CO",87,40.651867,-104.99901,1551,2022-10-04T00:00:00Z,2023-07-15T00:00:00Z,Augmented
+ARS-SRPN-2014-FORT_COLLINS,5501,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Fort Collins, CO",87,40.651867,-104.99901,1551,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-FORT_COLLINS,5449,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Fort Collins, CO",87,40.651867,-104.99901,1551,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-NRPN-2024-FORT_COLLINS,10166,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Fort Collins, CO",87,40.651867,-104.99901,1551,NA,NA,RCBD
+ARS-SRPN-2009-GARDEN_CITY,5999,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Garden City, KS",90,38.00077,-100.664406,881,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2013-GARDEN_CITY,5455,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Garden City, KS",90,38.00077,-100.664406,881,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-GARDEN_CITY,5410,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Garden City, KS",90,38.00077,-100.664406,881,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-GARDEN_CITY,5629,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Garden City, KS",90,38.00077,-100.664406,881,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2013-GOODWELL,5848,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Goodwell, OK",94,36.594673,-101.630165,1005,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-GOODWELL,5537,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Goodwell, OK",94,36.594673,-101.630165,1005,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-GOODWELL,6036,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Goodwell, OK",94,36.594673,-101.630165,1005,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-GOODWELL,5642,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Goodwell, OK",94,36.594673,-101.630165,1005,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-GOODWELL,5453,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Goodwell, OK",94,36.594673,-101.630165,1005,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-GOODWELL,6061,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Goodwell, OK",94,36.594673,-101.630165,1005,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2011-GOODWELL,6083,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Goodwell, OK",94,36.594673,-101.630165,1005,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-GRANITE,6041,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Granite, OK",95,34.950886,-99.39415,491,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2013-GRANITE,5750,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Granite, OK",95,34.950886,-99.39415,491,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+23GRY_DTD,10883,USDA-ARS Kansas,phenotyping_trial,"Greeley, CO",97,40.423313,-104.70913,1426,2022-10-05T00:00:00Z,2023-07-11T00:00:00Z,Augmented
+HWWpanel_2012_Greeley_Dry,7843,TCAP Cooperative,phenotyping_trial,"Greeley, CO",97,40.423313,-104.70913,1426,2012-10-19T00:00:00Z,2012-07-03T00:00:00Z,MAD
+HWWpanel_2012_Greeley_Irr,7235,TCAP Cooperative,phenotyping_trial,"Greeley, CO",97,40.423313,-104.70913,1426,2012-10-19T00:00:00Z,2012-07-13T00:00:00Z,MAD
+23GRY_VAL,10876,USDA-ARS Kansas,phenotyping_trial,"Greeley, CO",97,40.423313,-104.70913,1426,2022-10-05T00:00:00Z,2023-07-11T00:00:00Z,Augmented
+SDK-WHEAT-2009-HAYES,6631,South Dakota State University- Winter Wheat,phenotyping_trial,"Hayes, SD",103,44.37026,-101.02153,611,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+SDK-WHEAT-2008-HAYES,7673,South Dakota State University- Winter Wheat,phenotyping_trial,"Hayes, SD",103,44.37026,-101.02153,611,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-HAYS,6166,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Hays, KS",104,38.87917,-99.32677,623,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-HAYS,5438,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Hays, KS",104,38.87917,-99.32677,623,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2013-HAYS,5912,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Hays, KS",104,38.87917,-99.32677,623,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+HWWpanel_2013_Hays,7615,TCAP Cooperative,phenotyping_trial,"Hays, KS",104,38.87917,-99.32677,623,2012-10-10T00:00:00Z,2013-07-03T00:00:00Z,MAD
+TCAP_2023_HAYKS,11000,USDA-ARS Kansas,phenotyping_trial,"Hays, KS",104,38.87917,-99.32677,623,2022-10-06T00:00:00Z,2023-06-27T00:00:00Z,p-rep
+ARS-SRPN-2009-HAYS,5778,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Hays, KS",104,38.87917,-99.32677,623,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+22HAYKS_TDicQual,10697,USDA-ARS Kansas,Advanced Yield Trial,"Hays, KS",104,38.87917,-99.32677,623,2021-10-06T00:00:00Z,2022-06-24T00:00:00Z,RCBD
+23HAYKS_TDicQual,10877,USDA-ARS Kansas,Advanced Yield Trial,"Hays, KS",104,38.87917,-99.32677,623,2022-10-06T00:00:00Z,2023-06-27T00:00:00Z,RCBD
+23_TdGD_Hays_Yield_Trials,10852,Kansas State University,phenotyping_trial,"Hays, KS",104,38.87917,-99.32677,623,NA,2023-06-25T00:00:00Z,p-rep
+ARS-SRPN-2011-HAYS,5996,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Hays, KS",104,38.87917,-99.32677,623,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+22HAYKS_TCAP_C,10708,USDA-ARS Kansas,Advanced Yield Trial,"Hays, KS",104,38.87917,-99.32677,623,2021-10-06T00:00:00Z,2022-06-24T00:00:00Z,Augmented
+ARS-SRPN-2008-HAYS,6121,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Hays, KS",104,38.87917,-99.32677,623,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+22_TdGD_Hays_Yield_Trials,10726,Kansas State University,phenotyping_trial,"Hays, KS",104,38.87917,-99.32677,623,2021-10-05T00:00:00Z,2022-06-17T00:00:00Z,p-rep
+SDK-WHEAT-2006-HIGHMORE,6794,South Dakota State University- Winter Wheat,phenotyping_trial,"Highmore, SD",238,44.518,-99.441,575,2005-01-01T00:00:00Z,2006-12-31T00:00:00Z,CRD
+ARS-SRPN-2013-HUTCHINSON-B,5831,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Hutchinson, KS",113,37.95431,-97.88569,475,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+23HUTKS_TDicQual,10853,USDA-ARS Kansas,Advanced Yield Trial,"Hutchinson, KS",113,37.95431,-97.88569,475,2022-10-05T00:00:00Z,2023-06-30T00:00:00Z,RCBD
+ARS-SRPN-2010-HUTCHINSON-B,6149,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Hutchinson, KS",113,37.95431,-97.88569,475,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+TCAP_2023_HUTKS,11013,USDA-ARS Kansas,phenotyping_trial,"Hutchinson, KS",113,37.95431,-97.88569,475,2022-10-05T00:00:00Z,2023-06-29T00:00:00Z,p-rep
+22HUTKS_TCAP_C,10699,USDA-ARS Kansas,Advanced Yield Trial,"Hutchinson, KS",113,37.95431,-97.88569,475,2021-10-07T00:00:00Z,2022-06-17T00:00:00Z,Augmented
+ARS-SRPN-2013-HUTCHINSON-A,5434,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Hutchinson, KS",113,37.95431,-97.88569,475,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+ARS-SRPN-2011-HUTCHINSON-B,5814,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Hutchinson, KS",113,37.95431,-97.88569,475,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+22HUTKS_TDicQual,10706,USDA-ARS Kansas,Advanced Yield Trial,"Hutchinson, KS",113,37.95431,-97.88569,475,2021-10-07T00:00:00Z,2022-06-17T00:00:00Z,RCBD
+HWWpanel_2012_Mead,5751,TCAP Cooperative,phenotyping_trial,"Ithaca, NE",117,41.16135,-96.4254,353,2011-10-04T00:00:00Z,2012-06-28T00:00:00Z,CRD
+ARS-SRPN-2008-JULESBURG,5724,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Julesburg, CO",118,40.98833,-102.26435,1061,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-JULESBURG,5840,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Julesburg, CO",118,40.98833,-102.26435,1061,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2011-JULESBURG,5777,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Julesburg, CO",118,40.98833,-102.26435,1061,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-JULESBURG,5758,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Julesburg, CO",118,40.98833,-102.26435,1061,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-JULESBURG,5546,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Julesburg, CO",118,40.98833,-102.26435,1061,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-SRPN-2013-JULESBURG,6076,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Julesburg, CO",118,40.98833,-102.26435,1061,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+SDK-WHEAT-2009-KENNEBEC,6591,South Dakota State University- Winter Wheat,phenotyping_trial,"Kennebec, SD",120,43.85862,-99.82433,553,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+SDK-WHEAT-2008-KENNEBEC,7158,South Dakota State University- Winter Wheat,phenotyping_trial,"Kennebec, SD",120,43.85862,-99.82433,553,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+SDK-WHEAT-2014-KENNEBEC,6857,South Dakota State University- Winter Wheat,phenotyping_trial,"Kennebec, SD",120,43.85862,-99.82433,553,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2013-LAHOMA,5850,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Lahoma, OK",127,36.388985,-98.09112,384,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-LAHOMA,5683,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Lahoma, OK",127,36.388985,-98.09112,384,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2011-LAHOMA,5740,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Lahoma, OK",127,36.388985,-98.09112,384,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-LAHOMA,6024,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Lahoma, OK",127,36.388985,-98.09112,384,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-LAHOMA,5584,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Lahoma, OK",127,36.388985,-98.09112,384,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-LAHOMA,6070,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Lahoma, OK",127,36.388985,-98.09112,384,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-NRPN-2024-LINCOLN,10164,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Lincoln, NE",138,40.80686,-96.68168,360,NA,NA,RCBD
+ARS-SRPN-2009-LINCOLN,5618,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Lincoln, NE",138,40.80686,-96.68168,360,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-LINCOLN,5565,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Lincoln, NE",138,40.80686,-96.68168,360,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-LINCOLN,5666,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Lincoln, NE",138,40.80686,-96.68168,360,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-LINCOLN,6074,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Lincoln, NE",138,40.80686,-96.68168,360,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2013-LINCOLN,5440,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Lincoln, NE",138,40.80686,-96.68168,360,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+ARS-SRPN-2011-LINCOLN,5511,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Lincoln, NE",138,40.80686,-96.68168,360,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-LINCOLN,6067,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Lincoln, NE",138,40.80686,-96.68168,360,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-NRPN-2024-LUNDS_VALLEY,10170,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Lunds Valley, ND",308,48.50685,-102.53823,681,NA,NA,RCBD
+23_TdGD_Manhattan_Yield_Trials,10859,Kansas State University,phenotyping_trial,"Manhattan, KS",143,39.11,-96.45,341,NA,NA,p-rep
+22MANKS_TCAP_C,10710,USDA-ARS Kansas,Advanced Yield Trial,"Manhattan, KS",143,39.11,-96.45,341,2021-10-23T00:00:00Z,2022-06-16T00:00:00Z,Augmented
+ARS-SRPN-2013-MANHATTAN,5425,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Manhattan, KS",143,39.11,-96.45,341,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+22MANKS_TDicQual,10694,USDA-ARS Kansas,Advanced Yield Trial,"Manhattan, KS",143,39.11,-96.45,341,2021-10-23T00:00:00Z,2022-06-16T00:00:00Z,RCBD
+ARS-SRPN-2011-MANHATTAN,6172,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Manhattan, KS",143,39.11,-96.45,341,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+HWWpanel_2012_Manhattan_Dry,7512,TCAP Cooperative,phenotyping_trial,"Manhattan, KS",143,39.11,-96.45,341,2011-11-18T00:00:00Z,2012-07-03T00:00:00Z,Augmented
+ARS-SRPN-2014-MANHATTAN,5407,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Manhattan, KS",143,39.11,-96.45,341,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+TCAP_2023_MANKS,10997,USDA-ARS Kansas,phenotyping_trial,"Manhattan, KS",143,39.11,-96.45,341,2022-10-17T00:00:00Z,2023-06-28T00:00:00Z,p-rep
+23MANKS_TDicQual,10841,USDA-ARS Kansas,Advanced Yield Trial,"Manhattan, KS",143,39.11,-96.45,341,2022-10-17T00:00:00Z,2023-06-22T00:00:00Z,RCBD
+HWWpanel_2012_Manhattan_Irr,7249,TCAP Cooperative,phenotyping_trial,"Manhattan, KS",143,39.11,-96.45,341,2011-11-18T00:00:00Z,2012-07-03T00:00:00Z,Augmented
+SDK-WHEAT-2008-MARTIN,6733,South Dakota State University- Winter Wheat,phenotyping_trial,"Martin, SD",145,43.172157,-101.73407,1004,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+SDK-WHEAT-2006-MARTIN,6865,South Dakota State University- Winter Wheat,phenotyping_trial,"Martin, SD",145,43.172157,-101.73407,1004,2005-01-01T00:00:00Z,2006-12-31T00:00:00Z,CRD
+SDK-WHEAT-2014-MARTIN,6851,South Dakota State University- Winter Wheat,phenotyping_trial,"Martin, SD",145,43.172157,-101.73407,1004,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2014-MCLAUGHLIN,6513,South Dakota State University- Winter Wheat,phenotyping_trial,"McLaughlin, SD",148,45.81444,-100.81041,611,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-NRPN-2014-MINOT,5660,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Minot, ND",152,48.084625,-101.41901,645,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-NRPN-2024-MOCCASIN,10161,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Moccasin, MT",153,34.99842,-84.01824,811,NA,NA,RCBD
+ARS-NRPN-2014-MOCCASIN,5770,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Moccasin, MT",153,34.99842,-84.01824,811,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-NRPN-2024-NORTH_PLATTE,10167,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"North Platte, NE",165,40.04972,-100.75166,844,NA,NA,RCBD
+ARS-SRPN-2011-NORTH_PLATTE,5935,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"North Platte, NE",165,40.04972,-100.75166,844,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-NORTH_PLATTE,5883,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"North Platte, NE",165,40.04972,-100.75166,844,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-NORTH_PLATTE,5543,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"North Platte, NE",165,40.04972,-100.75166,844,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-NORTH_PLATTE,5711,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"North Platte, NE",165,40.04972,-100.75166,844,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-NORTH_PLATTE,5991,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"North Platte, NE",165,40.04972,-100.75166,844,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-NORTH_PLATTE,6031,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"North Platte, NE",165,40.04972,-100.75166,844,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-NRPN-2014-NORTH_PLATTE,6025,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"North Platte, NE",165,40.04972,-100.75166,844,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2006-OELRICHS,6619,South Dakota State University- Winter Wheat,phenotyping_trial,"Oelrichs, SD",239,43.181,-103.233,1023,2005-01-01T00:00:00Z,2006-12-31T00:00:00Z,CRD
+SDK-WHEAT-2014-ONIDA,7216,South Dakota State University- Winter Wheat,phenotyping_trial,"Onida, SD",167,44.722874,-99.979546,582,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2008-ONIDA,7493,South Dakota State University- Winter Wheat,phenotyping_trial,"Onida, SD",167,44.722874,-99.979546,582,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+SDK-WHEAT-2009-ONIDA,7861,South Dakota State University- Winter Wheat,phenotyping_trial,"Onida, SD",167,44.722874,-99.979546,582,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+SDK-WHEAT-2014-PIERRE,7784,South Dakota State University- Winter Wheat,phenotyping_trial,"Pierre, SD",174,44.334072,-100.09419,475,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2009-PIERRE,6545,South Dakota State University- Winter Wheat,phenotyping_trial,"Pierre, SD",174,44.334072,-100.09419,475,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+SDK-WHEAT-2008-PIERRE,7680,South Dakota State University- Winter Wheat,phenotyping_trial,"Pierre, SD",174,44.334072,-100.09419,475,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-NRPN-2014-PINE_BLUFFS,5752,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Pine Bluffs, WY",175,41.08498,-104.08995,1619,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-NRPN-2014-PLANKINTON,5964,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Plankinton, SD",177,43.746754,-98.51853,460,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2009-PLATTE,6523,South Dakota State University- Winter Wheat,phenotyping_trial,"Platte, SD",242,43.386,-98.942,488,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+SDK-WHEAT-2008-PLATTE,7430,South Dakota State University- Winter Wheat,phenotyping_trial,"Platte, SD",242,43.386,-98.942,488,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2011-PROSPER,5391,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Prosper, TX",184,33.254192,-96.78524,227,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-PROSPER,5932,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Prosper, TX",184,33.254192,-96.78524,227,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-PROSPER,5646,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Prosper, TX",184,33.254192,-96.78524,227,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-PROSPER,5970,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Prosper, TX",184,33.254192,-96.78524,227,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-NRPN-2014-ROSEMOUNT,5896,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Rosemount, MN",243,44.72994,-93.08853,NA,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-SALINA,5577,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Salina, KS",192,38.823673,-97.64211,375,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-SALINA,6037,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Salina, KS",192,38.823673,-97.64211,375,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-SALINA,6030,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Salina, KS",192,38.823673,-97.64211,375,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+SDK-WHEAT-2009-SELBY,6531,South Dakota State University- Winter Wheat,phenotyping_trial,"Selby, SD",197,45.43463,-100.09817,584,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+SDK-WHEAT-2008-SELBY,7692,South Dakota State University- Winter Wheat,phenotyping_trial,"Selby, SD",197,45.43463,-100.09817,584,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-SIDNEY,6177,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Sidney, NE",199,41.28879,-103.01318,1310,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-SIDNEY,5686,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Sidney, NE",199,41.28879,-103.01318,1310,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-NRPN-2024-SIDNEY,10172,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Sidney, NE",199,41.28879,-103.01318,1310,NA,NA,RCBD
+ARS-NRPN-2014-SIDNEY,6092,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Sidney, NE",199,41.28879,-103.01318,1310,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-SIDNEY,5520,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Sidney, NE",199,41.28879,-103.01318,1310,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-SIDNEY,6066,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Sidney, NE",199,41.28879,-103.01318,1310,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-SIDNEY,6120,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Sidney, NE",199,41.28879,-103.01318,1310,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+SDK-WHEAT-2008-SOUTH_SHORE,6992,South Dakota State University- Winter Wheat,phenotyping_trial,"South Shore, SD",201,45.105892,-97.101746,563,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-NRPN-2024-ST_PAUL,10169,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"St. Paul, MN",203,45,-93,311,NA,NA,RCBD
+ARS-SRPN-2010-STILLWATER,5749,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Stillwater, OK",204,36.10152,-97.06906,271,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-STILLWATER,6145,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Stillwater, OK",204,36.10152,-97.06906,271,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2013-STILLWATER,5400,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Stillwater, OK",204,36.10152,-97.06906,271,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-STILLWATER,5387,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Stillwater, OK",204,36.10152,-97.06906,271,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-STILLWATER,5781,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Stillwater, OK",204,36.10152,-97.06906,271,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2011-STILLWATER,5371,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Stillwater, OK",204,36.10152,-97.06906,271,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+SDK-WHEAT-2008-STURGIS,7617,South Dakota State University- Winter Wheat,phenotyping_trial,"Sturgis, SD",205,44.36917,-103.36166,963,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+SDK-WHEAT-2014-STURGIS,7375,South Dakota State University- Winter Wheat,phenotyping_trial,"Sturgis, SD",205,44.36917,-103.36166,963,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2006-STURGIS,7814,South Dakota State University- Winter Wheat,phenotyping_trial,"Sturgis, SD",205,44.36917,-103.36166,963,2005-01-01T00:00:00Z,2006-12-31T00:00:00Z,CRD
+HWWpanel_2013_Tipton,9600,National Small Grains Collection,phenotyping_trial,"Tipton, OK",210,34.443157,-99.13334,391,NA,NA,Augmented
+HWWpanel_2012_Tipton,5491,TCAP Cooperative,phenotyping_trial,"Tipton, OK",210,34.443157,-99.13334,391,2011-11-01T00:00:00Z,2012-06-05T00:00:00Z,Augmented
+SDK-WHEAT-2009-WALL,6639,South Dakota State University- Winter Wheat,phenotyping_trial,"Wall, SD",215,44.01377,-102.238396,855,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+SDK-WHEAT-2008-WALL,7264,South Dakota State University- Winter Wheat,phenotyping_trial,"Wall, SD",215,44.01377,-102.238396,855,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+SDK-WHEAT-2014-WALL,7828,South Dakota State University- Winter Wheat,phenotyping_trial,"Wall, SD",215,44.01377,-102.238396,855,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2006-WALL,7913,South Dakota State University- Winter Wheat,phenotyping_trial,"Wall, SD",215,44.01377,-102.238396,855,2005-01-01T00:00:00Z,2006-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-WALSH,6050,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Walsh, CO",217,37.368042,-102.265144,1195,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-WALSH,5636,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Walsh, CO",217,37.368042,-102.265144,1195,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-WALSH,5572,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Walsh, CO",217,37.368042,-102.265144,1195,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-WALSH,5589,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Walsh, CO",217,37.368042,-102.265144,1195,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2011-WALSH,6097,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Walsh, CO",217,37.368042,-102.265144,1195,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-WICHITA,5994,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Wichita, KS",221,37.651974,-97.258995,419,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-WICHITA,5638,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Wichita, KS",221,37.651974,-97.258995,419,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-WICHITA,5768,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Wichita, KS",221,37.651974,-97.258995,419,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2013-WICHITA,6114,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Wichita, KS",221,37.651974,-97.258995,419,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+ARS-NRPN-2014-WICHITA,5639,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Wichita, KS",221,37.651974,-97.258995,419,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-NRPN-2024-WICHITA,10163,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Wichita, KS",221,37.651974,-97.258995,419,NA,NA,RCBD
+ARS-SRPN-2013-WINFIELD,5892,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Winfield, KS",224,37.232124,-96.99633,345,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-WINFIELD,5506,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Winfield, KS",224,37.232124,-96.99633,345,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2010-WINFIELD,5417,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Winfield, KS",224,37.232124,-96.99633,345,2009-01-01T00:00:00Z,2010-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-WINFIELD,5462,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Winfield, KS",224,37.232124,-96.99633,345,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2009-WINNER-CPT,7250,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2008-WINNER,6174,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-NRPN-2014-WINNER,5413,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-SRPN-2009-WINNER,5702,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+SDK-WHEAT-2008-WINNER-IMS,7918,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+ARS-SRPN-2013-WINNER,5599,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2012-01-01T00:00:00Z,2013-12-31T00:00:00Z,CRD
+ARS-SRPN-2007-WINNER,6161,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2006-01-01T00:00:00Z,2007-12-31T00:00:00Z,CRD
+SDK-WHEAT-2008-WINNER,7880,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2007-01-01T00:00:00Z,2008-12-31T00:00:00Z,CRD
+SDK-WHEAT-2006-WINNER,7613,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2005-01-01T00:00:00Z,2006-12-31T00:00:00Z,CRD
+SDK-WHEAT-2014-WINNER-FUNG,6771,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+SDK-WHEAT-2009-WINNER-IMS,6898,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2008-01-01T00:00:00Z,2009-12-31T00:00:00Z,CRD
+ARS-SRPN-2014-WINNER,5830,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD
+ARS-NRPN-2024-WINNER,10165,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,NA,NA,RCBD
+ARS-SRPN-2011-WINNER,5826,Hard Winter Wheat Regional Nursery Cooperative,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2010-01-01T00:00:00Z,2011-12-31T00:00:00Z,CRD
+SDK-WHEAT-2014-WINNER,7017,South Dakota State University- Winter Wheat,phenotyping_trial,"Winner, SD",231,43.331764,-99.80328,625,2013-01-01T00:00:00Z,2014-12-31T00:00:00Z,CRD

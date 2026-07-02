@@ -1,0 +1,10 @@
+"method"	"scenario"	"trial"	"corP"	"wEnv.corP"	"nb.genos"	"nb.envs"
+"RKHS"	"CV0"	"AWY1_DVPWA_2024"	NA	NA	NA	NA
+"RKHS"	"CV0"	"TCAP_2025_MANKS"	0.327	0.13	594	19
+"RKHS"	"CV0"	"25_Big6_SVREC_SVREC"	NA	NA	NA	NA
+"RKHS"	"CV0"	"OHRWW_2025_SPO"	0.05	0.05	97	1
+"RKHS"	"CV0"	"CornellMaster_2025_McGowan"	-0.001	-0.001	26	1
+"RKHS"	"CV0"	"24Crk_AY2-3"	0.167	0.008	386	24
+"RKHS"	"CV0"	"2025_AYT_Aurora"	-0.106	0.069	272	6
+"RKHS"	"CV0"	"YT_Urb_25"	NA	NA	NA	NA
+"RKHS"	"CV0"	"STP1_2025_MCG"	-0.093	0.037	203	10

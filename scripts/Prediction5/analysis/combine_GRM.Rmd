@@ -1,0 +1,254 @@
+---
+title: "Pull genotype data from T3"
+author: "Prediction5 Team"
+output: html_document
+date: '`r format(Sys.time(), "%d %B, %Y")`'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE, message = FALSE)
+```
+
+# Libraries
+
+```{r load libraries}
+suppressPackageStartupMessages(library(here)) # root directory
+suppressPackageStartupMessages(library(data.table)) # load data
+suppressPackageStartupMessages(library(apercu)) # ap
+suppressPackageStartupMessages(library(dplyr)) # formatting
+suppressPackageStartupMessages(library(purrr)) # handle lists
+## devtools::install_github("TriticeaeToolbox/BrAPI.R")
+suppressPackageStartupMessages(library(BrAPI)) # T3 connection
+suppressPackageStartupMessages(library(T3BrapiHelpers)) # T3 helper
+suppressPackageStartupMessages(library(DT)) # print table
+suppressPackageStartupMessages(library(ggplot2)) # plot
+suppressPackageStartupMessages(library(vcfR)) # load vcf
+suppressPackageStartupMessages(library(progress)) # progress bar
+
+```
+
+# Set up root directory
+
+```{r current dir}
+here::i_am("analysis/combine_GRM.Rmd")
+source(here("code","useful_functions.R"))
+```
+
+```{r}
+target.tri <- c("AWY1_DVPWA_2024","TCAP_2025_MANKS","25_Big6_SVREC_SVREC",
+                "OHRWW_2025_SPO","CornellMaster_2025_McGowan","24Crk_AY2-3",
+                "2025_AYT_Aurora","YT_Urb_25","STP1_2025_MCG")
+```
+
+# Convert vcf files to GRM matrices
+
+For non-focal accessions
+
+```{r}
+# tri=target.tri[9]
+# for(tri in target.tri){
+# 
+#   write(paste0("Processing trial: ", tri), stdout())
+#   files <- list.files(here("data","genotypic",tri,"nonFocal"))
+#   files <- grep(files, pattern=".vcf.gz", value=TRUE)
+#   files <- grep(files, pattern="_formatted|_imputed", value=TRUE, invert=TRUE)## keep only the unformatted vcf files
+#   for(file in files){
+#     
+#     vcf.p2f <- paste0(here("data","genotypic",tri,"nonFocal"),"/",file)
+# 
+#     ## get filename without extension
+#     file_noext <- gsub(pattern=".vcf.gz","",file)
+#     
+#     p2f.export.vcf <- paste0(here("data","genotypic",tri,"nonFocal"),"/",file_noext,"_formatted.vcf.gz")
+#     ## use custom function from useful_functions.R
+#     geno <- format_curate_vcf(vcf.p2f=vcf.p2f,
+#                               p2f.export.vcf=p2f.export.vcf,
+#                               remove.chrUkn=FALSE,
+#                               check.mrk.dups=TRUE,
+#                               remove.nonPolyMrk=FALSE,
+#                               tresh.heterozygous=NULL,
+#                               check.geno.dups=TRUE,
+#                               thresh.NA.ind=0.5,
+#                               thresh.NA.mrk=0.5,
+#                               format.names=FALSE,
+#                               imputation="Beagle",
+#                               p2f.beagle=here("code","beagle.27Feb25.75f.jar"),
+#                               thresh.MAF=0.01,
+#                               verbose=1)
+# 
+#     ## export numeric imputed geno file
+#     p2f.num <- paste0(here("data","genotypic",tri,"nonFocal"),"/",file_noext,"_numeric.rds")
+#     saveRDS(geno, file=p2f.num)
+# 
+#     ## calculate the genomic relationship matrix
+#     grm <- rrBLUP::A.mat(geno-1)
+#     ## export grm
+#     p2f.grm <- paste0(here("data","genotypic",tri,"nonFocal"),"/",file_noext,"_GRM.rds")
+#     saveRDS(grm, file=p2f.grm)
+#   }
+# }
+```
+
+# Combine GRM matrices for each program
+
+For AWY1, same vcf files were downloaded twice, copy the focal_accessions GRM to the combined_GRM. For Cornell, two files were identical but completely disjoint from the focalAccessions. Copy the focalAccessions_GRM to the combined_GRM.
+
+```{r combine-grm}
+pbm <- c("CornellMaster_2025_McGowan", "AWY1_DVPWA_2024")
+rerun=TRUE
+for(tri in setdiff(target.tri, pbm)){
+  p2f.export <- paste0(here("data","genotypic",tri,"clean"),"/",tri,"_combined_GRM.rds")
+  if(!file.exists(p2f.export)|rerun){
+    
+    write(paste0("Processing trial: ", tri), stdout())
+    grmList <- list()
+    
+    ## Step 1: convcert the focal accessions genomic matrix to a GRM
+    p2f <- paste0(here("data","genotypic",tri,"clean"),"/",tri,"_Predictathon_genotypes_curated_numeric.rds")
+    genoFoc <- readRDS(p2f)
+    grmList[[1]] <- rrBLUP::A.mat(genoFoc-1)
+    ## export focal GRM
+    p2f <- paste0(here("data","genotypic",tri,"clean"),"/",tri,"_focalAccessions_GRM.rds")
+    saveRDS(grmList[[1]], file=p2f)
+    
+    ## Step 2: load the non focal GRM matrices
+    files <- list.files(here("data","genotypic",tri,"nonFocal"))
+    ## keep only the GRM files
+    files <- grep("_GRM.rds", files, value = TRUE)
+    grmList <- c(grmList, lapply(files, function(f){
+      readRDS(paste0(here("data","genotypic",tri,"nonFocal"),"/",f))
+      # geno = readRDS(p2f)
+      # return(rrBLUP::A.mat(geno-1))
+    }))
+    genoNames <- map(grmList,rownames)
+    ap(genoNames)
+    
+    ## if same genotypes, skip
+    if(length(genoNames) > 1){
+      ggVennDiagram::ggVennDiagram(genoNames, label_alpha = 0, label_size = 4) 
+      if(all(genoNames[[1]] %in% genoNames[[2]]) & all(genoNames[[2]] %in% genoNames[[1]])){
+        genoNames[[2]] <- NULL
+        next
+      } else {
+        
+        ## combine genomic relationship matrices
+        var_indices <- list()
+        for(i in seq_along(grmList)){
+          var_indices[[i]] <- match(rownames(grmList[[i]]), unique(unlist(genoNames)))-1
+        }
+        
+        # combine GRM matrices
+        comb_grm <- covariance_combiner(
+          partial_covs=grmList,
+          var_indices=var_indices,
+          degrees_freedom=rep(100, length(grmList)),
+          calc_sampling_cov = FALSE
+        )
+        dim(comb_grm$psi)
+        grm_combined <- comb_grm$psi
+        rownames(grm_combined) <- colnames(grm_combined) <- unique(unlist(genoNames))
+        ## export combined GRM
+        p2f.export <- paste0(here("data","genotypic",tri,"clean"),"/",tri,"_combined_GRM.rds")
+        saveRDS(grm_combined, file=p2f.export)
+      }
+    }
+  }
+}
+```
+
+## Combine Focal and Combined GRMs
+
+```{r}
+# Define the root directory where all your trial folders are located
+base_dir <- here::here("scripts", "Prediction5", "data", "genotypic")
+trial_folders <- list.dirs(base_dir, full.names = TRUE, recursive = FALSE)
+combined_grms <- list()
+
+for (folder in trial_folders) {
+  trial_name <- basename(folder)
+  write(paste0("\n=== Processing: ", trial_name, " ==="), stdout())
+  
+  clean_dir <- file.path(folder, "clean")
+  if (!dir.exists(clean_dir)) {
+    write("   -> SKIPPED: No 'clean' folder.", stderr())
+    next
+  }
+  
+  # ====================================================================
+  # NEW: Only pull files that end specifically in "GRM.rds"
+  rds_files <- list.files(clean_dir, pattern = "GRM\\.rds$", full.names = TRUE, ignore.case = TRUE)
+  # ====================================================================
+  
+  write(paste0("   -> Found ", length(rds_files), " GRM.rds files."), stdout())
+  
+  if (length(rds_files) < 2) {
+    write("   -> SKIPPED: Needs at least 2 GRM files to combine.", stderr())
+    next
+  }
+  
+  # Load and sanitize the matrices
+  partial_covs <- lapply(rds_files, function(f) {
+    mat <- readRDS(f)
+    
+    # Sanitize: Drop extra text columns if it loaded as a data frame
+    if (is.data.frame(mat) && (is.character(mat[[1]]) || is.factor(mat[[1]]))) {
+      rownames(mat) <- as.character(mat[[1]])
+      mat <- mat[, -1, drop = FALSE] 
+    }
+    
+    mat <- as.matrix(mat)
+    
+    # Sanitize: Force numeric if it accidentally became character
+    if (typeof(mat) == "character") {
+      rnames <- rownames(mat)
+      cnames <- colnames(mat)
+      mat <- matrix(as.numeric(mat), nrow = nrow(mat), ncol = ncol(mat))
+      rownames(mat) <- rnames
+      colnames(mat) <- cnames
+    }
+    
+    # Sanitize: Remove duplicate row names
+    if (any(duplicated(rownames(mat)))) {
+      mat <- mat[!duplicated(rownames(mat)), !duplicated(colnames(mat))]
+    }
+    
+    return(mat)
+  })
+  
+  # Create the Master Dictionary
+  all_gids <- unique(unlist(lapply(partial_covs, rownames)))
+  all_gids <- sort(all_gids) 
+  
+  # Map 0-based indices for the EM function
+  var_indices <- lapply(partial_covs, function(mat) {
+    return(match(rownames(mat), all_gids) - 1)
+  })
+  
+  write(paste0("   -> Combining ", length(partial_covs), " matrices (Total lines: ", length(all_gids), ")..."), stdout())
+  
+  combined_result <- tryCatch({
+    covariance_combiner(
+      partial_covs = partial_covs, var_indices = var_indices,
+      degrees_freedom = NULL, max_iter = 100, tol = 1e-6,
+      track_loglik = FALSE, calc_sampling_cov = FALSE
+    )
+  }, error = function(e) {
+    write(paste0("   -> ERROR IN MATH: ", e$message), stderr())
+    return(NULL)
+  })
+  
+  if (is.null(combined_result)) next
+  
+  # Reformat the final combined matrix
+  combined_matrix <- combined_result$psi
+  rownames(combined_matrix) <- all_gids
+  colnames(combined_matrix) <- all_gids
+  combined_matrix <- (combined_matrix + t(combined_matrix)) / 2 # Force Symmetry
+  
+  combined_grms[[trial_name]] <- combined_matrix
+  
+  save_path <- file.path(clean_dir, paste0(trial_name, "_All_GRM.rds"))
+  saveRDS(combined_matrix, save_path)
+  write(paste0("   -> SUCCESS! Saved combined matrix to: ", save_path), stdout())
+}
+```

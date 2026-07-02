@@ -1,0 +1,51 @@
+# Os and editor junk
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Snakemake internals
+.snakemake/
+*.snakemake_timestamp
+
+# Logs and temp files
+*.log
+*.tmp
+*.bak
+
+# Model artifacts
+trained_models/*/
+!trained_models/.gitkeep
+
+# Results
+results/*/
+!results/.gitkeep
+
+# Submission outputs
+submission/*/
+!submission/.gitkeep
+
+# Processed data
+data/processed/*/
+!data/processed/.gitkeep
+
+# Allow global grm folder
+!data/processed/global/
+!data/processed/global/*.txt
+
+# Filtered vcfs
+data/predictathon/*/genotypes/*_filtered.vcf.gz
+data/predictathon/*/genotypes/*_filtered.vcf.gz.tbi
+
+# Old intermediate genotype matrices
+data/predictathon/*/processed/geno_*.npy
+data/predictathon/*/processed/geno_*.csv
+data/predictathon/*/processed/GRM.npy

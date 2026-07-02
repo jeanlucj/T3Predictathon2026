@@ -1,0 +1,225 @@
+---
+title: "enviromic_analysis_markdown"
+author: "Prediction3 Team"
+date: "2025-12-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This script take the input trial weather data pulled from NASA POWER via EnvRtype as generated in [Envrionmental_data_import.Rmd](Data/Environmental_data_import.Rmd). This analysis script processes that raw data and generates an environmental kernel for selected trials generated from [T3_trial_import_and_filtering.Rmd](Data/T3_trial_import_and_filtering.Rmd). Ultimately, a trial-wise environmental similarity matrix is developed to compare trials and select training data for each test set.
+
+## Load Packages
+```{r load packages, message=FALSE}
+library(dplyr) #install.packages("dplyr")
+library(janitor) #install.packages("janitor")
+library(tidyverse) #install.packages("tidyverse")
+library(reshape2) #install.packages("reshape2")
+library(here) #install.packages("here")
+library(readr)#install.packages("readr")
+devtools::install_github("allogamous/EnvRtype")
+library(EnvRtype)
+```
+
+## Load Trial Weather Data
+
+```{r Load data, message=FALSE}
+genotyped_trials <- readr::read_csv(here::here("data","genotyped_phenotyped_trials.csv"))
+test_trials <- readr::read_csv(here::here("data","test_trial_metadata.csv")) |> 
+  clean_names()
+all_trials <- rbind(genotyped_trials,test_trials)
+
+training_weather_df <- readr::read_csv(here::here("data","EnvRtype_output.csv")) |> 
+  tidyr::separate(YYYYMMDD, c( "YEAR","MM", "DD"), remove = FALSE)
+
+test_weather_df <- readr::read_csv(here::here("data","testset_EnvRtype_output.csv")) |> 
+  tidyr::separate(YYYYMMDD, c( "YEAR","MM", "DD"), remove = FALSE)
+
+trial_weather_df <- rbind(training_weather_df,test_weather_df)
+
+trial_weather_processed <- readr::read_csv(here::here("data","processed_weather_data.csv"))
+test_weather_process <- readr::read_csv(here::here("data","testset_processed_weather_data.csv"))
+```
+
+## Define growth stages in wheat
+```{r define growth stage GDD}
+growth_stage_gdd <- data.frame(stage_id = c(0.5, 1.0, 2.0, 3.0, 4.0,5.0,6.0,7.0,7.5,8.0,9.0,10.0,10.2,11.0,11.4,11.6,12.6), stage_description = c("emergence","leaf 1 fully extended", "leaf 2 fully extended","leaf 3 (tillers begin to emerge)","leaf 4","leaf 5 (tillering ends)","leaf 6 (tiller ends)","leaf 7 fully extended", "flag leaf visible", "flag leaf emerged","boot swelling begins", "boot completed", "heading begins", "headed (head extension begins)","flowering begins","flowering completed","kernel watery ripe"),accumulated_gdd_C_lowerbound= c(0,181,253,396,539,682,825,968,1111,1182,1256,1397,1540,1568,1683,1740,1769), accumulated_gdd_C_upperbound= c(180,252,395,538,681,824,967,1110,1181,1255,1396,1539,1567,1682,1739,1768,1825))
+```
+
+## Calculated accumulated GDD for each trial and 
+```{r}
+t_base <- 0
+
+trial_weather_df <- trial_weather_df %>%
+  group_by(env) %>%
+  arrange(daysFromStart) %>%
+  mutate(
+    daily_GDD = pmax((T2M_MAX + T2M_MIN)/2 - t_base, 0),
+    accumulated_GDD = cumsum(daily_GDD)
+  ) %>%
+  ungroup()
+
+breaks <- c(growth_stage_gdd$accumulated_gdd_C_lowerbound,Inf)
+labels <- growth_stage_gdd$stage_id
+trial_weather_df$growth_stage <- cut(
+  trial_weather_df$accumulated_GDD,
+  breaks = breaks,
+  labels = labels,
+  right = FALSE
+)
+```
+
+
+## Summarise weather data
+
+```{r weather summary}
+trial_weather_summary <-  trial_weather_df |> 
+  dplyr::select(env,LON,LAT,DOY,YYYYMMDD,YEAR,MM,DD,daysFromStart,T2M,T2M_MAX,T2M_MIN,T2MDEW,ALLSKY_SFC_LW_DWN,ALLSKY_SFC_SW_DWN,ALLSKY_SFC_PAR_TOT,ALLSKY_SFC_UVA,ALLSKY_SFC_UVB,PRECTOT,EVPTRNS,QV2M,RH2M,GWETROOT,GWETTOP,FROST_DAYS,WS2M,P_ETP,VPD,N,RTA,n,TH1,TH2,PAR_TEMP) |> 
+  summaryWTH()
+```
+
+```{r}
+### Create a correlation matrix of environmental variables
+env_var_cor_mat <- cor(trial_weather_df |> dplyr::select(T2M,T2M_MAX,T2M_MIN,T2MDEW,ALLSKY_SFC_LW_DWN,ALLSKY_SFC_SW_DWN,ALLSKY_SFC_PAR_TOT,ALLSKY_SFC_UVA,ALLSKY_SFC_UVB,PRECTOT,EVPTRNS,QV2M,RH2M,GWETROOT,GWETTOP,FROST_DAYS,WS2M,P_ETP,VPD,N,RTA,n,TH1,TH2), use="complete.obs")
+melted_cor <- melt(env_var_cor_mat)
+melted_cor <- melted_cor[as.numeric(melted_cor$Var1) > as.numeric(melted_cor$Var2), ]
+ggplot(melted_cor,aes(Var1,Var2,fill=value))+
+  geom_tile(color="white")+
+  scale_fill_gradient2(low="steelblue3", high = "orange2",mid="white", name="Correlation")+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, size=15), axis.text.y = element_text(size=15), plot.title = element_text(size=35), legend.text = element_text(size=15))+
+  labs(title="Correlations between trial weather variables", x="", y="")
+ggsave(here::here("figures","env_var_corr_plot.png"), width = 8, height = 6)  
+
+### Create W Matrix of environmental similarity, using time intervals within each trial, and select weather variables
+
+weather_variables <- c("T2M","T2M_MAX","T2M_MIN","T2MDEW","ALLSKY_SFC_UVA","ALLSKY_SFC_UVB","PRECTOT","EVPTRNS","QV2M","RH2M","GWETROOT","GWETTOP","FROST_DAYS","WS2M","n","TH1")
+
+### Make a copy of weather data that replaces days from start with accumulated GDD
+trial_weather_df_copy <- trial_weather_df
+trial_weather_df_copy$daysFromStart <- trial_weather_df_copy$accumulated_GDD
+
+W <- W_matrix(trial_weather_df_copy,env.id = "env",var.id = weather_variables,statistic="mean",by.interval = TRUE,time.window= growth_stage_gdd$accumulated_gdd_C_lowerbound, names.window=growth_stage_gdd$stage_description,QC=TRUE)
+env_rel_kernel <- env_kernel(env.data = W, gaussian = TRUE)
+
+Trial_W_mat <- as.data.frame(env_rel_kernel$envCov)
+
+rownames(Trial_W_mat)=all_trials$study_name[match(rownames(Trial_W_mat), all_trials$study_db_id)]
+colnames(Trial_W_mat)=all_trials$study_name[match(colnames(Trial_W_mat), all_trials$study_db_id)]
+
+write_csv(Trial_W_mat, here::here("analysis","Trial_W_mat.csv"))
+
+### Determine outlier trials and distances between trials in a PC space
+trial_sim_pc <- prcomp(Trial_W_mat, center = TRUE, scale. = FALSE)
+cum_var <- cumsum(trial_sim_pc$sdev^2) / sum(trial_sim_pc$sdev^2)
+k <- which(cum_var >= 0.95)[1] #number of PCs to explain variance
+trial_sim_pc_scores <- trial_sim_pc$x[,1:k]
+
+pc_centeroid <- colMeans(trial_sim_pc_scores)
+trial_env_sim_dist <- mahalanobis(trial_sim_pc_scores, center = pc_centeroid, cov= cov(trial_sim_pc_scores))
+
+trial_env_dist <- data.frame(study_db_id = colnames(Trial_W_mat), distance = trial_env_sim_dist)
+write_csv(trial_env_dist, here::here("analysis","trial_env_distances.csv"))
+
+# Compute clustering orders (rows and columns)
+mat <- env_rel_kernel$envCov
+row_ord <- hclust(dist(mat))$order
+col_ord <- hclust(dist(t(mat)))$order
+
+# Reorder matrix by those cluster orders
+mat_ord <- mat[row_ord, col_ord, drop = FALSE]
+
+# Plot heatmap with no dendrograms, but ordered by clustering
+
+png(
+  filename = here::here("figures","W_rel_heatmap.png"),
+  width = 2000,
+  height = 2000,
+  res = 300
+)
+
+
+heatmap(
+  mat_ord,
+  Rowv = NA,  # no dendrogram
+  Colv = NA,  # no dendrogram
+  cexRow = .5,
+  cexCol = .5,
+  margins = c(15, 15),
+  main = "Environmental Covariances of T3 Trials (W_rel)"
+)
+
+dev.copy(png, "W_rel_heatmap.png", width = 2000, height = 2000, res = 300)
+dev.off()
+  
+fields::image.plot(legend.only = TRUE,
+          zlim = range(mat_ord, na.rm=TRUE),
+          col = colorRampPalette(c("white", "orange", "red"))(100),
+          legend.lab = "Covariance",
+          legend.line = 3)
+
+heatmap(env_rel_kernel$envCov, main="Environmental Covariances of T3 Trials", Rowv = NA, Colv = NA, scale="row", cexRow = 1.5, cexCol = 1, cexMain=10, margins = c(15,15))
+
+### PCA and k-means clustering of Environments by analyzing growth stage aggregates
+
+trial_weather_growth_stage <- trial_weather_df |> 
+  dplyr::select(-c(LAT,LON,DOY)) |> 
+  group_by(env, growth_stage) |> 
+  dplyr::summarise(across(where(is.numeric), \(x) mean(x, na.rm=TRUE)), .groups="drop") |> 
+  dplyr::select(-daysFromStart) |> 
+  pivot_wider(names_from = growth_stage,values_from = -c(env,growth_stage),names_glue = "{.value}_{growth_stage}") 
+
+
+scaled_aggregated_weather_data <- trial_weather_growth_stage |> 
+  dplyr::select(-env) |> 
+  scale()
+
+## Run PCA dropping NA columns (due to some trials being shorter than others)
+
+filtered_scaled_aggregated_weather_data <- scaled_aggregated_weather_data |> 
+  as.data.frame() |> 
+  dplyr::select(where(~ !any(is.na(.)))) |> 
+  as.matrix()
+
+pca_result <- prcomp(filtered_scaled_aggregated_weather_data, center = TRUE, scale. = TRUE)
+pca_scores <- as.data.frame(pca_result$x)
+pca_scores$env <- trial_weather_growth_stage$env
+
+pca_scores <- pca_scores |> 
+  left_join(genotyped_trials |> dplyr::select(study_db_id, program_name, study_name),
+            by = c("env" = "study_db_id"))
+
+# Calculate percent variance explained (PVE)
+pve <- (pca_result$sdev^2 / sum(pca_result$sdev^2)) * 100
+
+# K-means clustering (optional)
+set.seed(123)
+kmeans_result <- kmeans(pca_scores[, 1:2], centers = 5)
+pca_scores$cluster <- as.factor(kmeans_result$cluster)
+
+# Plot with PVE on axes
+ggplot(pca_scores, aes(x = PC1, y = PC2, color = program_name, label = study_name)) +
+  geom_point(size = 3) +
+  geom_text(nudge_y = 0.6, size = 2) +
+  labs(
+    title = "Environmental PCA of Selected T3 Trials",
+    x = paste0("PC1 (", round(pve[1], 1), "%)"),
+    y = paste0("PC2 (", round(pve[2], 1), "%)")
+  ) +
+  theme_minimal(base_size = 12)+
+  theme(
+    plot.title = element_text(size = 20, face = "bold", hjust=0.5),        # title size
+    axis.title = element_text(size = 16),                       # axis labels
+    axis.text = element_text(size = 14),                        # axis tick labels
+    legend.title = element_text(size = 10),                     # legend title
+    legend.text = element_text(size = 14)                       # legend items
+  )
+
+ggsave(here::here("figures","env_pca.png"), height = 6, width = 10)
+
+```
+

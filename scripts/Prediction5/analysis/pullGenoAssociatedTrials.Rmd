@@ -1,0 +1,215 @@
+---
+title: "Pull genotype data from T3"
+author: "Prediction5 Team"
+output: html_document
+date: '`r format(Sys.time(), "%d %B, %Y")`'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE, message = FALSE)
+```
+
+# Libraries
+
+```{r load libraries}
+suppressPackageStartupMessages(library(here)) # root directory
+suppressPackageStartupMessages(library(data.table)) # load data
+suppressPackageStartupMessages(library(apercu)) # ap
+suppressPackageStartupMessages(library(dplyr)) # formatting
+suppressPackageStartupMessages(library(purrr)) # handle lists
+#devtools::install_github("TriticeaeToolbox/BrAPI.R")
+#pak::pak("jeanlucj/T3BrapiHelpers")
+suppressPackageStartupMessages(library(BrAPI)) # T3 connection
+suppressPackageStartupMessages(library(T3BrapiHelpers)) # T3 helper
+suppressPackageStartupMessages(library(DT)) # print table
+suppressPackageStartupMessages(library(ggplot2)) # plot
+suppressPackageStartupMessages(library(vcfR)) # load vcf
+suppressPackageStartupMessages(library(progress)) # progress bar
+suppressPackageStartupMessages(library(janitor)) # make clean names
+
+```
+
+# Set up root directory
+
+```{r current dir}
+here::i_am("analysis/pullGenoAssociatedTrials.Rmd")
+source(here("code","useful_functions.R"))
+```
+
+```{r}
+trials_predictathon <- c("AWY1_DVPWA_2024","TCAP_2025_MANKS","25_Big6_SVREC_SVREC",
+                         "OHRWW_2025_SPO","CornellMaster_2025_McGowan","24Crk_AY2-3",
+                         "2025_AYT_Aurora","YT_Urb_25","STP1_2025_MCG")
+```
+
+# Create T3 connection
+
+What's the difference between getBrAPIConnection and createBrAPIConnection?
+
+```{r}
+#wheat <- getBrAPIConnection("T3/Wheat")
+db <- getBrAPIConnection("T3/Wheat")
+wheat <- createBrAPIConnection("wheat.triticeaetoolbox.org", is_breedbase=TRUE)
+#trials_df <- T3BrapiHelpers::getAllTrialMetaData(wheat,"Wheat")
+```
+
+# Get genotyping platform used for each focal trial
+
+```{r}
+p2ds <- here("data","genotypic",trials_predictathon)
+list.files(p2ds)
+## load manifest files for each focal trial
+manifests <- map_dfr(trials_predictathon, \(x){
+  fread(here("data","genotypic",x,"manifest.csv"))
+})
+manifests
+protid = unique(manifests$protocol_id)
+```
+
+# Get list of associated trials
+
+```{r}
+p2f <- here("data","allTrials_metadata.csv") # path to file
+all_trials_init <- fread(p2f) |> 
+  select(-V1) 
+all_trials_focal <- all_trials_init |> 
+  filter(isFocal) 
+focal_prg <- unique(all_trials_focal$program)
+
+all_trials_init <- all_trials_init |> filter(!isFocal)
+head(all_trials_init)
+```
+
+# Pull genotyping platform for each trial
+
+Trial by trial
+
+```{r pull_geno_platform, include=TRUE}
+
+p2f <- here("data","allTrials_metadata_genotyping_platform.csv") # path to file
+
+# if(file.exists(p2f)){
+#   all_trials <- fread(p2f) 
+# } else {
+  all_trials <- all_trials_init |> 
+    bind_cols(nb_genos = NA, prop_geno = NA, best_protocol = NA, 
+              best_protocol_id = NA, best_project = NA, best_project_id = NA,
+              vcf_file_name = NA, inManifest = FALSE)
+  #tri=all_trials$focal_trial[165]
+  pb <- txtProgressBar(min=1, max=nrow(all_trials), style = 3)
+  for(i in 1:nrow(all_trials)){
+    setTxtProgressBar(pb, i)
+    tri <- all_trials$focal_trial[i]
+    ## get the list of genotypes in this trial
+    #genos <- getGermplasmFromTrialVec(study_id_vec=unique(wsu$focal_trial), db)
+    genos <- getGermplasmFromTrialVec(study_id_vec=tri, db)
+    
+    ## add the total number of lines
+    all_trials$nb_genos[i] <- nrow(genos)
+    ## which genotyping platform is the best?
+    resp <- try(db$filter_geno_projects(genos$germplasmDbId))
+    if(length(resp) == 4 && resp$status$category == "Success"){
+      top_match <- resp$data$top_matches
+      ## TODO if there are multiple options, take the one in common with the focal trial
+      #all_trials$best_project[i] <- top_match[1]
+      
+      ## from the project name, get the id
+      projId <- resp$content$results$counts$ranked_genotyping_projects[[1]]
+      #all_trials$best_project_id[i] <- projId
+      
+      ## get the protocol name the same way
+      req <- db$filter_geno_protocols(accessions = genos$germplasmDbId, verbose = FALSE)
+      protId <- req$content$results$counts$ranked_genotyping_protocols[[1]]
+      
+      info <- wheat$vcf_archived_list(genotyping_protocol_id=protId, verbose = FALSE)
+      if(nrow(info) > 1){
+        info <- info |> filter(project_id == projId, protocol_id == protId) |> 
+          head(1) |> as.data.frame()
+      }
+      if(nrow(info) == 0){
+        print(paste0("No VCF found for trial ", tri, " with protocol id ", protId, " and project id ", projId))
+        next
+      }
+      all_trials$best_protocol[i] <- info$protocol_name
+      all_trials$best_protocol_id[i] <- info$protocol_id
+      all_trials$best_project[i] <- info$project_name
+      all_trials$best_project_id[i] <- info$project_id
+      all_trials$vcf_file_name[i] <- info$file_name
+      if(info$file_name %in% manifests$file_name){
+        all_trials$inManifest[i] <- TRUE
+      }
+      
+      ## get the proportion of lines genotyped 
+      nb_genos <- sum(resp$data$matches[,top_match[1]], na.rm=T)
+      all_trials$prop_geno[i] <- 100*round(nb_genos / nrow(genos),1)
+      # ## add the list of genotypes in the trial
+      # all_trials$genos_list[i] <- list(genos$germplasmDbId)
+    } else {
+      all_trials$best_protocol[i] <- NA
+    }
+  }
+  close(pb)
+  ## Export the table with genotyping platform info
+  write.table(all_trials, p2f, sep=",", row.names=F, quote=F)
+#}
+```
+
+# Explore output
+
+Number of trials with genotyped lines for each program
+
+```{r}
+all_trials_geno <- all_trials |> 
+  filter(!is.na(prop_geno) & prop_geno > 1 & nb_genos > 5) 
+dim(all_trials_geno) ## 61 x 14
+table(all_trials_geno$program)
+```
+
+Kansas doesn't have any trial with genotyped lines.
+
+Check the genotyping platform diversity
+
+```{r}
+table(all_trials_geno$best_protocol)
+intersect(manifests$protocol_name, unique(all_trials_geno$best_protocol))
+```
+
+# Download all vcf files
+
+```{r}
+
+#for(prog in focal_prg[!focal_prg %in% "USDA-ARS Kansas"]){
+for(prog in focal_prg){
+  prog_trials <- all_trials_geno |> 
+    filter(program == prog) |> 
+    select(best_protocol_id, best_project_id, vcf_file_name, inManifest) |> 
+    distinct()
+  if(nrow(prog_trials) == 0) {
+    write(paste0("No genotyped trial found for program ", prog), stdout())
+  } else {
+    
+    
+    write(paste0("Downloading ", nrow(prog_trials), " VCF files for program ", prog), stdout())
+    tri <- unique(all_trials_focal |> filter(program == prog) |> pull(studyDbId))
+    p2d <- here("data","genotypic",tri,"nonFocal")
+    if(!dir.exists(p2d)) dir.create(p2d, recursive = TRUE)
+    
+    better_prog_name <- make_clean_names(prog,case="snake")
+    for(i in 1:nrow(prog_trials)){
+      if(!prog_trials$inManifest[i]){## Don't download if same file as focal trial
+        wheat$vcf_archived(
+          output =paste0(p2d,"/",better_prog_name,"_",i,".vcf.gz"),
+          genotyping_protocol_id = prog_trials$best_protocol_id[i],
+          genotyping_project_id =  prog_trials$best_project_id[i],
+          file_name = prog_trials$vcf_file_name[i],
+          verbose = FALSE
+        )
+      } else{
+        write(paste0("VCF file ", prog_trials$vcf_file_name[i], " for trial ", 
+                     prog, " is already downloaded"), stdout())
+        
+      }
+    }
+  }
+}
+```

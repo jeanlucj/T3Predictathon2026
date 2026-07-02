@@ -1,0 +1,155 @@
+study_name,study_db_id,program_name,study_type,location_name,location_db_id,latitude,longitude,elevation,start_date,end_date,experimental_design
+YT_Addie_23,11011,University of Illinois,phenotyping_trial,"Addieville, IL",333,38.41489,-89.46188,132,2022-10-17T00:00:00Z,NA,p-rep
+24_MSU_AYT_ALLMI,10023,Michigan State University,Advanced Yield Trial,"Allegan County, MI",299,42.732513,-85.55543,810,2023-09-22T00:00:00Z,2024-07-01T00:00:00Z,Alpha
+25_MSU_AYT_MI_ALLMI,10258,Michigan State University,Advanced Yield Trial,"Allegan County, MI",299,42.732513,-85.55543,810,2024-09-21T00:00:00Z,2025-07-14T00:00:00Z,Alpha
+YT_Blv_23,11031,University of Illinois,phenotyping_trial,"Belleville, IL",40,38.52005,-89.98399,158,2022-10-07T00:00:00Z,2023-06-15T00:00:00Z,p-rep
+OVT_Blv_23,10953,University of Illinois,phenotyping_trial,"Belleville, IL",40,38.52005,-89.98399,158,2022-10-07T00:00:00Z,2023-06-15T00:00:00Z,RCBD
+YT_Blv_22,10792,University of Illinois,phenotyping_trial,"Belleville, IL",40,38.52005,-89.98399,158,2021-10-05T00:00:00Z,NA,p-rep
+StateWheat_2022_BLAVA,10825,Virginia Tech,phenotyping_trial,"Blacksburg, VA",45,37.198273,-80.56826,514,NA,NA,RCBD
+StateWheat_2023_BLAVA,10993,Virginia Tech,phenotyping_trial,"Blacksburg, VA",45,37.198273,-80.56826,514,NA,NA,RCBD
+YT_Blk_23,11019,University of Illinois,phenotyping_trial,"Blacksburg, VA",45,37.198273,-80.56826,514,2022-10-14T00:00:00Z,NA,p-rep
+MasonDixon_2023_BLAVA,10932,Virginia Tech,phenotyping_trial,"Blacksburg, VA",45,37.198273,-80.56826,514,NA,NA,RCBD
+Jessica_2022_BLAVA,10736,Virginia Tech,phenotyping_trial,"Blacksburg, VA",45,37.198273,-80.56826,514,NA,NA,RCBD
+UniformEastern_2022_BLAVA,10813,Virginia Tech,phenotyping_trial,"Blacksburg, VA",45,37.198273,-80.56826,514,NA,NA,RCBD
+Jessica_2023_BLAVA,10911,Virginia Tech,phenotyping_trial,"Blacksburg, VA",45,37.198273,-80.56826,514,NA,NA,RCBD
+UniformEastern_2023_BLAVA,11030,Virginia Tech,phenotyping_trial,"Blacksburg, VA",45,37.198273,-80.56826,514,NA,NA,RCBD
+24_MSU_AYT_BLUIN,10010,Michigan State University,Advanced Yield Trial,"Bluffton, IN",281,40.73866,-85.17164,252,2023-10-11T00:00:00Z,2024-06-28T00:00:00Z,Alpha
+Adv_Car_19,6268,University of Illinois,phenotyping_trial,"Carmi, IL",249,38.089386,-88.17574,124,NA,NA,RCBD
+25_MSU_AYT_MI_CENMI,10250,Michigan State University,Advanced Yield Trial,"Central, MI",300,43.162106,-84.69903,752,2024-09-24T00:00:00Z,2025-07-14T00:00:00Z,Alpha
+24_MSU_AYT_CENMI,10022,Michigan State University,Advanced Yield Trial,"Central, MI",300,43.162106,-84.69903,752,2023-10-23T00:00:00Z,2024-07-12T00:00:00Z,Alpha
+25_MSU_AYT_Regional_CENIL,10261,Michigan State University,Advanced Yield Trial,"Centralia, IL",267,38.510567,-89.217125,139.9,2024-10-10T00:00:00Z,2025-06-21T00:00:00Z,Alpha
+24_MSU_AYT_CENIL,10006,Michigan State University,Advanced Yield Trial,"Centralia, IL",267,38.510567,-89.217125,139.9,2023-10-10T00:00:00Z,2024-06-14T00:00:00Z,Alpha
+25_MSU_AYT_Regional_CHAIL,10249,Michigan State University,Advanced Yield Trial,"Champaign, IL",29,40.115,-88.272,233,2024-10-04T00:00:00Z,2025-07-02T00:00:00Z,Alpha
+24_MSU_AYT_CHAIL,10005,Michigan State University,Advanced Yield Trial,"Champaign, IL",29,40.115,-88.272,233,NA,2024-06-25T00:00:00Z,Alpha
+24_MSU_AYT_CHAMO,10018,Michigan State University,Advanced Yield Trial,"Charleston, MO",271,36.962353,-89.297134,97.7,2023-11-08T00:00:00Z,2024-06-13T00:00:00Z,Alpha
+24_MSU_AYT_CRAIN,10026,Michigan State University,Advanced Yield Trial,"Crawfordsville, IN",282,40.0402,-86.89902,236,2023-10-03T00:00:00Z,2024-06-22T00:00:00Z,Alpha
+YR3_2021_Custar,9234,Ohio State University,Advanced Yield Trial,"Custar, OH",259,41.215492,-83.76403,213,2020-10-01T00:00:00Z,NA,RCBD
+YR2-3_2021_Custar,9237,Ohio State University,Preliminary Yield Trial,"Custar, OH",259,41.215492,-83.76403,213,2020-10-01T00:00:00Z,NA,RCBD
+YR2-1_2021_Custar,9239,Ohio State University,Preliminary Yield Trial,"Custar, OH",259,41.215492,-83.76403,213,2020-10-01T00:00:00Z,NA,RCBD
+WMSF_2021_Custar,9241,Ohio State University,phenotyping_trial,"Custar, OH",259,41.215492,-83.76403,213,2020-10-01T00:00:00Z,NA,RCBD
+OWW_2020_DANIL,10284,University of Wisconsin,NA,"Danforth, IL",250,40.811398,-87.96713,193,2019-10-03T00:00:00Z,2020-07-07T00:00:00Z,RCBD
+OWW_2021_DANIL,10295,University of Wisconsin,NA,"Danforth, IL",250,40.811398,-87.96713,193,2020-09-09T00:00:00Z,2021-07-08T00:00:00Z,RCBD
+Org_Dan_21,10336,University of Illinois,phenotyping_trial,"Danforth, IL",250,40.811398,-87.96713,193,2020-09-25T00:00:00Z,2021-07-08T00:00:00Z,p-rep
+Org_Dan_23,10946,University of Illinois,phenotyping_trial,"Danforth, IL",250,40.811398,-87.96713,193,2022-10-18T00:00:00Z,2023-07-05T00:00:00Z,CRD
+OVT_Elk_23,10940,University of Illinois,phenotyping_trial,"Elkville, IL",76,37.91137,-89.23573,123,2022-10-14T00:00:00Z,2023-06-22T00:00:00Z,RCBD
+Big6_Fra_23,10909,University of Illinois,phenotyping_trial,"Frankenmuth, MI",335,43.399433,-83.69695,194,2022-09-23T00:00:00Z,2023-07-19T00:00:00Z,p-rep
+YR2-3_2021_Fremont,9240,Ohio State University,Preliminary Yield Trial,"Fremont, OH",260,41.311825,-83.17121,200,2020-10-02T00:00:00Z,NA,RCBD
+YR2-2_2021_Fremont,9235,Ohio State University,Preliminary Yield Trial,"Fremont, OH",260,41.311825,-83.17121,200,2020-10-02T00:00:00Z,NA,RCBD
+Big6_Fre_23,10899,University of Illinois,phenotyping_trial,"Fremont, OH",260,41.311825,-83.17121,200,2022-10-04T00:00:00Z,NA,p-rep
+YR3_2021_Fremont,9230,Ohio State University,Advanced Yield Trial,"Fremont, OH",260,41.311825,-83.17121,200,2020-10-02T00:00:00Z,NA,RCBD
+25_MSU_AYT_Regional_HMLIL,10247,Michigan State University,Advanced Yield Trial,"Hamel, IL",268,38.918835,-89.81977,171,2024-10-15T00:00:00Z,2025-06-26T00:00:00Z,Alpha
+24_MSU_AYT_HMLIL,10036,Michigan State University,Advanced Yield Trial,"Hamel, IL",268,38.918835,-89.81977,171,2023-10-08T00:00:00Z,2024-06-17T00:00:00Z,Alpha
+OVT_Ham_23,10965,University of Illinois,phenotyping_trial,"Hampshire, IL",101,42.09691,-88.53014,280,2022-10-05T00:00:00Z,2023-07-11T00:00:00Z,RCBD
+24_MSU_AYT_HENKY,10030,Michigan State University,Advanced Yield Trial,"Henderson, KY",106,37.807175,-87.59905,117,NA,2024-06-13T00:00:00Z,Alpha
+25_MSU_AYT_Regional_HENKY,10254,Michigan State University,Advanced Yield Trial,"Henderson, KY",106,37.807175,-87.59905,117,2024-10-16T00:00:00Z,2025-06-19T00:00:00Z,Alpha
+24_MSU_AYT_HOPKY,10032,Michigan State University,Advanced Yield Trial,"Hopkinsville, KY",274,36.79487,-87.6409,163.3,2023-10-10T00:00:00Z,2024-06-08T00:00:00Z,Alpha
+25_MSU_AYT_Regional_HOPKY,10257,Michigan State University,Advanced Yield Trial,"Hopkinsville, KY",274,36.79487,-87.6409,163.3,2024-10-14T00:00:00Z,2025-06-22T00:00:00Z,Alpha
+25_MSU_AYT_MI_HURMI,10259,Michigan State University,Advanced Yield Trial,"Huron County, MI",233,43.756573,-83.31558,192,2024-10-04T00:00:00Z,2025-07-14T00:00:00Z,Alpha
+23_MSU_PYT_1_HURMI,9981,Michigan State University,Preliminary Yield Trial,"Huron County, MI",233,43.756573,-83.31558,192,2022-10-03T00:00:00Z,2023-07-19T00:00:00Z,Alpha
+24_MSU_AYT_HURMI,10035,Michigan State University,Advanced Yield Trial,"Huron County, MI",233,43.756573,-83.31558,192,2023-10-09T00:00:00Z,2024-07-12T00:00:00Z,Alpha
+Big6_Ith_23,10933,University of Illinois,phenotyping_trial,"Ithaca, NY",31,42.44787,-76.45881,289,2022-10-07T00:00:00Z,NA,RCBD
+CornellMaster_2019_Ketola,9070,Cornell University,Preliminary Yield Trial,"Ithaca, NY - Ketola",121,42.47111,-76.4361,1608,2018-01-01T00:00:00Z,2019-01-01T00:00:00Z,RCBD
+CornellMaster_2021_Snyder,9091,Cornell University,phenotyping_trial,"Ithaca, NY - Snyder",200,42.45004,-76.44614,1615,2020-10-06T00:00:00Z,NA,Augmented
+24_MSU_AYT_LIMOH,10028,Michigan State University,Advanced Yield Trial,"Lima, OH",283,40.73998,-84.10501,264,2023-10-04T00:00:00Z,2024-07-08T00:00:00Z,Alpha
+OWW_2020_MAD,10280,University of Wisconsin,NA,"Madison, WI",314,43.064213,-89.53479,328.9,2019-09-25T00:00:00Z,2020-07-17T00:00:00Z,Alpha
+OHRWW_2023_MAD,10941,University of Wisconsin,phenotyping_trial,"Madison, WI",314,43.064213,-89.53479,328.9,2022-09-29T00:00:00Z,2023-07-10T00:00:00Z,Alpha
+24_MSU_AYT_MASIL,10003,Michigan State University,Advanced Yield Trial,"Mascoutah, IL",301,38.40175,-89.48506,469,2023-10-13T00:00:00Z,2024-06-19T00:00:00Z,Alpha
+24_Big6_MASMI,10011,Michigan State University,Advanced Yield Trial,"Mason, MI",261,42.62891,-84.432304,275,2023-10-02T00:00:00Z,2024-07-03T00:00:00Z,Alpha
+5STPRE_2021_Mason,9111,Five State Cooperative,Preliminary Yield Trial,"Mason, MI",261,42.62891,-84.432304,275,2020-09-17T00:00:00Z,NA,RCBD
+TP_2021_Mason,9115,Michigan State University,phenotyping_trial,"Mason, MI",261,42.62891,-84.432304,275,2020-09-17T00:00:00Z,NA,RCBD
+23_Big6_MAS,10033,Michigan State University,Advanced Yield Trial,"Mason, MI",261,42.62891,-84.432304,275,2022-09-30T00:00:00Z,2023-07-11T00:00:00Z,p-rep
+25_Big6_MASON_MASMI,10262,Michigan State University,Advanced Yield Trial,"Mason, MI",261,42.62891,-84.432304,275,2024-09-20T00:00:00Z,2025-07-16T00:00:00Z,p-rep
+5STADV_2021_Mason,9129,Five State Cooperative,Advanced Yield Trial,"Mason, MI",261,42.62891,-84.432304,275,2020-09-17T00:00:00Z,NA,RCBD
+24_MSU_AYT_MASMI,10019,Michigan State University,Advanced Yield Trial,"Mason, MI",261,42.62891,-84.432304,275,2023-10-02T00:00:00Z,2024-07-03T00:00:00Z,Alpha
+24_MSU_PYT_3_MASMI,10037,Michigan State University,Preliminary Yield Trial,"Mason, MI",261,42.62891,-84.432304,275,2023-10-02T00:00:00Z,2024-07-03T00:00:00Z,Alpha
+23_MSU_PYT_1_MASMI,9986,Michigan State University,Preliminary Yield Trial,"Mason, MI",261,42.62891,-84.432304,275,2022-09-30T00:00:00Z,2023-07-10T00:00:00Z,Alpha
+Big6_Mas_23,10916,University of Illinois,phenotyping_trial,"Mason, MI",261,42.62891,-84.432304,275,2022-09-30T00:00:00Z,2023-07-11T00:00:00Z,p-rep
+24_MSU_PYT_1_MASMI,10012,Michigan State University,Preliminary Yield Trial,"Mason, MI",261,42.62891,-84.432304,275,2023-10-02T00:00:00Z,2024-07-03T00:00:00Z,Alpha
+24_MSU_PYT_2_MASMI,10008,Michigan State University,Preliminary Yield Trial,"Mason, MI",261,42.62891,-84.432304,275,2023-10-02T00:00:00Z,2024-07-03T00:00:00Z,Alpha
+25_MSU_PYT_MASMI,10253,Michigan State University,Advanced Yield Trial,"Mason, MI",261,42.62891,-84.432304,275,2024-09-20T00:00:00Z,2025-07-21T00:00:00Z,Alpha
+UESRWWN_2021_Mason,9117,Soft Red Winter Wheat Nursery Cooperative,phenotyping_trial,"Mason, MI",261,42.62891,-84.432304,275,2020-09-17T00:00:00Z,NA,RCBD
+24_MSU_AYT_MEXMO,10002,Michigan State University,Advanced Yield Trial,"Mexico, MO",275,39.222374,-91.84153,245.9,2023-10-12T00:00:00Z,2024-06-20T00:00:00Z,Alpha
+24_MSU_AYT_MONMI,10034,Michigan State University,Advanced Yield Trial,"Monroe County, MI",273,41.871708,-83.57285,193.9,2023-10-11T00:00:00Z,2024-07-02T00:00:00Z,Alpha
+25_MSU_AYT_MI_MONMI,10252,Michigan State University,Advanced Yield Trial,"Monroe County, MI",273,41.871708,-83.57285,193.9,2024-09-26T00:00:00Z,2025-07-08T00:00:00Z,Alpha
+24_MSU_PYT_3_MONMI,10024,Michigan State University,Preliminary Yield Trial,"Monroe County, MI",273,41.871708,-83.57285,193.9,2023-10-11T00:00:00Z,2024-07-02T00:00:00Z,Alpha
+24_MSU_PYT_1_MONMI,10009,Michigan State University,Preliminary Yield Trial,"Monroe County, MI",273,41.871708,-83.57285,193.9,2023-10-11T00:00:00Z,2024-07-02T00:00:00Z,Alpha
+23_MSU_PYT_1_MONMI,9991,Michigan State University,Preliminary Yield Trial,"Monroe County, MI",273,41.871708,-83.57285,193.9,2022-10-02T00:00:00Z,2023-07-14T00:00:00Z,Alpha
+24_MSU_PYT_2_MONMI,10014,Michigan State University,Preliminary Yield Trial,"Monroe County, MI",273,41.871708,-83.57285,193.9,2023-10-11T00:00:00Z,2024-07-02T00:00:00Z,Alpha
+25_MSU_AYT_Regional_NAPOH,10256,Michigan State University,Advanced Yield Trial,"Napoleon, OH",159,41.355587,-84.12303,207,2024-10-09T00:00:00Z,2025-07-08T00:00:00Z,Alpha
+24_MSU_AYT_NAPOH,10004,Michigan State University,Advanced Yield Trial,"Napoleon, OH",159,41.355587,-84.12303,207,NA,2024-07-02T00:00:00Z,Alpha
+Adv_Neo_21,10307,University of Illinois,phenotyping_trial,"Neoga, IL",160,39.31996,-88.45469,204,2020-10-15T00:00:00Z,NA,p-rep
+UE_Neo_21,10310,University of Illinois,phenotyping_trial,"Neoga, IL",160,39.31996,-88.45469,204,2020-10-15T00:00:00Z,NA,RCBD
+UE_Neo_22,10836,University of Illinois,phenotyping_trial,"Neoga, IL",160,39.31996,-88.45469,204,2021-10-22T00:00:00Z,NA,RCBD
+MSU_Neo_23,10982,University of Illinois,phenotyping_trial,"Neoga, IL",160,39.31996,-88.45469,204,2022-10-10T00:00:00Z,2023-06-24T00:00:00Z,RCBD
+UE_Neo_23,10996,University of Illinois,phenotyping_trial,"Neoga, IL",160,39.31996,-88.45469,204,2022-10-10T00:00:00Z,2023-06-24T00:00:00Z,RCBD
+YT_Neo_23,11029,University of Illinois,phenotyping_trial,"Neoga, IL",160,39.31996,-88.45469,204,2023-10-10T00:00:00Z,2023-06-23T00:00:00Z,p-rep
+Pr_Neo_21,10315,University of Illinois,phenotyping_trial,"Neoga, IL",160,39.31996,-88.45469,204,2020-10-15T00:00:00Z,NA,p-rep
+YT_Neo_22,10795,University of Illinois,phenotyping_trial,"Neoga, IL",160,39.31996,-88.45469,204,2021-10-22T00:00:00Z,NA,p-rep
+DH_Neo_21,10317,University of Illinois,phenotyping_trial,"Neoga, IL",160,39.31996,-88.45469,204,2020-10-15T00:00:00Z,2021-06-29T00:00:00Z,Augmented
+A5S_Neo_21,10331,University of Illinois,phenotyping_trial,"Neoga, IL",160,39.31996,-88.45469,204,2020-10-15T00:00:00Z,NA,RCBD
+OVT_Per_23,10968,University of Illinois,phenotyping_trial,"Perry, IL",173,39.805756,-90.82441,196,2022-10-04T00:00:00Z,2023-06-26T00:00:00Z,RCBD
+Big6_Prn_23,10926,University of Illinois,phenotyping_trial,"Princeton, KY",251,37.63,-87.52,121,2022-10-18T00:00:00Z,2023-06-17T00:00:00Z,p-rep
+24_MSU_PYT_2_SVREC,10021,Michigan State University,Preliminary Yield Trial,"Saginaw Valley Research and Extension Center, MI",234,43.39963,-83.69699,189,2023-10-04T00:00:00Z,2024-07-09T00:00:00Z,Alpha
+23_Big6_SVREC,10020,Michigan State University,Advanced Yield Trial,"Saginaw Valley Research and Extension Center, MI",234,43.39963,-83.69699,189,2022-09-23T00:00:00Z,2023-07-19T00:00:00Z,p-rep
+TP_2021_Frankenmuth,9116,Michigan State University,phenotyping_trial,"Saginaw Valley Research and Extension Center, MI",234,43.39963,-83.69699,189,2020-09-25T00:00:00Z,NA,RCBD
+24_MSU_PYT_1_SVREC,10007,Michigan State University,Preliminary Yield Trial,"Saginaw Valley Research and Extension Center, MI",234,43.39963,-83.69699,189,2023-10-04T00:00:00Z,2024-07-09T00:00:00Z,Alpha
+25_MSU_PYT_SVREC,10260,Michigan State University,Advanced Yield Trial,"Saginaw Valley Research and Extension Center, MI",234,43.39963,-83.69699,189,2024-09-22T00:00:00Z,2025-07-10T00:00:00Z,Alpha
+24_MSU_AYT_SVREC,10015,Michigan State University,Advanced Yield Trial,"Saginaw Valley Research and Extension Center, MI",234,43.39963,-83.69699,189,2023-10-04T00:00:00Z,2024-07-09T00:00:00Z,Alpha
+24_MSU_PYT_3_SVREC,10029,Michigan State University,Preliminary Yield Trial,"Saginaw Valley Research and Extension Center, MI",234,43.39963,-83.69699,189,2023-10-04T00:00:00Z,2024-07-09T00:00:00Z,Alpha
+23_MSU_PYT_1_SVREC,9980,Michigan State University,Preliminary Yield Trial,"Saginaw Valley Research and Extension Center, MI",234,43.39963,-83.69699,189,2022-09-23T00:00:00Z,2023-07-18T00:00:00Z,Alpha
+24_Big6_SVREC,10027,Michigan State University,Advanced Yield Trial,"Saginaw Valley Research and Extension Center, MI",234,43.39963,-83.69699,189,2023-10-04T00:00:00Z,2024-07-09T00:00:00Z,Alpha
+24_MSU_AYT_SANMI,10016,Michigan State University,Advanced Yield Trial,"Sanilac County, MI",266,43.493397,-82.796844,234,2023-10-09T00:00:00Z,2024-07-13T00:00:00Z,Alpha
+25_MSU_AYT_MI_SANMI,10263,Michigan State University,Advanced Yield Trial,"Sanilac County, MI",266,43.493397,-82.796844,234,2024-10-04T00:00:00Z,2025-07-18T00:00:00Z,Alpha
+OVT_Stp_23,10945,University of Illinois,phenotyping_trial,"St Peter, IL",340,38.86804,-88.850655,181,2022-10-18T00:00:00Z,2023-06-21T00:00:00Z,RCBD
+YT_Stp_22,10786,University of Illinois,phenotyping_trial,"St Peter, IL",340,38.86804,-88.850655,181,2021-09-29T00:00:00Z,NA,p-rep
+YT_Stp_23,11033,University of Illinois,phenotyping_trial,"St Peter, IL",340,38.86804,-88.850655,181,2022-10-18T00:00:00Z,2023-06-21T00:00:00Z,p-rep
+Pr_Stj_21,10298,University of Illinois,phenotyping_trial,"St. Jacob Township, IL",320,38.7156,-89.7568,156,2020-10-15T00:00:00Z,NA,p-rep
+YT_Stj_22,10788,University of Illinois,phenotyping_trial,"St. Jacob Township, IL",320,38.7156,-89.7568,156,2021-10-22T00:00:00Z,NA,p-rep
+Adv_Stj_21,10287,University of Illinois,phenotyping_trial,"St. Jacob Township, IL",320,38.7156,-89.7568,156,2020-10-15T00:00:00Z,2021-06-23T00:00:00Z,p-rep
+Adv_Stj_19,6256,University of Illinois,phenotyping_trial,"St. Jacob, IL",202,37.546535,-88.96905,228,NA,NA,RCBD
+24_MSU_AYT_TIFOH,10031,Michigan State University,Advanced Yield Trial,"Tiffin, OH",276,41.11449,-83.17795,226,2023-10-04T00:00:00Z,2024-07-03T00:00:00Z,Alpha
+25_MSU_AYT_Regional_TIFOH,10264,Michigan State University,Advanced Yield Trial,"Tiffin, OH",276,41.11449,-83.17795,226,2024-10-04T00:00:00Z,2025-07-04T00:00:00Z,Alpha
+Pr_Urb_21,10335,University of Illinois,phenotyping_trial,"Urbana, IL",211,40.7,-88.12,205,2020-10-02T00:00:00Z,NA,p-rep
+DH_Urb_21,10304,University of Illinois,phenotyping_trial,"Urbana, IL",211,40.7,-88.12,205,2020-10-05T00:00:00Z,2021-07-03T00:00:00Z,Augmented
+YT_Urb_23,11014,University of Illinois,phenotyping_trial,"Urbana, IL",211,40.7,-88.12,205,2022-09-30T00:00:00Z,2023-06-27T00:00:00Z,p-rep
+DH2_Urb_21,10326,University of Illinois,phenotyping_trial,"Urbana, IL",211,40.7,-88.12,205,2020-10-05T00:00:00Z,2021-07-03T00:00:00Z,Augmented
+Big6_Urb_23,10931,University of Illinois,phenotyping_trial,"Urbana, IL",211,40.7,-88.12,205,2022-09-30T00:00:00Z,2023-06-28T00:00:00Z,p-rep
+YT_Urb_22,10787,University of Illinois,phenotyping_trial,"Urbana, IL",211,40.7,-88.12,205,2021-09-28T00:00:00Z,NA,p-rep
+SI_Urb_23,10944,University of Illinois,Seed Multiplication,"Urbana, IL",211,40.7,-88.12,205,2023-10-28T00:00:00Z,2023-07-04T00:00:00Z,CRD
+Adv_Urb_21,10296,University of Illinois,phenotyping_trial,"Urbana, IL",211,40.7,-88.12,205,2020-10-02T00:00:00Z,NA,p-rep
+OVT_Urb_23,10957,University of Illinois,phenotyping_trial,"Urbana, IL",211,40.7,-88.12,205,2022-08-29T00:00:00Z,2023-06-28T00:00:00Z,RCBD
+AdvHY_Urb_19,6266,University of Illinois,phenotyping_trial,"Urbana, IL",211,40.7,-88.12,205,NA,NA,RCBD
+Adv_Urb_19,6257,University of Illinois,phenotyping_trial,"Urbana, IL",211,40.7,-88.12,205,NA,NA,RCBD
+2021_Y2_1_NIFA_Vincennes,9269,Purdue University,phenotyping_trial,"Vincennes, IN",212,38.70723,-87.417305,150,2020-10-12T00:00:00Z,2021-06-28T00:00:00Z,RCBD
+Big6_Vin_23,10904,University of Illinois,phenotyping_trial,"Vincennes, IN",212,38.70723,-87.417305,150,2022-10-13T00:00:00Z,NA,RCBD
+UniformEastern_2023_WARVA,10991,Virginia Tech,phenotyping_trial,"Warsaw, VA",218,37.96954,-76.76652,36,NA,NA,RCBD
+Jessica_2022_WARVA,10765,Virginia Tech,phenotyping_trial,"Warsaw, VA",218,37.96954,-76.76652,36,NA,NA,RCBD
+UniformScab_2022_WARVA,10821,Virginia Tech,phenotyping_trial,"Warsaw, VA",218,37.96954,-76.76652,36,NA,NA,RCBD
+Jessica_2023_WARVA,10902,Virginia Tech,phenotyping_trial,"Warsaw, VA",218,37.96954,-76.76652,36,NA,NA,RCBD
+StateWheat_2022_WARVA,10794,Virginia Tech,phenotyping_trial,"Warsaw, VA",218,37.96954,-76.76652,36,NA,NA,RCBD
+UniformEastern_2022_WARVA,10819,Virginia Tech,phenotyping_trial,"Warsaw, VA",218,37.96954,-76.76652,36,NA,NA,RCBD
+YT_War_23,10994,University of Illinois,phenotyping_trial,"Warsaw, VA",218,37.96954,-76.76652,36,2022-10-28T00:00:00Z,NA,p-rep
+StateWheat_2023_WARVA,11012,Virginia Tech,phenotyping_trial,"Warsaw, VA",218,37.96954,-76.76652,36,NA,NA,RCBD
+MasonDixon_2023_WARVA,10952,Virginia Tech,phenotyping_trial,"Warsaw, VA",218,37.96954,-76.76652,36,NA,NA,RCBD
+Big6_Laf_23,10938,University of Illinois,phenotyping_trial,"West Lafayette, IN",220,40.42,-86.91,186,2022-10-20T00:00:00Z,NA,p-rep
+2022_SPY1-PUR2,9415,Purdue University,phenotyping_trial,"West Lafayette, IN",220,40.42,-86.91,186,2021-11-06T00:00:00Z,2022-07-07T00:00:00Z,Augmented
+2024_Y2_1_ACRE,10000,Purdue University,Preliminary Yield Trial,"West Lafayette, IN",220,40.42,-86.91,186,2023-10-21T00:00:00Z,NA,RCBD
+2020_Y3_1_Tier1,8188,Purdue University,Advanced Yield Trial,"West Lafayette, IN",220,40.42,-86.91,186,2019-10-09T00:00:00Z,2020-07-02T00:00:00Z,RCBD
+2024_Elite_ACRE,9995,Purdue University,Advanced Yield Trial,"West Lafayette, IN",220,40.42,-86.91,186,2023-10-21T00:00:00Z,NA,RCBD
+2021_Y1-3,9266,Purdue University,phenotyping_trial,"West Lafayette, IN",220,40.42,-86.91,186,2020-10-17T00:00:00Z,2021-07-28T00:00:00Z,Augmented
+2024_Y3_1_ACRE,9996,Purdue University,Advanced Yield Trial,"West Lafayette, IN",220,40.42,-86.91,186,2023-10-21T00:00:00Z,NA,RCBD
+2022_SPY1-PUR1,9414,Purdue University,phenotyping_trial,"West Lafayette, IN",220,40.42,-86.91,186,2021-10-23T00:00:00Z,2022-07-07T00:00:00Z,Augmented
+2021_Y2_1_NIFA_WestLafayette,9267,Purdue University,phenotyping_trial,"West Lafayette, IN",220,40.42,-86.91,186,2020-10-16T00:00:00Z,2021-07-06T00:00:00Z,RCBD
+2021_SPY1-IL,9273,Purdue University,phenotyping_trial,"West Lafayette, IN",220,40.42,-86.91,186,2020-10-17T00:00:00Z,2021-07-27T00:00:00Z,Augmented
+2024_Y2_2_ACRE,9997,Purdue University,Preliminary Yield Trial,"West Lafayette, IN",220,40.42,-86.91,186,2023-10-21T00:00:00Z,NA,RCBD
+2021_Y1-1,9271,Purdue University,phenotyping_trial,"West Lafayette, IN",220,40.42,-86.91,186,2020-10-17T00:00:00Z,2021-07-26T00:00:00Z,Augmented
+2025_Y3-1_ACRE,10231,Purdue University,Advanced Yield Trial,"West Lafayette, IN",220,40.42,-86.91,186,2024-10-17T00:00:00Z,NA,RCBD
+2020_Y1_1,8200,Purdue University,phenotyping_trial,"West Lafayette, IN",220,40.42,-86.91,186,2019-10-08T00:00:00Z,2020-07-03T00:00:00Z,Augmented
+UESRWWN_2021_Wooster,9238,Soft Red Winter Wheat Nursery Cooperative,phenotyping_trial,"Wooster, OH",229,40.8307,-81.89538,334,2020-09-25T00:00:00Z,NA,RCBD
+YR3_2021_Wooster,9231,Ohio State University,Advanced Yield Trial,"Wooster, OH",229,40.8307,-81.89538,334,2020-09-25T00:00:00Z,NA,RCBD
+YR2-2_2021_Wooster,9221,Ohio State University,Preliminary Yield Trial,"Wooster, OH",229,40.8307,-81.89538,334,2020-09-25T00:00:00Z,NA,RCBD
+YR2-1_2021_Wooster,9226,Ohio State University,Preliminary Yield Trial,"Wooster, OH",229,40.8307,-81.89538,334,2020-09-25T00:00:00Z,NA,RCBD
+WMSF_2021_Wooster,9228,Ohio State University,phenotyping_trial,"Wooster, OH",229,40.8307,-81.89538,334,2020-09-25T00:00:00Z,NA,RCBD
+5STADV_2021_Wooster,9222,Five State Cooperative,Advanced Yield Trial,"Wooster, OH",229,40.8307,-81.89538,334,2020-09-25T00:00:00Z,NA,RCBD
+5STPRE_2021_Wooster,9232,Five State Cooperative,Preliminary Yield Trial,"Wooster, OH",229,40.8307,-81.89538,334,2020-09-25T00:00:00Z,NA,RCBD
+Big6_Woo_23,10913,University of Illinois,phenotyping_trial,"Wooster, OH",229,40.8307,-81.89538,334,2022-09-28T00:00:00Z,NA,p-rep

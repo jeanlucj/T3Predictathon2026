@@ -1,0 +1,156 @@
+study_db_id,study_name,study_type,study_description,location_name,trial_db_id,start_date,end_date,program_name,common_crop_name,experimental_design
+9622,2023_AYT_Aurora,phenotyping_trial,2023 AYT Yield Trial @ Aurora,"Aurora, SD",9627,2022-09-12T00:00:00Z,2023-07-27T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,RCBD
+9623,2023_AYT_Dakota_Lakes,phenotyping_trial,2023 AYT Yield Trial @ Dakota_Lakes,"Dakota Lakes, SD",9627,2022-09-22T00:00:00Z,2023-07-14T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,RCBD
+9620,2023_AYT_Winner,phenotyping_trial,2023 AYT Yield Trial @ Winner,"Winner, SD",9627,2022-09-24T00:00:00Z,2023-07-24T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,RCBD
+9621,2023_Elite_AURORA,phenotyping_trial,2023 Elite Yield Trial @ Aurora,"Aurora, SD",9626,2022-09-12T00:00:00Z,2023-07-27T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,RCBD
+10710,22MANKS_TCAP_C,Advanced Yield Trial,TCAP,"Manhattan, KS",10346,2021-10-23T00:00:00Z,2022-06-16T00:00:00Z,USDA-ARS Kansas,Wheat,Augmented
+10884,23FTC_DTD,phenotyping_trial,Drought Study,"Fort Collins, CO",10346,2022-10-04T00:00:00Z,2023-07-15T00:00:00Z,USDA-ARS Kansas,Wheat,Augmented
+10883,23GRY_DTD,phenotyping_trial,Drought Study,"Greeley, CO",10346,2022-10-05T00:00:00Z,2023-07-11T00:00:00Z,USDA-ARS Kansas,Wheat,Augmented
+10262,25_Big6_MASON_MASMI,Advanced Yield Trial,25_Big6_MASON,"Mason, MI",363,2024-09-20T00:00:00Z,2025-07-16T00:00:00Z,Michigan State University,Wheat,p-rep
+10259,25_MSU_AYT_MI_HURMI,Advanced Yield Trial,25_MSU_AYT_MI,"Huron County, MI",9250,2024-10-04T00:00:00Z,2025-07-14T00:00:00Z,Michigan State University,Wheat,Alpha
+10263,25_MSU_AYT_MI_SANMI,Advanced Yield Trial,25_MSU_AYT_MI,"Sanilac County, MI",9250,2024-10-04T00:00:00Z,2025-07-18T00:00:00Z,Michigan State University,Wheat,Alpha
+10261,25_MSU_AYT_Regional_CENIL,Advanced Yield Trial,25_MSU_AYT_Regional,"Centralia, IL",9250,2024-10-10T00:00:00Z,2025-06-21T00:00:00Z,Michigan State University,Wheat,Alpha
+10249,25_MSU_AYT_Regional_CHAIL,Advanced Yield Trial,25_MSU_AYT_Regional,"Champaign, IL",9250,2024-10-04T00:00:00Z,2025-07-02T00:00:00Z,Michigan State University,Wheat,Alpha
+10247,25_MSU_AYT_Regional_HMLIL,Advanced Yield Trial,25_MSU_AYT_Regional,"Hamel, IL",9250,2024-10-15T00:00:00Z,2025-06-26T00:00:00Z,Michigan State University,Wheat,Alpha
+10287,Adv_Stj_21,phenotyping_trial,"Advanced Yield Trial at St. Jacob, IL [2021]","St. Jacob Township, IL",367,2020-10-15T00:00:00Z,2021-06-23T00:00:00Z,University of Illinois,Wheat,p-rep
+10632,AWY1_DVP_2025,Advanced Yield Trial,2025 Advanced White Yield Trial 1 @ Davenport,"Davenport, WA",353,2024-09-17T00:00:00Z,2025-08-04T00:00:00Z,Washington State University,Wheat,Alpha
+10629,AWY1_KAH_2025,Advanced Yield Trial,2025 Advanced White Yield Trial 1 @ Kahlotus,"Kahlotus, WA",353,2024-08-27T00:00:00Z,2025-07-10T00:00:00Z,Washington State University,Wheat,Alpha
+10630,AWY1_LIN_2025,Advanced Yield Trial,2025 Advanced White Yield Trial 1 @ Lind,"Lind, WA",353,2024-09-02T00:00:00Z,2025-07-14T00:00:00Z,Washington State University,Wheat,Alpha
+10225,AWY1_LNDWA_2024,Advanced Yield Trial,"Low rainfall advanced soft white winter wheat yield trial @ Lind, WA","Lind, WA",353,2023-09-05T00:00:00Z,2024-07-24T00:00:00Z,Washington State University,Wheat,Alpha
+10226,AWY1_PULWA_2024,Advanced Yield Trial,"Low rainfall advanced soft white winter wheat yield trial @ Pullman, WA","Pullman, WA",353,2023-10-06T00:00:00Z,2024-08-15T00:00:00Z,Washington State University,Wheat,Alpha
+10628,AWY1_RIT_2025,Advanced Yield Trial,2025 Advanced White Yield Trial 1 @ Ritzville,"Ritzville, WA",353,2024-08-28T00:00:00Z,2025-07-11T00:00:00Z,Washington State University,Wheat,Alpha
+10864,AWY1_SWW_2023_Lind,Advanced Yield Trial,2023 AWY1 LND,"Lind, WA",353,2022-09-02T00:00:00Z,2023-07-25T00:00:00Z,Washington State University,Wheat,Alpha
+10855,AWY1_SWW_2023_Pullman,Advanced Yield Trial,2023 AWY1 PUL,"Pullman, WA",353,2022-10-06T00:00:00Z,2023-08-10T00:00:00Z,Washington State University,Wheat,Alpha
+10634,AWY2_DVP_2025,Advanced Yield Trial,2025 Advanced White Yield Trial 2 @ Davenport,"Davenport, WA",353,2024-09-17T00:00:00Z,2025-08-04T00:00:00Z,Washington State University,Wheat,Alpha
+10224,AWY2_PULWA_2024,Advanced Yield Trial,"High rainfall advanced soft white winter wheat yield trial @ Pullman, WA","Pullman, WA",353,2023-10-06T00:00:00Z,2024-08-15T00:00:00Z,Washington State University,Wheat,Alpha
+10873,AWY2_SWW_2023_Davenport,Advanced Yield Trial,2023 AWY2 DVP,"Davenport, WA",353,2022-09-15T00:00:00Z,2023-08-03T00:00:00Z,Washington State University,Wheat,Alpha
+10631,AWY2_WAW_2025,Advanced Yield Trial,2025 Advanced White Yield Trial 2 @ Walla Walla,"Walla Walla, WA",353,2024-09-27T00:00:00Z,2025-07-28T00:00:00Z,Washington State University,Wheat,Alpha
+10227,AWY2_WAWWA_2024,Advanced Yield Trial,"High rainfall advanced soft white winter wheat yield trial @ Walla Walla, WA","Walla Walla, WA",353,2023-10-18T00:00:00Z,2024-08-09T00:00:00Z,Washington State University,Wheat,Alpha
+10725,AY3-8_YIELD_CRK-MN_2022,phenotyping_trial,"AY3-8 yield @ Crookston, MN","Crookston, MN",347,2022-05-18T00:00:00Z,2022-08-26T00:00:00Z,University of Minnesota,Wheat,Augmented
+10713,AY3-8_YIELD_MOR-MN_2022,phenotyping_trial,"AY3-8 yield @ Morris, MN","Morris, MN",347,2022-05-05T00:00:00Z,2022-08-11T00:00:00Z,University of Minnesota,Wheat,Augmented
+10705,AY3-8_YIELD_STP-MN_2022,phenotyping_trial,"AY3-8 yield @ St. Paul, MN","St. Paul, MN",347,2022-05-05T00:00:00Z,2022-07-31T00:00:00Z,University of Minnesota,Wheat,Augmented
+6160,CornellMaster_2017_Ketola,phenotyping_trial,"Cornell Master, Cornell Master [2017 @ Ketola], Actual planting date unknown. Actual harvest date unknown.","Ithaca, NY - Ketola",6212,2016-01-01T00:00:00Z,2017-12-31T00:00:00Z,Cornell University,Wheat,CRD
+5708,CornellMaster_2017_Snyder,phenotyping_trial,"Cornell Master, Cornell Master [2017 @ Snyder], Actual planting date unknown. Actual harvest date unknown.","Ithaca, NY - Snyder",6212,2016-01-01T00:00:00Z,2017-12-31T00:00:00Z,Cornell University,Wheat,CRD
+10905,CornellMaster_2023_McGowan,Preliminary Yield Trial,Cornell 2023 Winter Wheat Master Nursery,"Ithaca, NY - McGowan",6212,2022-10-11T00:00:00Z,2023-07-18T00:00:00Z,Cornell University,Wheat,CRD
+12662,EWashingtonCereals_SWS_RER_2016,phenotyping_trial,"This trial is from the Western Agricultural Variety Explorer (WAVE), available at https://vartestdb.nkn.uidaho.edu/
+Breeder: rhigginbotham
+Nursery: Soft White Spring Wheat
+Tillage: no till
+Irrigation: dryland
+Previous Crop: wheat
+By using the data, you agree to appropriately cite and/or acknowledge the data source: Piaskowski, J. L., Galvin, E., Marshall, J., Schroeder, K. L., Walsh, O. S., Finkelnburg, D., Davis, J. B., Graebner, R., Neely, C. B., & Jones, S. S. (2023) Tools and Computing Infrastructure for a Wheat Variety Testing Datahub [Abstract]. ASA, CSSA, SSSA International Annual Meeting, St. Louis, MO. https://scisoc.confex.com/scisoc/2023am/meetingapp.cgi/Paper/149882. Additionally, all downstream data usages aside from scientific research and publication in peer-reviewed must conform to a GPL3 (GNU General Public License, v3) license.","Reardan, WA",13845,2016-04-11T00:00:00Z,2016-09-01T00:00:00Z,WAVE,Wheat,Alpha
+9417,GP502_2022,phenotyping_trial,"Genomic selection spring wheat panel @ Aberdeen, ID","Aberdeen, ID",345,2022-04-08T00:00:00Z,2022-08-22T00:00:00Z,University of Idaho,Wheat,RCBD
+7601,NDK-WHEAT-2016-DICKINSON,phenotyping_trial,"North Dakota Variety Trials, North Dakota Variety Trials [2016 @ Dickinson], Lat and Lon positions are for nearby town centers.","Dickinson, ND",6203,2015-09-22T00:00:00Z,2016-07-20T00:00:00Z,North Dakota State University,Wheat,CRD
+6791,NDK-WHEAT-2016-MINOT,phenotyping_trial,"North Dakota Variety Trials, North Dakota Variety Trials [2016 @ Minot], Lat and Lon positions are for nearby town centers.","Minot, ND",6203,2015-09-23T00:00:00Z,2016-07-29T00:00:00Z,North Dakota State University,Wheat,CRD
+7862,NDK-WHEAT-2017-HETTINGER,phenotyping_trial,"North Dakota Variety Trials, North Dakota Variety Trials [2017 @ Hettinger], Lat and Lon positions are for nearby town centers.","Hettinger, ND",6203,2016-09-14T00:00:00Z,2017-07-17T00:00:00Z,North Dakota State University,Wheat,CRD
+7384,NDK-WHEAT-2017-MINOT,phenotyping_trial,"North Dakota Variety Trials, North Dakota Variety Trials [2017 @ Minot], Lat and Lon positions are for nearby town centers.","Minot, ND",6203,2016-09-20T00:00:00Z,2017-07-24T00:00:00Z,North Dakota State University,Wheat,CRD
+6604,NDK-WHEAT-2018-CARRINGTON,phenotyping_trial,"North Dakota Variety Trials, North Dakota Variety Trials [2018 @ Carrington], Lat and Lon positions are for nearby town centers.","Carrington, ND",6203,2017-09-14T00:00:00Z,2018-07-23T00:00:00Z,North Dakota State University,Wheat,CRD
+7162,NDK-WHEAT-2018-PROSPER,phenotyping_trial,"North Dakota Variety Trials, North Dakota Variety Trials [2018 @ Prosper], Lat and Lon positions are for nearby town centers. Actual planting date unknown. Actual harvest date unknown.","Prosper, ND",6203,2017-01-01T00:00:00Z,2018-12-31T00:00:00Z,North Dakota State University,Wheat,CRD
+13349,NIdahoCereals_H_S_GEN_2017,phenotyping_trial,"This trial is from the Western Agricultural Variety Explorer (WAVE), available at https://vartestdb.nkn.uidaho.edu/
+Breeder: kschroeder
+Nursery: Hard Spring Wheat
+Tillage: no till
+Irrigation: dryland
+Previous Crop: winter wheat
+By using the data, you agree to appropriately cite and/or acknowledge the data source: Piaskowski, J. L., Galvin, E., Marshall, J., Schroeder, K. L., Walsh, O. S., Finkelnburg, D., Davis, J. B., Graebner, R., Neely, C. B., & Jones, S. S. (2023) Tools and Computing Infrastructure for a Wheat Variety Testing Datahub [Abstract]. ASA, CSSA, SSSA International Annual Meeting, St. Louis, MO. https://scisoc.confex.com/scisoc/2023am/meetingapp.cgi/Paper/149882. Additionally, all downstream data usages aside from scientific research and publication in peer-reviewed must conform to a GPL3 (GNU General Public License, v3) license.","Genesee, ID",13846,2017-05-01T00:00:00Z,2017-08-23T00:00:00Z,WAVE,Wheat,RCBD
+10941,OHRWW_2023_MAD,phenotyping_trial,2023 OWW@Madison,"Madison, WI",9412,2022-09-29T00:00:00Z,2023-07-10T00:00:00Z,University of Wisconsin,Wheat,Alpha
+10336,Org_Dan_21,phenotyping_trial,"Organic Project Yield Trial at Danforth, IL [2021]","Danforth, IL",367,2020-09-25T00:00:00Z,2021-07-08T00:00:00Z,University of Illinois,Wheat,p-rep
+10942,Prelim_2_SWW_2023_Davenport,Preliminary Yield Trial,2023 LoRain SWW Prel #2 DVP,"Davenport, WA",353,2022-09-15T00:00:00Z,2023-08-03T00:00:00Z,Washington State University,Wheat,Alpha
+6998,SDK-WHEAT-2016-BERESFORD,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2016 @ Beresford], ","Beresford, SD",6202,2015-09-06T00:00:00Z,2016-07-14T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+7134,SDK-WHEAT-2016-BISON,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2016 @ Bison], ","Bison, SD",6202,2015-09-21T00:00:00Z,2016-08-01T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+7905,SDK-WHEAT-2016-FAITH,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2016 @ Faith], ","Faith, SD",6202,2015-09-25T00:00:00Z,2016-07-25T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+7490,SDK-WHEAT-2016-GEDDES,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2016 @ Geddes], ","Geddes, SD",6202,2015-10-06T00:00:00Z,2016-07-14T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+7655,SDK-WHEAT-2016-HAYES,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2016 @ Hayes], ","Hayes, SD",6202,2015-09-23T00:00:00Z,2016-07-14T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+6661,SDK-WHEAT-2016-KENNEBEC,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2016 @ Kennebec], ","Kennebec, SD",6202,2015-09-23T00:00:00Z,2016-07-21T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+6581,SDK-WHEAT-2016-MARTIN,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2016 @ Martin], ","Martin, SD",6202,2015-09-22T00:00:00Z,2016-07-22T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+6703,SDK-WHEAT-2016-SELBY,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2016 @ Selby], ","Selby, SD",6202,2015-09-11T00:00:00Z,2016-07-28T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+7956,SDK-WHEAT-2016-SOUTH_SHORE,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2016 @ South Shore], ","South Shore, SD",6202,2015-09-15T00:00:00Z,2016-07-18T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+7885,SDK-WHEAT-2016-WALL,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2016 @ Wall], ","Wall, SD",6202,2015-10-12T00:00:00Z,2016-07-15T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+7768,SDK-WHEAT-2016-WINNER,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2016 @ Winner], ","Winner, SD",6202,2015-10-12T00:00:00Z,2016-07-14T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+7098,SDK-WHEAT-2017-BERESFORD,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2017 @ Beresford], ","Beresford, SD",6202,2016-09-21T00:00:00Z,2017-07-19T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+7221,SDK-WHEAT-2017-BROOKINGS-FUNG,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2017 @ Brookings], Lat and Lon positions are for nearby town centers. Actual planting date unknown. Actual harvest date unknown.","Brookings, SD",6202,2016-01-01T00:00:00Z,2017-12-31T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+6863,SDK-WHEAT-2017-FAITH,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2017 @ Faith], ","Faith, SD",6202,2016-09-28T00:00:00Z,2017-07-18T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+6950,SDK-WHEAT-2017-GEDDES,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2017 @ Geddes], ","Geddes, SD",6202,2016-10-13T00:00:00Z,2017-07-18T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+6677,SDK-WHEAT-2017-MARTIN,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2017 @ Martin], ","Martin, SD",6202,2016-09-21T00:00:00Z,2017-08-04T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+7921,SDK-WHEAT-2017-ONIDA,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2017 @ Onida], ","Onida, SD",6202,2016-09-16T00:00:00Z,2017-07-11T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+7662,SDK-WHEAT-2017-SOUTH_SHORE,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2017 @ South Shore], ","South Shore, SD",6202,2016-09-09T00:00:00Z,2017-07-24T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+7776,SDK-WHEAT-2017-VIVIAN,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2017 @ Vivian], ","Vivian, SD",6202,2016-09-20T00:00:00Z,2017-07-10T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+7915,SDK-WHEAT-2017-WALL,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2017 @ Wall], ","Wall, SD",6202,2016-09-27T00:00:00Z,2017-07-13T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+7684,SDK-WHEAT-2017-WINNER,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2017 @ Winner], ","Winner, SD",6202,2016-09-14T00:00:00Z,2017-07-19T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+7466,SDK-WHEAT-2017-WINNER_INTENSIVE,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2017 @ Winner intensive], Lat and Lon positions are for nearby town centers. Actual planting date unknown. Actual harvest date unknown.","Winner intensive, SD",6202,2016-01-01T00:00:00Z,2017-12-31T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+6967,SDK-WHEAT-2018-BISON,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2018 @ Bison], ","Bison, SD",6202,2017-09-28T00:00:00Z,2018-08-01T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+7886,SDK-WHEAT-2018-HAYES,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2018 @ Hayes], ","Hayes, SD",6202,2017-09-21T00:00:00Z,2018-07-19T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+7720,SDK-WHEAT-2018-MARTIN,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2018 @ Martin], ","Martin, SD",6202,2017-10-11T00:00:00Z,2018-08-08T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+7143,SDK-WHEAT-2018-PIERRE,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2018 @ Pierre], ","Pierre, SD",6202,2017-09-21T00:00:00Z,2018-07-17T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+6759,SDK-WHEAT-2018-VIVIAN,phenotyping_trial,"South Dakota Variety Trials, South Dakota Variety Trials [2018 @ Vivian], ","Vivian, SD",6202,2017-10-10T00:00:00Z,2018-07-26T00:00:00Z,South Dakota State University- Winter Wheat,Wheat,CRD
+11468,SEIdahoCereals_H_S_SOS_2022,phenotyping_trial,"This trial is from the Western Agricultural Variety Explorer (WAVE), available at https://vartestdb.nkn.uidaho.edu/
+Breeder: jmarshall
+Nursery: Hard Spring Wheat
+Tillage: conventional
+Irrigation: dryland
+Previous Crop: spring barley
+By using the data, you agree to appropriately cite and/or acknowledge the data source: Piaskowski, J. L., Galvin, E., Marshall, J., Schroeder, K. L., Walsh, O. S., Finkelnburg, D., Davis, J. B., Graebner, R., Neely, C. B., & Jones, S. S. (2023) Tools and Computing Infrastructure for a Wheat Variety Testing Datahub [Abstract]. ASA, CSSA, SSSA International Annual Meeting, St. Louis, MO. https://scisoc.confex.com/scisoc/2023am/meetingapp.cgi/Paper/149882. Additionally, all downstream data usages aside from scientific research and publication in peer-reviewed must conform to a GPL3 (GNU General Public License, v3) license.","Soda Springs, ID",13844,2022-05-20T00:00:00Z,2022-09-07T00:00:00Z,WAVE,Wheat,RCBD
+11297,SEIdahoCereals_H_W_RI_2016,phenotyping_trial,"This trial is from the Western Agricultural Variety Explorer (WAVE), available at https://vartestdb.nkn.uidaho.edu/
+Breeder: jmarshall
+Nursery: Hard Winter Wheat
+Tillage: conventional
+Irrigation: dryland
+Previous Crop: fallow
+By using the data, you agree to appropriately cite and/or acknowledge the data source: Piaskowski, J. L., Galvin, E., Marshall, J., Schroeder, K. L., Walsh, O. S., Finkelnburg, D., Davis, J. B., Graebner, R., Neely, C. B., & Jones, S. S. (2023) Tools and Computing Infrastructure for a Wheat Variety Testing Datahub [Abstract]. ASA, CSSA, SSSA International Annual Meeting, St. Louis, MO. https://scisoc.confex.com/scisoc/2023am/meetingapp.cgi/Paper/149882. Additionally, all downstream data usages aside from scientific research and publication in peer-reviewed must conform to a GPL3 (GNU General Public License, v3) license.","Ririe, ID",13844,2015-09-18T00:00:00Z,2016-08-02T00:00:00Z,WAVE,Wheat,RCBD
+11353,SEIdahoCereals_H_W_RK_2017,phenotyping_trial,"This trial is from the Western Agricultural Variety Explorer (WAVE), available at https://vartestdb.nkn.uidaho.edu/
+Breeder: jmarshall
+Nursery: Hard Winter Wheat
+Tillage: conventional
+Irrigation: dryland
+Previous Crop: fallow
+Monoammonium phosphate or 11-52-0 at 20 lbs phosphate per acre was included in-furrow
+By using the data, you agree to appropriately cite and/or acknowledge the data source: Piaskowski, J. L., Galvin, E., Marshall, J., Schroeder, K. L., Walsh, O. S., Finkelnburg, D., Davis, J. B., Graebner, R., Neely, C. B., & Jones, S. S. (2023) Tools and Computing Infrastructure for a Wheat Variety Testing Datahub [Abstract]. ASA, CSSA, SSSA International Annual Meeting, St. Louis, MO. https://scisoc.confex.com/scisoc/2023am/meetingapp.cgi/Paper/149882. Additionally, all downstream data usages aside from scientific research and publication in peer-reviewed must conform to a GPL3 (GNU General Public License, v3) license.","Rockland, ID",13844,2016-09-16T00:00:00Z,2017-07-27T00:00:00Z,WAVE,Wheat,RCBD
+11301,SEIdahoCereals_H_W_SOS_2018,phenotyping_trial,"This trial is from the Western Agricultural Variety Explorer (WAVE), available at https://vartestdb.nkn.uidaho.edu/
+Breeder: jmarshall
+Nursery: Hard Winter Wheat
+Tillage: conventional
+Irrigation: dryland
+Previous Crop: fallow
+Monoammonium phosphate or 11-52-0 at 20 lbs phosphate per acre was included in-furrow
+By using the data, you agree to appropriately cite and/or acknowledge the data source: Piaskowski, J. L., Galvin, E., Marshall, J., Schroeder, K. L., Walsh, O. S., Finkelnburg, D., Davis, J. B., Graebner, R., Neely, C. B., & Jones, S. S. (2023) Tools and Computing Infrastructure for a Wheat Variety Testing Datahub [Abstract]. ASA, CSSA, SSSA International Annual Meeting, St. Louis, MO. https://scisoc.confex.com/scisoc/2023am/meetingapp.cgi/Paper/149882. Additionally, all downstream data usages aside from scientific research and publication in peer-reviewed must conform to a GPL3 (GNU General Public License, v3) license.","Soda Springs, ID",13844,2017-10-05T00:00:00Z,2018-08-28T00:00:00Z,WAVE,Wheat,RCBD
+11300,SEIdahoCereals_SWS_AB_2017,phenotyping_trial,"This trial is from the Western Agricultural Variety Explorer (WAVE), available at https://vartestdb.nkn.uidaho.edu/
+Breeder: jmarshall
+Nursery: Soft White Spring Wheat
+Tillage: conventional
+Irrigation: irrigated
+Previous Crop: green manure oats
+By using the data, you agree to appropriately cite and/or acknowledge the data source: Piaskowski, J. L., Galvin, E., Marshall, J., Schroeder, K. L., Walsh, O. S., Finkelnburg, D., Davis, J. B., Graebner, R., Neely, C. B., & Jones, S. S. (2023) Tools and Computing Infrastructure for a Wheat Variety Testing Datahub [Abstract]. ASA, CSSA, SSSA International Annual Meeting, St. Louis, MO. https://scisoc.confex.com/scisoc/2023am/meetingapp.cgi/Paper/149882. Additionally, all downstream data usages aside from scientific research and publication in peer-reviewed must conform to a GPL3 (GNU General Public License, v3) license.","Aberdeen, ID",13844,2017-04-13T00:00:00Z,2017-08-17T00:00:00Z,WAVE,Wheat,RCBD
+11362,SEIdahoCereals_SWS_IF_2018,phenotyping_trial,"This trial is from the Western Agricultural Variety Explorer (WAVE), available at https://vartestdb.nkn.uidaho.edu/
+Breeder: jmarshall
+Nursery: Soft White Spring Wheat
+Tillage: conventional
+Irrigation: irrigated
+Previous Crop: alfalfa
+By using the data, you agree to appropriately cite and/or acknowledge the data source: Piaskowski, J. L., Galvin, E., Marshall, J., Schroeder, K. L., Walsh, O. S., Finkelnburg, D., Davis, J. B., Graebner, R., Neely, C. B., & Jones, S. S. (2023) Tools and Computing Infrastructure for a Wheat Variety Testing Datahub [Abstract]. ASA, CSSA, SSSA International Annual Meeting, St. Louis, MO. https://scisoc.confex.com/scisoc/2023am/meetingapp.cgi/Paper/149882. Additionally, all downstream data usages aside from scientific research and publication in peer-reviewed must conform to a GPL3 (GNU General Public License, v3) license.","Idaho Falls, ID",13844,2018-04-17T00:00:00Z,2018-08-16T00:00:00Z,WAVE,Wheat,RCBD
+11022,TCAP_2023_COLKS,phenotyping_trial,TCAP,"Colby, KS",10346,2022-09-22T00:00:00Z,2023-07-18T00:00:00Z,USDA-ARS Kansas,Wheat,p-rep
+11000,TCAP_2023_HAYKS,phenotyping_trial,TCAP,"Hays, KS",10346,2022-10-06T00:00:00Z,2023-06-27T00:00:00Z,USDA-ARS Kansas,Wheat,p-rep
+11013,TCAP_2023_HUTKS,phenotyping_trial,TCAP,"Hutchinson, KS",10346,2022-10-05T00:00:00Z,2023-06-29T00:00:00Z,USDA-ARS Kansas,Wheat,p-rep
+10997,TCAP_2023_MANKS,phenotyping_trial,TCAP,"Manhattan, KS",10346,2022-10-17T00:00:00Z,2023-06-28T00:00:00Z,USDA-ARS Kansas,Wheat,p-rep
+10273,UCD20010,Advanced Yield Trial,2020 common wheat elite yield trial @ Davis,"Davis, CA",343,2019-11-15T00:00:00Z,2020-06-15T00:00:00Z,UC Davis,Wheat,RCBD
+10276,UCD20013,Advanced Yield Trial,2020 common wheat Advanced I trial @ Davis,"Davis, CA",343,2019-11-15T00:00:00Z,2020-06-15T00:00:00Z,UC Davis,Wheat,RCBD
+10275,UCD20014,Advanced Yield Trial,2020 common wheat Advanced II trial @ Davis,"Davis, CA",343,2019-11-15T00:00:00Z,2020-06-15T00:00:00Z,UC Davis,Wheat,RCBD
+10285,UCD20015,Advanced Yield Trial,2020 common wheat Advanced III trial @ Davis,"Davis, CA",343,2019-11-15T00:00:00Z,2020-06-15T00:00:00Z,UC Davis,Wheat,RCBD
+10279,UCD20017,Preliminary Yield Trial,2020 common wheat Preliminary II trial @ Davis,"Davis, CA",343,2019-11-15T00:00:00Z,2020-06-15T00:00:00Z,UC Davis,Wheat,RCBD
+10338,UCD21010,Advanced Yield Trial,2021 Common Wheat elite yield trial @ Davis,"Davis, CA",343,2020-11-01T00:00:00Z,2021-06-15T00:00:00Z,UC Davis,Wheat,RCBD
+10309,UCD21014,Advanced Yield Trial,2021 common wheat Advanced II trial @ Davis,"Davis, CA",343,2020-11-01T00:00:00Z,2021-06-15T00:00:00Z,UC Davis,Wheat,RCBD
+10880,UCD23010EYT,Advanced Yield Trial,Bread wheat elite yield trial,"Davis, CA",11041,2022-12-05T00:00:00Z,2023-06-23T00:00:00Z,UC Davis,Wheat,RCBD
+10860,UCD23011EYT,Advanced Yield Trial,Bread wheat elite yield trial underrainfed conditions,"Davis, CA",11041,2022-12-05T00:00:00Z,2023-06-23T00:00:00Z,UC Davis,Wheat,RCBD
+14447,UESRWWN_2016_BattleGround,phenotyping_trial,2016 UESRWWN trial at Battle Ground,"Battle Ground, IN",6247,2015-09-24T00:00:00Z,2016-06-28T00:00:00Z,Soft Red Winter Wheat Nursery Cooperative,Wheat,RCBD
+14436,UESRWWN_2016_Clayton,phenotyping_trial,2016 UESRWWN trial at Clayton,"Clayton, NC",6247,2015-10-14T00:00:00Z,2016-05-28T00:00:00Z,Soft Red Winter Wheat Nursery Cooperative,Wheat,RCBD
+14443,UESRWWN_2016_Ithaca,phenotyping_trial,2016 UESRWWN trial at Ithaca,"Ithaca, NY",6247,2015-10-05T00:00:00Z,2016-07-11T00:00:00Z,Soft Red Winter Wheat Nursery Cooperative,Wheat,RCBD
+14438,UESRWWN_2016_Knoxville,phenotyping_trial,2016 UESRWWN trial at Knoxville,"Knoxville, TN",6247,2015-10-21T00:00:00Z,2016-06-15T00:00:00Z,Soft Red Winter Wheat Nursery Cooperative,Wheat,RCBD
+14459,UESRWWN_2016_Mason,phenotyping_trial,2016 UESRWWN trial at Mason,"Mason, MI",6247,2015-09-23T00:00:00Z,2016-07-06T00:00:00Z,Soft Red Winter Wheat Nursery Cooperative,Wheat,RCBD
+14434,UESRWWN_2016_Nairn,phenotyping_trial,2016 UESRWWN trial at Nairn,"Nairn, ON",6247,2015-10-14T00:00:00Z,2016-07-29T00:00:00Z,Soft Red Winter Wheat Nursery Cooperative,Wheat,RCBD
+14427,UESRWWN_2016_Schochoh,phenotyping_trial,2016 UESRWWN trial at Schochoh,"Schochoh, KY",6247,2015-10-13T00:00:00Z,2016-06-18T00:00:00Z,Soft Red Winter Wheat Nursery Cooperative,Wheat,RCBD
+14289,UESRWWN_2019_Knoxville,phenotyping_trial,2019 UESRWWN trial at Knoxville,"Knoxville, TN",6247,2018-10-24T00:00:00Z,2019-06-15T00:00:00Z,Soft Red Winter Wheat Nursery Cooperative,Wheat,RCBD
+6945,UMN-WHEAT-2017-CROOKSTON,phenotyping_trial,"Minnesota Variety Trials, Minnesota Variety Trials [2017 @ Crookston], Lat and Lon positions are for nearby town centers. Actual planting date unknown. Actual harvest date unknown.","Crookston, MN",6204,2016-01-01T00:00:00Z,2017-12-31T00:00:00Z,University of Minnesota,Wheat,CRD
+7391,UMN-WHEAT-2017-LECENTER,phenotyping_trial,"Minnesota Variety Trials, Minnesota Variety Trials [2017 @ LeCenter], Lat and Lon positions are for nearby town centers. Actual planting date unknown. Actual harvest date unknown.","Le Center, MN",6204,2016-01-01T00:00:00Z,2017-12-31T00:00:00Z,University of Minnesota,Wheat,CRD
+11031,YT_Blv_23,phenotyping_trial,Yield trial to evaluate IL breeding lines,"Belleville, IL",367,2022-10-07T00:00:00Z,2023-06-15T00:00:00Z,University of Illinois,Wheat,p-rep
+11029,YT_Neo_23,phenotyping_trial,Yield trial to evaluate IL breeding lines,"Neoga, IL",367,2023-10-10T00:00:00Z,2023-06-23T00:00:00Z,University of Illinois,Wheat,p-rep
+11033,YT_Stp_23,phenotyping_trial,Yield trial to evaluate IL breeding lines,"St Peter, IL",367,2022-10-18T00:00:00Z,2023-06-21T00:00:00Z,University of Illinois,Wheat,p-rep
+11014,YT_Urb_23,phenotyping_trial,Yield trial to evaluate IL breeding lines,"Urbana, IL",367,2022-09-30T00:00:00Z,2023-06-27T00:00:00Z,University of Illinois,Wheat,p-rep

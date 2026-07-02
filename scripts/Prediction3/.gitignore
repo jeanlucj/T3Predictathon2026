@@ -1,0 +1,9 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+data/vcf_genotyped_data/
+data/geno_partial_results.rds
+Analysis/new_EMcombinedGRM_wDF.rds
+Analysis/comb_grm_mat.rds
+mulderrig_T3predictathon.zip

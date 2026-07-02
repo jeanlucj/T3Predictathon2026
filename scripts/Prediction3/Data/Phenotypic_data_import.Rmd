@@ -1,0 +1,132 @@
+---
+title: "Phenotypic_data_import"
+author: "Prediction3 Team"
+date: "2025-12-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This script takes the output .csv document ([genotyped_phenotyped_trials.csv](genotyped_phenotyped_trials.csv)) from [T3_trial_import_and_filtering.Rmd](T3_trial_import_and_filtering.Rmd) and uses the selected study ids to query T3 and pull all phenotypic data for each trial. Additionally, to remove drone-derived traits from the phenotyping data, an input .csv document ([drone_traits_lookup.csv](drone_traits_lookup.csv)), is used that contains data pulled from the [T3 WheatCAP Drone Trait Lookup](https://wheatcap.triticeaetoolbox.org/guides/drone-traits) The output of this script is a csv file containing all phenotypic observations for each entry in our selected trials.
+
+## Load Packages
+
+```{r Load Packages, message=FALSE}
+library(devtools) #install.packages("devtools")
+install_github("TriticeaeToolbox/BrAPI.R")
+library(BrAPI) 
+library(purrr) #install.packages("purrr")
+library(tidyverse) #install.packages("tidyverse")
+library(readr) #install.packages("readr")
+library(here) #install.packages("here")
+```
+
+## Set BrAPI Server
+
+```{r Create BrAPI Connection, message=FALSE}
+conn <- createBrAPIConnection("wheat.triticeaetoolbox.org", is_breedbase = TRUE)
+```
+
+## Load Data
+
+This is the output data frame from our trial filtering in [T3_trial_import_and_filtering.Rmd](T3_trial_import_and_filtering.Rmd)
+
+```{r Load Data, message=FALSE}
+selected_trials <- readr::read_csv(here("data","genotyped_phenotyped_trials.csv"))
+selected_trial_ids <- selected_trials$study_db_id
+```
+
+## Pull T3 Trial Phenotype Data
+
+### Function
+
+This function queries T3 and pulls all "observations" (phenotypic records) for each of our selected studies
+
+```{r function to query T3 for phenotypic observations}
+get_obs_for_studies <- function(conn, study_ids) {
+  `%||%` <- function(x, y) if (!is.null(x)) x else y
+  all_data <- list()
+  
+  for (id in study_ids) {
+    message("Getting observations for studyDbId: ", id)
+    
+    obs_search <- tryCatch({
+      conn$post("search/observations", body = list(studyDbIds = id))
+    }, error = function(e) {
+      warning("Failed for studyDbId ", id)
+      return(NULL)
+    })
+    
+    if (is.null(obs_search)) next
+    
+    if (!is.null(obs_search$content$result$data)) {
+      obs_result <- obs_search$content$result$data
+    } else {
+      obs_search_id <- obs_search$content$result$searchResultsDbId
+      page <- 0
+      all_obs <- list()
+      
+      repeat {
+        obs_response <- conn$get(
+          paste0("search/observations/", obs_search_id),
+          page = page,
+          pageSize = 1000
+        )
+        
+        this_page <- obs_response$content$result$data
+        if (length(this_page) == 0) break
+        
+        all_obs <- c(all_obs, this_page)
+        page <- page + 1
+      }
+      
+      obs_result <- all_obs
+    }
+    
+    if (length(obs_result) > 0) {
+      pheno_df <- bind_rows(lapply(obs_result, function(x) {
+        data.frame(
+          studyDbId = x$studyDbId %||% NA,
+          season = x$season$year %||% NA,
+          observationUnitName = x$observationUnitName %||% NA,
+          germplasmDbId = x$germplasmDbId %||% NA,
+          germplasmName = x$germplasmName %||% NA,
+          observationVariableName = x$observationVariableName %||% NA,
+          observationUnitDbId = x$observationUnitDbId %||% NA,
+          value = x$value %||% NA,
+          stringsAsFactors = FALSE
+        )
+      }))
+      all_data[[id]] <- pheno_df
+    }
+  }
+  bind_rows(all_data)
+}
+```
+
+### Pull Data
+
+We can run this function for our selected study ids. After pulling the data, we pivot the table to have each trait set as a column and filter out columns associated with UAV-derived traits. 
+
+*this takes a few minutes to run*
+
+```{r pull and filter phenotype data,cache=TRUE}
+all_obs_data <- get_obs_for_studies(conn,selected_trial_ids)
+
+all_obs_data_pivot <- all_obs_data |> 
+  pivot_wider(names_from = observationVariableName, values_from = value) |> 
+  dplyr::select(-contains("COMP:")) |>  #REMOVES DRONE TRAITS
+  janitor::clean_names()
+
+selected_trials$study_db_id <- as.character(selected_trials$study_db_id)
+
+all_obs_data_pivot <- all_obs_data_pivot |> 
+  left_join(dplyr::select(selected_trials,study_db_id,study_name), by = "study_db_id")
+
+readr::write_csv(all_obs_data_pivot,here("data","genotyped_trial_phenotypes.csv"))
+```
+

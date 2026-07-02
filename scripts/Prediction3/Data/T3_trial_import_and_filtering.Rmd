@@ -1,0 +1,502 @@
+---
+title: "T3_trial_import_and_filtering"
+author: "Prediction3 Team"
+date: "2025-12-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This script uses the BrAPI.R package to query publicly available wheat breeding data from the database T3/Wheat to filter for data that meet the following criteria:
+
+* Wheat 
+* Harvested between 2015-2025 
+* Greater than 25 entries 
+* Greater than 50% of entries genotyped 
+* Grain yield data present 
+
+The output from this script is a .csv file [genotyped_phenotyped_trials.csv](genotyped_phenotyped_trials.csv), which highlights trial metadata for selected trials from which data will be queried in subsequent data import scripts. 
+
+## Load Packages
+
+```{r Load Packages, echo=TRUE, message=FALSE}
+library(devtools) #install.packages("devtools")
+install_github("TriticeaeToolbox/BrAPI.R")
+library(BrAPI)
+library(dplyr) #install.packages("dplyr")
+library(readr) #install.packages("readr")
+library(janitor) #install.packages("janitor")
+library(progress)#install.packages("progress")
+library(httr) #install.packages("httr")
+library(purrr) #install.packages("purrr")
+library(furrr) #install.packages("furrr")
+library(progressr) #install.packages("progressr")
+library(jsonlite) #install.packages("jsonlite")
+library(here) #install.packages("here")
+library(kableExtra) #install.packages("kableExtra")
+```
+
+## Set BrAPI Server
+
+
+```{r Create BrAPI Connection, message=FALSE}
+conn <- createBrAPIConnection("wheat.triticeaetoolbox.org", is_breedbase=TRUE)
+```
+
+## Import all T3 Wheat Trials
+
+The following code queries T3 Wheat to gather metadata and identifier information for all trials (called "studies" in the Breedbase framework) that were grown between 2015-2024 and have been defined as "wheat" trials. 
+
+```{r Pull Trials and Filter by Date}
+trials_search <-  conn$post("search/studies",body=list(
+  commonCropNames="Wheat", 
+  searchDateRangeStart="2015-01-01T00:00:00Z", 
+  searchDateRangeEnd="2024-12-31T00:00:00Z" 
+  ))
+# Check if immediate data is available
+if (!is.null(trials_search$content$result$data)) {
+  trials_result <- trials_search$content$result$data
+} else {
+  # Otherwise, get the searchResultsDbId and poll the results
+  search_id <- trials_search$content$result$searchResultsDbId
+  
+  trials_result_response <- conn$get(paste0("search/studies/", search_id), pageSize=10000)
+  trials_result <- trials_result_response$content$result$data
+}
+
+# Compile the BrAPI results into a data frame
+trials_df <- bind_rows(lapply(trials_result, function(x) {
+  data.frame(
+    studyDbId = x$studyDbId %||% NA,
+    studyName = x$studyName %||% NA,
+    studyType=x$studyType %||% NA,
+    studyDescription=x$studyDescription %||% NA,
+    locationName = x$locationName %||% NA,
+    trialDbID = x$trialDbId %||% NA,
+    startDate = x$startDate %||% NA,
+    endDate = x$endDate %||% NA,
+    programName = x$additionalInfo$programName %||% NA,
+    commonCropName = x$commonCropName %||% NA,
+    experimentalDesign = x$experimentalDesign$description,
+    stringsAsFactors = FALSE
+  )
+}))
+
+# Change Date Formatting
+trials_df <- trials_df |> 
+  dplyr::mutate(startDate = as.POSIXct(startDate, format = "%Y-%m-%dT%H:%M:%SZ", tz = "UTC")) |> 
+  dplyr::mutate(endDate = as.POSIXct(endDate, format = "%Y-%m-%dT%H:%M:%SZ", tz = "UTC")) |>
+  clean_names()
+
+# Ensure proper date filtering
+trials_df <- trials_df |> 
+  filter(start_date > as.POSIXct("2015-01-01", tz = "UTC")) |> 
+   filter(end_date < as.POSIXct("2025-12-31", tz = "UTC"))
+
+# Keep only AYT, PYT, and Phenotyping Trials
+trials_df <- trials_df |> 
+  filter(study_type %in% c("Advanced Yield Trial", "phenotyping_trial", "Preliminary Yield Trial"))
+
+#Pull study ids for filtered trials
+study_ids <- trials_df$study_db_id
+
+rm(trials_result_response)
+rm(trials_search)
+
+```
+
+## Genotype Filtering
+
+We want to analyze only trials that have >50% of accessions that have been genotyped. To determine this information with BrAPI, first we can query T3 to get the germplasm records for all accessions included in our selected trials. Then, we can query T3 again to determine if that accession has any genotype records available.
+
+```{r Germplasm and Genotype Data Search Functions}
+trial_germplasm_search <- function(conn, studyDbIDs) {
+  all_germ_df <- list()
+  
+  # Create progress bar
+  pb <- progress_bar$new(
+    total = length(studyDbIDs),
+    format = "⏳ Searching [:bar] :percent | :current/:total | Study :study",
+    clear = FALSE,
+    width = 60
+  )
+  
+  for (study in studyDbIDs) {
+    pb$tick(tokens = list(study = study))
+    
+    message("Searching germplasm for study: ", study)
+    
+    germ_search <- conn$post("search/germplasm", body = list(
+      studyDbIds = study
+    ))
+    
+    # Check if polling is needed
+    result_data <- germ_search$content$result$data
+    germ_result <- list()
+    
+    if (!is.null(result_data) && length(result_data) > 0) {
+      message(" → Got direct result (no polling)")
+      germ_result <- result_data
+    } else if (!is.null(germ_search$content$result$searchResultsDbId)) {
+      message(" → Polling for result")
+      germ_search_id <- germ_search$content$result$searchResultsDbId
+      page <- 0
+      pageSize <- 1000
+      all_germ <- list()
+      
+      repeat {
+        germ_response <- conn$get(
+          paste0("search/germplasm/", germ_search_id),
+          page = page,
+          pageSize = pageSize
+        )
+        
+        this_page <- germ_response$content$result$data
+        
+        if (length(this_page) == 0) break
+        
+        all_germ <- c(all_germ, this_page)
+        page <- page + 1
+      }
+      
+      germ_result <- all_germ
+    } else {
+      message(" → No result found for study: ", study)
+      next
+    }
+    
+    # Build data frame
+    if (length(germ_result) > 0) {
+      germ_df <- bind_rows(lapply(germ_result, function(x) {
+        data.frame(
+          studyDbIDs = study,
+          germplasmDbId = x$germplasmDbId %||% NA,
+          germplasmName = x$germplasmName %||% NA,
+          synonym = if (!is.null(x$synonyms) && length(x$synonyms) > 0) {
+            x$synonyms[[1]]$synonym %||% NA
+          } else {
+            NA
+          },
+          stringsAsFactors = FALSE
+        )
+      }))
+      all_germ_df[[length(all_germ_df) + 1]] <- germ_df
+    } else {
+      message(" → Germplasm list was empty for study: ", study)
+    }
+  }
+  
+  final_df <- bind_rows(all_germ_df)
+  return(final_df)
+}
+
+
+trial_geno_search_parallel_safe <- function(conn, studyDbIDs, url,
+                                            cache_file = "geno_partial_results.rds",
+                                            workers = 4,
+                                            delay = 0.2,
+                                            checkpoint_every = 100) {
+  # Load cache if it exists
+  if (file.exists(cache_file)) {
+    message("→ Loading cached results from ", cache_file)
+    cached <- readRDS(cache_file)
+    processed_studies <- unique(cached$studyDbID)
+    studyDbIDs <- setdiff(studyDbIDs, processed_studies)
+    message("→ Skipping ", length(processed_studies), " studies already processed")
+  } else {
+    cached <- data.frame()
+  }
+  
+  all_germ <- trial_germplasm_search(conn, studyDbIDs)
+  if (nrow(all_germ) == 0) {
+    warning("No germplasm records found.")
+    return(NULL)
+  }
+  
+  # Use multisession or sequential plan depending on system stability
+  plan(multisession, workers = workers)
+  message("→ Starting parallel processing with ", workers, " workers...")
+  
+  results_list <- list()
+  
+  safe_fetch <- safely(function(gid, study_id) {
+    Sys.sleep(delay)
+    response <- httr::POST(
+      paste0(url, "/ajax/breeder/search"),
+      body = list(
+        "categories[]" = "accessions",
+        "data[0][]" = gid,
+        "categories[]" = "genotyping_protocols"
+      ),
+      encode = "multipart",
+      httr::timeout(30)
+    )
+    content_list <- httr::content(response)
+    protocols <- content_list$list
+    
+    if (length(protocols) > 0) {
+      protocol_id <- as.character(protocols[[1]][[1]])
+      protocol_name <- as.character(protocols[[1]][[2]])
+    } else {
+      protocol_id <- NA_character_
+      protocol_name <- NA_character_
+    }
+    
+    data.frame(
+      studyDbID = study_id,
+      germplasmDbId = gid,
+      genoProtocolDbId = protocol_id,
+      genoProtocolName = protocol_name,
+      stringsAsFactors = FALSE
+    )
+  })
+  
+  # Split into chunks for incremental saving
+  chunks <- split(all_germ, ceiling(seq_len(nrow(all_germ)) / checkpoint_every))
+  
+  for (chunk_i in seq_along(chunks)) {
+    chunk <- chunks[[chunk_i]]
+    message("→ Processing chunk ", chunk_i, " of ", length(chunks),
+            " (", nrow(chunk), " records)")
+    
+    chunk_results <- future_map(chunk$germplasmDbId, function(gid, i = NULL) {
+      study_id <- chunk$studyDbIDs[which(chunk$germplasmDbId == gid)][1]
+      res <- safe_fetch(gid, study_id)
+      
+      # Retry if error
+      attempts <- 1
+      while (!is.null(res$error) && attempts < 3) {
+        Sys.sleep(2 * attempts)
+        res <- safe_fetch(gid, study_id)
+        attempts <- attempts + 1
+      }
+      if (is.null(res$result)) return(NULL)
+      res$result
+    }, .progress = FALSE)
+    
+    # Combine and save after each chunk
+    chunk_df <- bind_rows(chunk_results)
+    cached <- bind_rows(cached, chunk_df)
+    
+    saveRDS(cached, cache_file)
+    message("✓ Saved checkpoint after chunk ", chunk_i)
+  }
+  
+  message("✅ All chunks processed successfully.")
+  return(cached)
+}
+
+```
+
+Now we can run these functions for our list of study_ids. 
+
+*this will take a few minutes*
+
+```{r Run germ/geno functions, message=TRUE, cache=TRUE}
+all_geno_projects <- trial_geno_search_parallel_safe(
+  conn,
+  study_ids,
+  "https://wheat.triticeaetoolbox.org",
+  cache_file = here::here("data", "geno_partial_results.rds"),
+  workers = 6,  # use up to 6 cores
+  delay = 0.2   # 200 ms pause per call per worker
+)
+
+readr::write_csv(as.data.frame(all_geno_projects),here::here("data","trial_geno_search_parallel_safe_output.csv"))
+```
+
+We can summarize the genotyping results to determine the number of accessions in each trial and the proportion of accessions that have been genotyped. We filtered the trials to retain only trials with greater than 25 accesions and greater than 50% of accessions genotyped.
+
+```{r Summarize and filter trials by genotyped proportion}
+geno_summary <- all_geno_projects %>%
+  group_by(studyDbID) %>%
+  summarize(
+    total_germplasm = n(),
+    genotyped_count = sum(!is.na(genoProtocolDbId) & genoProtocolDbId != ""),
+    genotyped_prop = genotyped_count / total_germplasm
+  )
+
+
+filtered_geno_summary <- geno_summary |>
+  filter(genotyped_prop > 0.5 & total_germplasm > 25) |>
+  left_join(
+    dplyr::select(trials_df, study_db_id, program_name,study_name),
+    by = c("studyDbID"="study_db_id")
+  )
+
+genotyped_trials_studydbids <- filtered_geno_summary$studyDbID
+```
+
+Now we can refilter the trials_df to retain only the trial metadata for genotyped trials.
+
+```{r Filter trials df}
+genotyped_trials_df <- trials_df |> 
+  filter(study_db_id %in% genotyped_trials_studydbids)
+```
+
+We need to filter our trials to only include studies with grain yield measurements available. The observation database ids for the two wheat grain yield traits (g/plot and kg/hectare) are *84043* and *84527*. We will query the database to pull yield observations for these studies then filter our list of study_ids to only include phenotyped trials.
+
+*This will take a few minutes to run*
+
+```{r Function to pull yield observations from T3}
+yield_obs_ids <- c("84043","84527")
+
+fetch_yield_observations <- function(conn, study_ids, yield_obs_ids, cache_file = NULL) {
+
+  all_obs <- list()
+
+  pb <- progress_bar$new(
+    format = "Fetching studies [:bar] :current/:total",
+    total = length(study_ids),
+    clear = FALSE,
+    width = 60
+  )
+
+  for (study in study_ids) {
+    pb$tick()
+    
+    # Initial POST search call
+    q <- conn$post("search/observations",
+                   body = list(
+                     observationVariableDbIds = yield_obs_ids,
+                     studyDbIds = study
+                   ))
+    
+    # Shortcut: sometimes BrAPI returns full results immediately
+    if (!is.null(q$content$result$data)) {
+      all_obs <- c(all_obs, q$content$result$data)
+      next
+    }
+    
+    # Otherwise poll
+    search_id <- q$content$result$searchResultsDbId
+    if (is.null(search_id)) {
+      message("\n⚠️ No searchResultsDbId for study: ", study)
+      next
+    }
+    
+    page <- 0
+    pageSize <- 10000
+
+    repeat {
+      r <- conn$get(
+        paste0("search/observations/", search_id),
+        page = page,
+        pageSize = pageSize
+      )
+      
+      chunk <- r$content$result$data
+      if (length(chunk) == 0) break
+      
+      all_obs <- c(all_obs, chunk)
+      page <- page + 1
+    }
+  }
+
+  # Flatten to data frame
+  obs_df <- map_df(all_obs, function(x) {
+    data.frame(
+      observationDbId         = x$observationDbId %||% NA,
+      observationVariableDbId = x$observationVariableDbId %||% NA,
+      observationVariableName = x$observationVariableName %||% NA,
+      germplasmDbId           = x$germplasmDbId %||% NA,
+      germplasmName           = x$germplasmName %||% NA,
+      studyDbId               = x$studyDbId %||% NA,
+      locationDbId            = x$locationDbId %||% NA,
+      collector               = x$collector %||% NA,
+      value                   = x$value %||% NA,
+      observationTimeStamp    = x$observationTimeStamp %||% NA
+    )
+  })
+
+  return(obs_df)
+}
+```
+
+Now we can use this function to pull the yield phenotypic records from T3 for our set of genotyped trials. We can then pull the studyDbIds for all of the trials that have both yield and genotypic data present
+
+*This will take a few minutes to run*
+
+```{r Pull yield results for genotyped trials, cache=TRUE}
+yield_df <- fetch_yield_observations(conn,genotyped_trials_studydbids,yield_obs_ids)
+
+pheno_geno_trials <- unique(yield_df$studyDbId)
+```
+
+Now we filter of data frame of trial metadata to include only trials that meet all of our filtering criteria 
+
+* Wheat 
+* Harvested between 2015-2025 
+* Greater than 25 entries 
+* Greater than 50% of entries genotyped 
+* Grain yield data present 
+
+The output .csv file will be the input for the following Rmd files where data is pulled: 
+
+* [Environmental_data_import.Rmd](Environmental_data_import.Rmd) 
+* [Phenotypic_data_import.Rmd](Phenotypic_data_import.Rmd) 
+* [Genomic_data_import.Rmd](Genomic_data_import.Rmd) 
+
+```{r Filter genotyped_trials_df for trials with yield results}
+geno_pheno_trials_df <- genotyped_trials_df |> 
+  filter(study_db_id %in% pheno_geno_trials)
+
+readr::write_csv(geno_pheno_trials_df, here::here("data","genotyped_phenotyped_trials.csv"))
+
+kable(geno_pheno_trials_df, format = "html") |> 
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover")) |> 
+  scroll_box(width = "800px", height = "500px")
+```
+
+## Test Trials
+
+We also need to pull the trial metadata for the 9 trials that we will generate predictions for
+
+```{r prediction set trials}
+test_trials <- c(10673,10674,10675,10678,10676,10679,10681,10680,10677)
+
+test_trials_search <-  conn$post("search/studies",body=list(
+  studyDbIds=test_trials
+  ))
+# Check if immediate data is available
+if (!is.null(test_trials_search$content$result$data)) {
+  test_trials_result <- test_trials_search$content$result$data
+} else {
+  # Otherwise, get the searchResultsDbId and poll the results
+  search_id <- test_trials_search$content$result$searchResultsDbId
+  
+  test_trials_result_response <- conn$get(paste0("search/studies/", search_id), pageSize=10000)
+  test_trials_result <- test_trials_result_response$content$result$data
+}
+
+# Compile the BrAPI results into a data frame
+test_trials_df <- bind_rows(lapply(test_trials_result, function(x) {
+  data.frame(
+    studyDbId = x$studyDbId %||% NA,
+    studyName = x$studyName %||% NA,
+    studyType=x$studyType %||% NA,
+    studyDescription=x$studyDescription %||% NA,
+    locationName = x$locationName %||% NA,
+    trialDbID = x$trialDbId %||% NA,
+    startDate = x$startDate %||% NA,
+    endDate = x$endDate %||% NA,
+    programName = x$additionalInfo$programName %||% NA,
+    commonCropName = x$commonCropName %||% NA,
+    experimentalDesign = x$experimentalDesign$description,
+    stringsAsFactors = FALSE
+  )
+}))
+
+# Change Date Formatting
+test_trials_df <- test_trials_df |> 
+  dplyr::mutate(startDate = as.POSIXct(startDate, format = "%Y-%m-%dT%H:%M:%SZ", tz = "UTC")) |> 
+  dplyr::mutate(endDate = as.POSIXct(endDate, format = "%Y-%m-%dT%H:%M:%SZ", tz = "UTC")) |>
+  clean_names()
+
+readr::write_csv(test_trials_df, here::here("data","test_trial_metadata.csv"))
+```
+

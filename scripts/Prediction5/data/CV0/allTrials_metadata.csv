@@ -1,0 +1,218 @@
+focal_trial,studyDbId,name,location,year,program,is_focal
+Washington State University,10701,AHR1_HRW_2022_Davenport,"Davenport,  WA",2022,Washington State University,FALSE
+Washington State University,10845,AHR1_HRW_2023_Davenport,"Davenport,  WA",2023,Washington State University,FALSE
+Washington State University,10632,AWY1_DVP_2025,"Davenport,  WA",2025,Washington State University,FALSE
+Washington State University,10678,AWY1_DVPWA_2024,"Davenport,  WA",2024,Washington State University,TRUE
+Washington State University,10222,AWY1_HARWA_2024,"Harrington,  WA",2024,Washington State University,FALSE
+Washington State University,10221,AWY1_KAHWA_2024,"Kahlotus,  WA",2024,Washington State University,FALSE
+Washington State University,10225,AWY1_LNDWA_2024,"Lind,  WA",2024,Washington State University,FALSE
+Washington State University,10226,AWY1_PULWA_2024,"Pullman,  WA",2024,Washington State University,FALSE
+Washington State University,10223,AWY1_RITWA_2024,"Ritzville,  WA",2024,Washington State University,FALSE
+Washington State University,10724,AWY1_SWW_2022_Davenport,"Davenport,  WA",2022,Washington State University,FALSE
+Washington State University,10851,AWY1_SWW_2023_Davenport,"Davenport,  WA",2023,Washington State University,FALSE
+Washington State University,10634,AWY2_DVP_2025,"Davenport,  WA",2025,Washington State University,FALSE
+Washington State University,10220,AWY2_DVPWA_2024,"Davenport,  WA",2024,Washington State University,FALSE
+Washington State University,10224,AWY2_PULWA_2024,"Pullman,  WA",2024,Washington State University,FALSE
+Washington State University,10698,AWY2_SWW_2022_Davenport,"Davenport,  WA",2022,Washington State University,FALSE
+Washington State University,10873,AWY2_SWW_2023_Davenport,"Davenport,  WA",2023,Washington State University,FALSE
+Washington State University,10227,AWY2_WAWWA_2024,"Walla Walla,  WA",2024,Washington State University,FALSE
+Washington State University,10942,Prelim_2_SWW_2023_Davenport,"Davenport,  WA",2023,Washington State University,FALSE
+Washington State University,10783,Prelim_HRW_2022_Davenport,"Davenport,  WA",2022,Washington State University,FALSE
+Washington State University,10800,Prelim_SWW_2022_Davenport,"Davenport,  WA",2022,Washington State University,FALSE
+Washington State University,10963,Prelim_SWW_2023_Davenport,"Davenport,  WA",2023,Washington State University,FALSE
+USDA-ARS Kansas,10703,22COLKS_TCAP_C,"Colby,  KS",2022,USDA-ARS Kansas,FALSE
+USDA-ARS Kansas,10693,22COLKS_TDicQual,"Colby,  KS",2022,USDA-ARS Kansas,FALSE
+USDA-ARS Kansas,10708,22HAYKS_TCAP_C,"Hays,  KS",2022,USDA-ARS Kansas,FALSE
+USDA-ARS Kansas,10697,22HAYKS_TDicQual,"Hays,  KS",2022,USDA-ARS Kansas,FALSE
+USDA-ARS Kansas,10699,22HUTKS_TCAP_C,"Hutchinson,  KS",2022,USDA-ARS Kansas,FALSE
+USDA-ARS Kansas,10706,22HUTKS_TDicQual,"Hutchinson,  KS",2022,USDA-ARS Kansas,FALSE
+USDA-ARS Kansas,10710,22MANKS_TCAP_C,"Manhattan,  KS",2022,USDA-ARS Kansas,FALSE
+USDA-ARS Kansas,10694,22MANKS_TDicQual,"Manhattan,  KS",2022,USDA-ARS Kansas,FALSE
+USDA-ARS Kansas,10870,23COLKS_TDicQual,"Colby,  KS",2023,USDA-ARS Kansas,FALSE
+USDA-ARS Kansas,10884,23FTC_DTD,"Fort Collins,  CO",2023,USDA-ARS Kansas,FALSE
+USDA-ARS Kansas,10883,23GRY_DTD,"Greeley,  CO",2023,USDA-ARS Kansas,FALSE
+USDA-ARS Kansas,10876,23GRY_VAL,"Greeley,  CO",2023,USDA-ARS Kansas,FALSE
+USDA-ARS Kansas,10877,23HAYKS_TDicQual,"Hays,  KS",2023,USDA-ARS Kansas,FALSE
+USDA-ARS Kansas,10853,23HUTKS_TDicQual,"Hutchinson,  KS",2023,USDA-ARS Kansas,FALSE
+USDA-ARS Kansas,10841,23MANKS_TDicQual,"Manhattan,  KS",2023,USDA-ARS Kansas,FALSE
+USDA-ARS Kansas,11022,TCAP_2023_COLKS,"Colby,  KS",2023,USDA-ARS Kansas,FALSE
+USDA-ARS Kansas,11000,TCAP_2023_HAYKS,"Hays,  KS",2023,USDA-ARS Kansas,FALSE
+USDA-ARS Kansas,11013,TCAP_2023_HUTKS,"Hutchinson,  KS",2023,USDA-ARS Kansas,FALSE
+USDA-ARS Kansas,10997,TCAP_2023_MANKS,"Manhattan,  KS",2023,USDA-ARS Kansas,FALSE
+USDA-ARS Kansas,10680,TCAP_2025_MANKS,"Manhattan,  KS",2025,USDA-ARS Kansas,TRUE
+Michigan State University,9454,23_AYTRed_SVREC,"Frankenmuth,  MI",2023,Michigan State University,FALSE
+Michigan State University,10020,23_Big6_SVREC,"Frankenmuth,  MI",2023,Michigan State University,FALSE
+Michigan State University,9980,23_MSU_PYT_1_SVREC,"Frankenmuth,  MI",2023,Michigan State University,FALSE
+Michigan State University,9987,23_MSU_PYT_2_SVREC,"Frankenmuth,  MI",2023,Michigan State University,FALSE
+Michigan State University,9993,23_MSU_PYT_3_SVREC,"Frankenmuth,  MI",2023,Michigan State University,FALSE
+Michigan State University,10027,24_Big6_SVREC,"Frankenmuth,  MI",2024,Michigan State University,FALSE
+Michigan State University,10015,24_MSU_AYT_SVREC,"Frankenmuth,  MI",2024,Michigan State University,FALSE
+Michigan State University,10007,24_MSU_PYT_1_SVREC,"Frankenmuth,  MI",2024,Michigan State University,FALSE
+Michigan State University,10021,24_MSU_PYT_2_SVREC,"Frankenmuth,  MI",2024,Michigan State University,FALSE
+Michigan State University,10029,24_MSU_PYT_3_SVREC,"Frankenmuth,  MI",2024,Michigan State University,FALSE
+Michigan State University,10255,25_Big6_Core_FHB_FHB,"East Lansing,  MI",2025,Michigan State University,FALSE
+Michigan State University,10262,25_Big6_MASON_MASMI,"Mason,  MI",2025,Michigan State University,FALSE
+Michigan State University,10675,25_Big6_SVREC_SVREC,"Frankenmuth,  MI",2025,Michigan State University,TRUE
+Michigan State University,10258,25_MSU_AYT_MI_ALLMI,"Allegan County,  MI",2025,Michigan State University,FALSE
+Michigan State University,10250,25_MSU_AYT_MI_CENMI,"Central,  MI",2025,Michigan State University,FALSE
+Michigan State University,10246,25_MSU_AYT_MI_FHB,"East Lansing,  MI",2025,Michigan State University,FALSE
+Michigan State University,10259,25_MSU_AYT_MI_HURMI,"Huron County,  MI",2025,Michigan State University,FALSE
+Michigan State University,10252,25_MSU_AYT_MI_MONMI,"Monroe County,  MI",2025,Michigan State University,FALSE
+Michigan State University,10263,25_MSU_AYT_MI_SANMI,"Sanilac County,  MI",2025,Michigan State University,FALSE
+Michigan State University,10261,25_MSU_AYT_Regional_CENIL,"Centralia,  IL",2025,Michigan State University,FALSE
+Michigan State University,10249,25_MSU_AYT_Regional_CHAIL,"Champaign,  IL",2025,Michigan State University,FALSE
+Michigan State University,10254,25_MSU_AYT_Regional_HENKY,"Henderson,  KY",2025,Michigan State University,FALSE
+Michigan State University,10247,25_MSU_AYT_Regional_HMLIL,"Hamel,  IL",2025,Michigan State University,FALSE
+Michigan State University,10257,25_MSU_AYT_Regional_HOPKY,"Hopkinsville,  KY",2025,Michigan State University,FALSE
+Michigan State University,10256,25_MSU_AYT_Regional_NAPOH,"Napoleon,  OH",2025,Michigan State University,FALSE
+Michigan State University,10264,25_MSU_AYT_Regional_TIFOH,"Tiffin,  OH",2025,Michigan State University,FALSE
+Michigan State University,10251,25_MSU_PYT_FHB,"East Lansing,  MI",2025,Michigan State University,FALSE
+Michigan State University,10253,25_MSU_PYT_MASMI,"Mason,  MI",2025,Michigan State University,FALSE
+Michigan State University,10260,25_MSU_PYT_SVREC,"Frankenmuth,  MI",2025,Michigan State University,FALSE
+Michigan State University,9101,AYT_2018_Frankenmuth,"Frankenmuth,  MI",2018,Michigan State University,FALSE
+Michigan State University,9106,AYT_2019_Frankenmuth,"Frankenmuth,  MI",2019,Michigan State University,FALSE
+Michigan State University,9100,AYTred_2020_Frankenmuth,"Frankenmuth,  MI",2020,Michigan State University,FALSE
+Michigan State University,9136,AYTRed_2021_Frankenmuth,"Frankenmuth,  MI",2021,Michigan State University,FALSE
+Michigan State University,9327,AYTred_2022_Frankenmuth,"Frankenmuth,  MI",2022,Michigan State University,FALSE
+Michigan State University,9104,AYTwhite_2020_Frankenmuth,"Frankenmuth,  MI",2020,Michigan State University,FALSE
+Michigan State University,9123,AYTWhite_2021_Frankenmuth,"Frankenmuth,  MI",2021,Michigan State University,FALSE
+Michigan State University,9119,PYT1_2021_Frankenmuth,"Frankenmuth,  MI",2021,Michigan State University,FALSE
+Michigan State University,9330,PYT1_2022_Frankenmuth,"Frankenmuth,  MI",2022,Michigan State University,FALSE
+Michigan State University,9112,PYT2_2021_Frankenmuth,"Frankenmuth,  MI",2021,Michigan State University,FALSE
+Michigan State University,9346,PYT2_2022_Frankenmuth,"Frankenmuth,  MI",2022,Michigan State University,FALSE
+Michigan State University,9120,PYT3_2021_Frankenmuth,"Frankenmuth,  MI",2021,Michigan State University,FALSE
+Michigan State University,9333,PYT3_2022_Frankenmuth,"Frankenmuth,  MI",2022,Michigan State University,FALSE
+Michigan State University,9095,TP_2018_Frankenmuth,"Frankenmuth,  MI",2018,Michigan State University,FALSE
+Michigan State University,9105,TP_2019_Frankenmuth,"Frankenmuth,  MI",2019,Michigan State University,FALSE
+Michigan State University,9108,TP_2020_Frankenmuth,"Frankenmuth,  MI",2020,Michigan State University,FALSE
+Michigan State University,9116,TP_2021_Frankenmuth,"Frankenmuth,  MI",2021,Michigan State University,FALSE
+University of Wisconsin,10941,OHRWW_2023_MAD,"Madison,  WI",2023,University of Wisconsin,FALSE
+University of Wisconsin,10964,OHRWW_2023_SPO,"Spooner,  WI",2023,University of Wisconsin,FALSE
+University of Wisconsin,10679,OHRWW_2025_SPO,"Spooner,  WI",2025,University of Wisconsin,TRUE
+University of Wisconsin,10284,OWW_2020_DANIL,"Danforth,  IL",2020,University of Wisconsin,FALSE
+University of Wisconsin,10280,OWW_2020_MAD,"Madison,  WI",2020,University of Wisconsin,FALSE
+University of Wisconsin,10295,OWW_2021_DANIL,"Danforth,  IL",2021,University of Wisconsin,FALSE
+University of Wisconsin,10327,OWW_2021_MAD,"Madison,  WI",2021,University of Wisconsin,FALSE
+University of Wisconsin,10325,OWW_2021_SPO,"Spooner,  WI",2021,University of Wisconsin,FALSE
+University of Wisconsin,10763,OWW_2022_MAD,"Madison,  WI",2022,University of Wisconsin,FALSE
+University of Wisconsin,10741,OWW_2022_SPO,"Spooner,  WI",2022,University of Wisconsin,FALSE
+Cornell University,6624,CornellMaster_2007_McGowan,"Ithaca,  NY",2007,Cornell University,FALSE
+Cornell University,6543,CornellMaster_2009_McGowan,"Ithaca,  NY",2009,Cornell University,FALSE
+Cornell University,6567,CornellMaster_2011_McGowan,"Ithaca,  NY",2011,Cornell University,FALSE
+Cornell University,6170,CornellMaster_2013_McGowan,"Ithaca,  NY",2013,Cornell University,FALSE
+Cornell University,6090,CornellMaster_2015_McGowan,"Ithaca,  NY",2015,Cornell University,FALSE
+Cornell University,10905,CornellMaster_2023_McGowan,"Ithaca,  NY",2023,Cornell University,FALSE
+Cornell University,10676,CornellMaster_2025_McGowan,"Ithaca,  NY",2025,Cornell University,TRUE
+University of Minnesota,10150,23Crk_AYs_R18_Yield,"Crookston,  MN",2023,University of Minnesota,FALSE
+University of Minnesota,10674,24Crk_AY2-3,"Crookston,  MN",2024,University of Minnesota,TRUE
+University of Minnesota,10725,AY3-8_YIELD_CRK-MN_2022,"Crookston,  MN",2022,University of Minnesota,FALSE
+University of Minnesota,7322,UMN-WHEAT-2008-CROOKSTON,"Crookston,  MN",2008,University of Minnesota,FALSE
+University of Minnesota,6608,UMN-WHEAT-2009-CROOKSTON,"Crookston,  MN",2009,University of Minnesota,FALSE
+University of Minnesota,7619,UMN-WHEAT-2010-CROOKSTON,"Crookston,  MN",2010,University of Minnesota,FALSE
+University of Minnesota,6822,UMN-WHEAT-2011-CROOKSTON,"Crookston,  MN",2011,University of Minnesota,FALSE
+University of Minnesota,7460,UMN-WHEAT-2012-CROOKSTON,"Crookston,  MN",2012,University of Minnesota,FALSE
+University of Minnesota,7226,UMN-WHEAT-2013-CROOKSTON,"Crookston,  MN",2013,University of Minnesota,FALSE
+University of Minnesota,7156,UMN-WHEAT-2014-CROOKSTON,"Crookston,  MN",2014,University of Minnesota,FALSE
+University of Minnesota,6899,UMN-WHEAT-2015-CROOKSTON,"Crookston,  MN",2015,University of Minnesota,FALSE
+University of Minnesota,7287,UMN-WHEAT-2016-CROOKSTON,"Crookston,  MN",2016,University of Minnesota,FALSE
+University of Minnesota,6945,UMN-WHEAT-2017-CROOKSTON,"Crookston,  MN",2017,University of Minnesota,FALSE
+University of Minnesota,7664,UMN-WHEAT-2018-CROOKSTON,"Crookston,  MN",2018,University of Minnesota,FALSE
+South Dakota State University- Winter Wheat,9424,2022_AYT_Aurora,"Aurora,  SD",2022,South Dakota State University- Winter Wheat,FALSE
+South Dakota State University- Winter Wheat,9422,2022_Elite_AURORA,"Aurora,  SD",2022,South Dakota State University- Winter Wheat,FALSE
+South Dakota State University- Winter Wheat,9622,2023_AYT_Aurora,"Aurora,  SD",2023,South Dakota State University- Winter Wheat,FALSE
+South Dakota State University- Winter Wheat,9621,2023_Elite_AURORA,"Aurora,  SD",2023,South Dakota State University- Winter Wheat,FALSE
+South Dakota State University- Winter Wheat,10673,2025_AYT_Aurora,"Aurora,  SD",2025,South Dakota State University- Winter Wheat,TRUE
+University of Illinois,10343,A5S_Scb_21,"Urbana,  IL",2021,University of Illinois,FALSE
+University of Illinois,10691,A5S_Scb_22,"Urbana,  IL",2022,University of Illinois,FALSE
+University of Illinois,10692,A5S_Urb_22,"Urbana,  IL",2022,University of Illinois,FALSE
+University of Illinois,6260,A6S_Urb_19,"Urbana,  IL",2019,University of Illinois,FALSE
+University of Illinois,6266,AdvHY_Urb_19,"Urbana,  IL",2019,University of Illinois,FALSE
+University of Illinois,10288,Adv_Scb_21,"Urbana,  IL",2021,University of Illinois,FALSE
+University of Illinois,6257,Adv_Urb_19,"Urbana,  IL",2019,University of Illinois,FALSE
+University of Illinois,10296,Adv_Urb_21,"Urbana,  IL",2021,University of Illinois,FALSE
+University of Illinois,10316,Aug_Urb_21,"Urbana,  IL",2021,University of Illinois,FALSE
+University of Illinois,10920,Big6_Scb_23,"Urbana,  IL",2023,University of Illinois,FALSE
+University of Illinois,10931,Big6_Urb_23,"Urbana,  IL",2023,University of Illinois,FALSE
+University of Illinois,10332,CC_Urb_21,"Urbana,  IL",2021,University of Illinois,FALSE
+University of Illinois,10326,DH2_Urb_21,"Urbana,  IL",2021,University of Illinois,FALSE
+University of Illinois,10304,DH_Urb_21,"Urbana,  IL",2021,University of Illinois,FALSE
+University of Illinois,10893,IL_SBMV_23,"Urbana,  IL",2023,University of Illinois,FALSE
+University of Illinois,10751,IL_Scb_22,"Urbana,  IL",2022,University of Illinois,FALSE
+University of Illinois,10897,IL_Scb_23,"Urbana,  IL",2023,University of Illinois,FALSE
+University of Illinois,10742,LgI_Urb_22,"Urbana,  IL",2022,University of Illinois,FALSE
+University of Illinois,10927,LgI_Urb_23,"Urbana,  IL",2023,University of Illinois,FALSE
+University of Illinois,10778,MI_Urb_22,"Urbana,  IL",2022,University of Illinois,FALSE
+University of Illinois,10950,MI_Urb_23,"Urbana,  IL",2023,University of Illinois,FALSE
+University of Illinois,10289,NN_Urb_21,"Urbana,  IL",2021,University of Illinois,FALSE
+University of Illinois,10749,NN_Urb_22,"Urbana,  IL",2022,University of Illinois,FALSE
+University of Illinois,8215,NU_Scb_20,"Urbana,  IL",2020,University of Illinois,FALSE
+University of Illinois,8183,NU_Scb_21,"Urbana,  IL",2021,University of Illinois,FALSE
+University of Illinois,10740,NU_Scb_22,"Urbana,  IL",2022,University of Illinois,FALSE
+University of Illinois,10949,NU_Scb_23,"Urbana,  IL",2023,University of Illinois,FALSE
+University of Illinois,10980,Org_Scb_23,"Urbana,  IL",2023,University of Illinois,FALSE
+University of Illinois,6264,ORG_Urb_19,"Urbana,  IL",2019,University of Illinois,FALSE
+University of Illinois,10957,OVT_Urb_23,"Urbana,  IL",2023,University of Illinois,FALSE
+University of Illinois,10294,P5S_Scb_21,"Urbana,  IL",2021,University of Illinois,FALSE
+University of Illinois,10762,P5S_Scb_22,"Urbana,  IL",2022,University of Illinois,FALSE
+University of Illinois,10738,P5S_Urb_22,"Urbana,  IL",2022,University of Illinois,FALSE
+University of Illinois,8216,PNU_Scb_20,"Urbana,  IL",2020,University of Illinois,FALSE
+University of Illinois,8184,PNU_Scb_21,"Urbana,  IL",2021,University of Illinois,FALSE
+University of Illinois,10771,PNU_Scb_22,"Urbana,  IL",2022,University of Illinois,FALSE
+University of Illinois,10943,PNU_Scb_23,"Urbana,  IL",2023,University of Illinois,FALSE
+University of Illinois,6255,Pr1_Urb_19,"Urbana,  IL",2019,University of Illinois,FALSE
+University of Illinois,6261,Pr2_Urb_19,"Urbana,  IL",2019,University of Illinois,FALSE
+University of Illinois,6274,Pr3_Urb_19,"Urbana,  IL",2019,University of Illinois,FALSE
+University of Illinois,6263,Pr4_Urb_19,"Urbana,  IL",2019,University of Illinois,FALSE
+University of Illinois,6269,Pr5_Urb_19,"Urbana,  IL",2019,University of Illinois,FALSE
+University of Illinois,6272,Pr6_Urb_19,"Urbana,  IL",2019,University of Illinois,FALSE
+University of Illinois,6265,Pr7_Urb_19,"Urbana,  IL",2019,University of Illinois,FALSE
+University of Illinois,10300,Pr_Scb_21,"Urbana,  IL",2021,University of Illinois,FALSE
+University of Illinois,10335,Pr_Urb_21,"Urbana,  IL",2021,University of Illinois,FALSE
+University of Illinois,10806,SBMV_Urb_22,"Urbana,  IL",2022,University of Illinois,FALSE
+University of Illinois,10826,SI_Urb_22,"Urbana,  IL",2022,University of Illinois,FALSE
+University of Illinois,10944,SI_Urb_23,"Urbana,  IL",2023,University of Illinois,FALSE
+University of Illinois,10339,SU_Scb_21,"Urbana,  IL",2021,University of Illinois,FALSE
+University of Illinois,10822,SU_Scb_22,"Urbana,  IL",2022,University of Illinois,FALSE
+University of Illinois,10999,SU_Scb_23,"Urbana,  IL",2023,University of Illinois,FALSE
+University of Illinois,10290,UE_Scb_21,"Urbana,  IL",2021,University of Illinois,FALSE
+University of Illinois,10812,UE_Scb_22,"Urbana,  IL",2022,University of Illinois,FALSE
+University of Illinois,11034,UE_Scb_23,"Urbana,  IL",2023,University of Illinois,FALSE
+University of Illinois,6271,UE_Urb_19,"Urbana,  IL",2019,University of Illinois,FALSE
+University of Illinois,10808,UE_Urb_22,"Urbana,  IL",2022,University of Illinois,FALSE
+University of Illinois,6882,UIL-WHEAT-1997-URBANA,"Urbana,  IL",1997,University of Illinois,FALSE
+University of Illinois,6979,UIL-WHEAT-1998-URBANA,"Urbana,  IL",1998,University of Illinois,FALSE
+University of Illinois,7428,UIL-WHEAT-1999-URBANA,"Urbana,  IL",1999,University of Illinois,FALSE
+University of Illinois,7801,UIL-WHEAT-2000-URBANA,"Urbana,  IL",2000,University of Illinois,FALSE
+University of Illinois,6797,UIL-WHEAT-2001-URBANA,"Urbana,  IL",2001,University of Illinois,FALSE
+University of Illinois,6512,UIL-WHEAT-2002-URBANA,"Urbana,  IL",2002,University of Illinois,FALSE
+University of Illinois,7197,UIL-WHEAT-2003-URBANA,"Urbana,  IL",2003,University of Illinois,FALSE
+University of Illinois,6776,UIL-WHEAT-2004-URBANA,"Urbana,  IL",2004,University of Illinois,FALSE
+University of Illinois,6972,UIL-WHEAT-2005-URBANA,"Urbana,  IL",2005,University of Illinois,FALSE
+University of Illinois,7270,UIL-WHEAT-2006-URBANA,"Urbana,  IL",2006,University of Illinois,FALSE
+University of Illinois,7783,UIL-WHEAT-2007-URBANA,"Urbana,  IL",2007,University of Illinois,FALSE
+University of Illinois,6870,UIL-WHEAT-2008-URBANA,"Urbana,  IL",2008,University of Illinois,FALSE
+University of Illinois,7860,UIL-WHEAT-2009-URBANA,"Urbana,  IL",2009,University of Illinois,FALSE
+University of Illinois,8093,UIL-WHEAT-2010-URBANA,"Urbana,  IL",2010,University of Illinois,FALSE
+University of Illinois,7728,UIL-WHEAT-2011-URBANA,"Urbana,  IL",2011,University of Illinois,FALSE
+University of Illinois,7736,UIL-WHEAT-2012-URBANA,"Urbana,  IL",2012,University of Illinois,FALSE
+University of Illinois,7217,UIL-WHEAT-2014-URBANA,"Urbana,  IL",2014,University of Illinois,FALSE
+University of Illinois,7586,UIL-WHEAT-2015-URBANA,"Urbana,  IL",2015,University of Illinois,FALSE
+University of Illinois,6519,UIL-WHEAT-2016-URBANA,"Urbana,  IL",2016,University of Illinois,FALSE
+University of Illinois,7833,UIL-WHEAT-2017-URBANA,"Urbana,  IL",2017,University of Illinois,FALSE
+University of Illinois,7633,UIL-WHEAT-2018-URBANA,"Urbana,  IL",2018,University of Illinois,FALSE
+University of Illinois,10796,VA_Urb_22,"Urbana,  IL",2022,University of Illinois,FALSE
+University of Illinois,10791,VT_SBMV_22,"Urbana,  IL",2022,University of Illinois,FALSE
+University of Illinois,11017,VT_SBMV_23,"Urbana,  IL",2023,University of Illinois,FALSE
+University of Illinois,10306,VT_Scb_21,"Urbana,  IL",2021,University of Illinois,FALSE
+University of Illinois,10837,VT_Scb_22,"Urbana,  IL",2022,University of Illinois,FALSE
+University of Illinois,11018,VT_Scb_23,"Urbana,  IL",2023,University of Illinois,FALSE
+University of Illinois,10787,YT_Urb_22,"Urbana,  IL",2022,University of Illinois,FALSE
+University of Illinois,11014,YT_Urb_23,"Urbana,  IL",2023,University of Illinois,FALSE
+University of Illinois,10677,YT_Urb_25,"Urbana,  IL",2025,University of Illinois,TRUE
+TAMU,10681,STP1_2025_MCG,"McGregor,  TX",2025,TAMU,TRUE
+TAMU,10839,TXE_2022_Bushland-Dryland,"Bushland,  TX",2022,TAMU,FALSE
+TAMU,10832,TXE_2022_Bushland-Irrigated,"Bushland,  TX",2022,TAMU,FALSE
+TAMU,10811,TXE_2022_McGregor,"McGregor,  TX",2022,TAMU,FALSE
+TAMU,11025,TXE_2023_Bushland-Dryland,"Bushland,  TX",2023,TAMU,FALSE
+TAMU,11026,TXE_2023_Bushland-Irrigated,"Bushland,  TX",2023,TAMU,FALSE
+TAMU,11016,TXE_2023_McGregor,"McGregor,  TX",2023,TAMU,FALSE

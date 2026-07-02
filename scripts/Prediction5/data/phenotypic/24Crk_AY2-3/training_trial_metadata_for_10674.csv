@@ -1,0 +1,19 @@
+study_name,study_db_id,program_name,study_type,location_name,location_db_id,latitude,longitude,elevation,start_date,end_date,experimental_design
+23Crk_AYs_R18_Yield,10150,University of Minnesota,Advanced Yield Trial,"Crookston, MN",65,47.778,-96.61,260,2023-05-11T00:00:00Z,NA,Augmented
+AY3-8_YIELD_CRK-MN_2022,10725,University of Minnesota,phenotyping_trial,"Crookston, MN",65,47.778,-96.61,260,2022-05-18T00:00:00Z,2022-08-26T00:00:00Z,Augmented
+AY3-8_YIELD_FER-MN_2022,10689,University of Minnesota,phenotyping_trial,"Fergus Falls, MN",304,46.28301,-96.07756,360,2022-05-16T00:00:00Z,NA,Augmented
+23Ferg_AY1-3_Yield,10151,University of Minnesota,Advanced Yield Trial,"Fergus Falls, MN",304,46.28301,-96.07756,360,2023-05-04T00:00:00Z,NA,Augmented
+AY3-8_YIELD_HAL-MN_2022,10688,University of Minnesota,phenotyping_trial,"Hallock, MN",305,48.77443,-96.94645,249,2022-05-18T00:00:00Z,NA,Augmented
+23Hall_AY1-3_PY5-6_Yield,10149,University of Minnesota,Advanced Yield Trial,"Hallock, MN",305,48.77443,-96.94645,249,2023-05-11T00:00:00Z,NA,Augmented
+AY3-8_YIELD_MOR-MN_2022,10713,University of Minnesota,phenotyping_trial,"Morris, MN",302,45.598022,-95.90952,342,2022-05-05T00:00:00Z,2022-08-11T00:00:00Z,Augmented
+AY3-8_YIELD_OKL-MN_2022,10714,University of Minnesota,phenotyping_trial,"Oklee, MN",346,47.77764,-95.8595,353,2022-05-17T00:00:00Z,NA,Augmented
+23Perl_AY1-3_PY7-8_Yield,10152,University of Minnesota,Advanced Yield Trial,"Perley, MN",306,47.17767,-96.80475,266,2023-05-06T00:00:00Z,NA,Augmented
+AY3-8_YIELD_PER-MN_2022,10707,University of Minnesota,phenotyping_trial,"Perley, MN",306,47.17767,-96.80475,266,2022-05-23T00:00:00Z,NA,Augmented
+23Ros_AY1-3Yield,10154,University of Minnesota,Advanced Yield Trial,"Roseau, MN",191,48.704838,-95.75038,329,2023-05-16T00:00:00Z,NA,Augmented
+AY3-8_YIELD_ROS-MN_2022,10732,University of Minnesota,phenotyping_trial,"Roseau, MN",191,48.704838,-95.75038,329,2022-05-25T00:00:00Z,NA,Augmented
+23StP_C-9,10153,University of Minnesota,Advanced Yield Trial,"St. Paul, MN",203,45,-93,311,2023-04-26T00:00:00Z,NA,Augmented
+AY3-8_YIELD_STP-MN_2022,10705,University of Minnesota,phenotyping_trial,"St. Paul, MN",203,45,-93,311,2022-05-05T00:00:00Z,2022-07-31T00:00:00Z,Augmented
+AY3-8_YIELD_STE-MN_2022,10696,University of Minnesota,phenotyping_trial,"Stephen, MN",348,48.471,-96.86839,255,2022-05-27T00:00:00Z,NA,Augmented
+23StrathconaSpring_Jochum,10148,University of Minnesota,Advanced Yield Trial,"Strathcona, MN",307,48.55386,-96.16891,343,2023-05-23T00:00:00Z,NA,Augmented
+AY3-8_YIELD_STR-MN_2022,10744,University of Minnesota,phenotyping_trial,"Strathcona, MN",307,48.55386,-96.16891,343,2022-05-27T00:00:00Z,NA,Augmented
+23Steph_AY1-3_PY3-4_Yield,10155,University of Minnesota,Advanced Yield Trial,"Strathcona, MN",307,48.55386,-96.16891,343,2023-05-15T00:00:00Z,NA,Augmented

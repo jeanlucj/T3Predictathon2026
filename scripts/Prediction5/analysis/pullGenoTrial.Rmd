@@ -1,0 +1,1151 @@
+---
+title: "Pull genotype data from T3"
+author: "Prediction5 Team"
+output: html_document
+date: '`r format(Sys.time(), "%d %B, %Y")`'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE, message = FALSE)
+```
+
+# Libraries
+
+```{r load libraries}
+suppressPackageStartupMessages(library(here)) # root directory
+suppressPackageStartupMessages(library(data.table)) # load data
+suppressPackageStartupMessages(library(apercu)) # ap
+suppressPackageStartupMessages(library(dplyr)) # formatting
+suppressPackageStartupMessages(library(purrr)) # handle lists
+## devtools::install_github("TriticeaeToolbox/BrAPI.R")
+suppressPackageStartupMessages(library(BrAPI)) # T3 connection
+suppressPackageStartupMessages(library(DT)) # print table
+suppressPackageStartupMessages(library(ggplot2)) # plot
+suppressPackageStartupMessages(library(vcfR)) # load vcf
+```
+
+
+# Set up root directory
+
+```{r current dir}
+here::i_am("analysis/pullGenoTrial.Rmd")
+source(here("code","useful_functions.R"))
+```
+
+
+```{r}
+trials_predictathon <- c("AWY1_DVPWA_2024","TCAP_2025_MANKS","25_Big6_SVREC_SVREC",
+                         "OHRWW_2025_SPO","CornellMaster_2025_McGowan","24Crk_AY2-3",
+                         "2025_AYT_Aurora","YT_Urb_25","STP1_2025_MCG")
+```
+
+
+# Create T3 connection
+
+What's the difference between getBrAPIConnection and createBrAPIConnection?
+```{r}
+#wheat <- getBrAPIConnection("T3/Wheat")
+db <- getBrAPIConnection("T3/Wheat")
+wheat <- createBrAPIConnection("wheat.triticeaetoolbox.org", is_breedbase=TRUE)
+#trials_df <- T3BrapiHelpers::getAllTrialMetaData(wheat,"Wheat")
+```
+
+
+<!-- # Get genotyping protocols that have data for any of the trial's accessions -->
+
+<!-- ## Extract genotype names from trials -->
+
+<!-- From BrAPI reference page (https://triticeaetoolbox.github.io/BrAPI.R/#breedbase-functions) -->
+
+<!-- ```{r} -->
+<!-- # Find accessions that were observed in these trials -->
+<!-- geno_number <- map(trials_predictathon, \(x) { -->
+<!--   wheat$wizard("accessions", list(trials = x), verbose=F)$data$ids -->
+<!-- })  -->
+<!-- names(geno_number) <- trials_predictathon -->
+<!-- ap(geno_number) -->
+<!-- sapply(geno_number,length) -->
+<!-- ``` -->
+
+<!-- We can also extract genotype names instead of numbers (replace `data$ids` by `data$names`) -->
+
+<!-- ## Get genotyping protocols -->
+
+<!-- ```{r} -->
+<!-- # Get genotyping protocols that have data for any of the trial's accessions -->
+<!-- geno_protocols <- map(geno_number, \(x) -->
+<!--                       wheat$wizard("genotyping_protocols", list(accessions = x), verbose=F)$data$ids) -->
+<!-- names(geno_protocols) <- trials_predictathon -->
+<!-- ap(geno_protocols) -->
+<!-- ## map the protocol name and id -->
+<!-- protocol_ids <- unique(unlist(geno_protocols)) -->
+<!-- protocol_names <- unique(unlist(map(geno_number, \(x) -->
+<!--                                     wheat$wizard("genotyping_protocols", list(accessions = x), verbose=F)$data$names))) -->
+
+<!-- df_protocols <- tibble( -->
+<!--   protocol_id = protocol_ids, -->
+<!--   protocol_name = protocol_names -->
+<!-- ) -->
+
+<!-- ## match for each genotype in each trial the genotyping protocol -->
+<!-- geno_matches <- map(geno_number, \(x) db$filter_geno_protocols(x)$data$matches) -->
+<!-- names(geno_matches) <- trials_predictathon -->
+<!-- geno_matches_df <- bind_rows(geno_matches, .id="trial") -->
+<!-- DT::datatable(geno_matches_df) -->
+<!-- # geno_pro <- map(geno_number, \(x) -->
+<!-- #   wheat$wizard("genotyping_projects", list(accessions = x), verbose=F)$data) -->
+
+<!-- ``` -->
+<!-- Visualize the matches -->
+<!-- ```{r} -->
+<!-- protocols <- colnames(geno_matches_df)[-c(1,2)] -->
+<!-- geno_matches_df_long <- tidyr::pivot_longer(geno_matches_df, -->
+<!--                                             cols = all_of(protocols), -->
+<!--                                             names_to = "protocol_id", -->
+<!--                                             values_to = "matches") -->
+<!-- ggplot(geno_matches_df_long, -->
+<!--        aes(x=accession, y=protocol_id, fill=matches)) + -->
+<!--   facet_wrap(~trial, scales="free_x")+ -->
+<!--   geom_tile()+ -->
+<!--   theme(axis.text=element_blank()) -->
+<!-- ``` -->
+
+
+<!-- ## Download vcf for all focal trials -->
+
+<!-- ### TCAP_2025_MANKS -->
+<!-- Download the TCAP_2025_MANKS  -->
+
+
+<!-- ```{r} -->
+<!-- ## Download genotypic VCF for one trial: TCAP_2025_MANKS -->
+<!-- ## Strategy: -->
+<!-- ## 1) Identify which genotyping protocol covers the most accessions in this trial -->
+<!-- ## 2) Map protocol name -> protocol ID -->
+<!-- ## 3) From archived VCFs for that protocol, choose KSU_2024_Allegro_V2 -->
+<!-- ## 4) Download into data/genotypic/<trial>/raw/ -->
+<!-- ## 5) Write a manifest.csv documenting what was downloaded -->
+
+<!-- tri <- "TCAP_2025_MANKS" -->
+
+<!-- # 1) Choose protocol with maximum coverage in this trial (based on geno_matches_df) -->
+<!-- one <- geno_matches_df |> dplyr::filter(trial == tri) -->
+<!-- prot_cols <- setdiff(colnames(one), c("trial", "accession", "accessionName")) -->
+
+<!-- counts <- sapply(prot_cols, function(p) { -->
+<!--   x <- one[[p]] -->
+<!--   x[is.na(x)] <- FALSE -->
+<!--   sum(x) -->
+<!-- }) -->
+
+<!-- best_protocol_name <- names(which.max(counts)) -->
+<!-- message("Best protocol by coverage: ", best_protocol_name) -->
+
+<!-- # 2) Map protocol name -> protocol ID (for this trial's accession set) -->
+<!-- prot_data <- wheat$wizard( -->
+<!--   "genotyping_protocols", -->
+<!--   list(accessions = geno_number[[tri]]), -->
+<!--   verbose = FALSE -->
+<!-- )$data -->
+
+<!-- prot_tbl <- data.frame( -->
+<!--   protocol_id = prot_data$ids, -->
+<!--   protocol_name = prot_data$names, -->
+<!--   stringsAsFactors = FALSE -->
+<!-- ) -->
+
+<!-- prot_id <- prot_tbl$protocol_id[prot_tbl$protocol_name == best_protocol_name] -->
+
+<!-- if (length(prot_id) != 1) { -->
+<!--   stop("Could not uniquely identify protocol_id for: ", best_protocol_name) -->
+<!-- } -->
+
+<!-- message("Selected protocol_id: ", prot_id) -->
+
+<!-- # 3) Choose archived VCF file for this protocol (explicitly choose KSU_2024_Allegro_V2) -->
+<!-- vcf_list <- wheat$vcf_archived_list(genotyping_protocol_id = prot_id, verbose = FALSE) -->
+
+<!-- # filter to KSU projects and choose KSU_2024 specifically -->
+<!-- row <- vcf_list[vcf_list$project_name == "KSU_2024_Allegro_V2", ] -->
+
+<!-- if (nrow(row) != 1) { -->
+<!--   stop("Expected exactly 1 archived VCF for project_name == KSU_2024_Allegro_V2") -->
+<!-- } -->
+
+<!-- project_id <- row$project_id -->
+<!-- file_name  <- row$file_name -->
+
+<!-- message("Using project_id: ", project_id) -->
+<!-- message("Using file_name: ", file_name) -->
+
+<!-- # 4) Download into trial folder -->
+<!-- out_dir <- here::here("data", "genotypic", tri, "raw") -->
+<!-- dir.create(out_dir, recursive = TRUE, showWarnings = FALSE) -->
+
+<!-- out_file <- file.path(out_dir, paste0(tri, "_", row$project_name, ".vcf.gz")) -->
+<!-- wheat$vcf_archived( -->
+<!--   output = out_file, -->
+<!--   genotyping_protocol_id = prot_id, -->
+<!--   genotyping_project_id = project_id, -->
+<!--   file_name = file_name, -->
+<!--   verbose = FALSE -->
+<!-- ) -->
+
+<!-- stopifnot(file.exists(out_file)) -->
+<!-- message("Downloaded to: ", out_file) -->
+
+<!-- # 5) Write manifest for reproducibility -->
+<!-- manifest <- data.frame( -->
+<!--   trial = tri, -->
+<!--   protocol_id = prot_id, -->
+<!--   protocol_name = best_protocol_name, -->
+<!--   project_id = project_id, -->
+<!--   project_name = row$project_name, -->
+<!--   file_name = file_name, -->
+<!--   out_file = out_file, -->
+<!--   stringsAsFactors = FALSE -->
+<!-- ) -->
+
+<!-- manifest_path <- here::here("data", "genotypic", tri, "manifest.csv") -->
+<!-- write.csv(manifest, manifest_path, row.names = FALSE) -->
+
+<!-- stopifnot(file.exists(manifest_path)) -->
+<!-- message("Manifest written to: ", manifest_path) -->
+<!-- ``` -->
+
+
+<!-- ### 25_Big6_SVREC_SVREC -->
+
+<!-- Download the 25_Big6_SVREC_SVREC -->
+
+<!-- ```{r} -->
+<!-- tri <- "25_Big6_SVREC_SVREC" -->
+
+<!-- one <- geno_matches_df |> dplyr::filter(trial == tri) -->
+<!-- prot_cols <- setdiff(colnames(one), c("trial","accession","accessionName")) -->
+
+<!-- counts <- sapply(prot_cols, function(p){ -->
+<!--   x <- one[[p]] -->
+<!--   x[is.na(x)] <- FALSE -->
+<!--   sum(x) -->
+<!-- }) -->
+
+<!-- sort(counts, decreasing = TRUE) -->
+<!-- best_prot_name <- names(which.max(counts)) -->
+<!-- best_prot_name -->
+
+<!-- ## Protocal IDs -->
+<!-- prot_data <- wheat$wizard( -->
+<!--   "genotyping_protocols", -->
+<!--   list(accessions = geno_number[[tri]]), -->
+<!--   verbose = FALSE -->
+<!-- )$data -->
+
+<!-- prot_tbl <- data.frame( -->
+<!--   protocol_id = prot_data$ids, -->
+<!--   protocol_name = prot_data$names, -->
+<!--   stringsAsFactors = FALSE -->
+<!-- ) -->
+
+<!-- prot_tbl -->
+<!-- prot_id <- prot_tbl$protocol_id[prot_tbl$protocol_name == best_prot_name] -->
+<!-- prot_id -->
+
+<!-- #Archive protocal 296 -->
+<!-- prot <- 296 -->
+
+<!-- vcf_list <- wheat$vcf_archived_list(genotyping_protocol_id = prot, verbose = FALSE) -->
+
+<!-- # Inspect the returned table -->
+<!-- vcf_list -->
+<!-- names(vcf_list) -->
+
+<!-- #Download the vcf -->
+
+<!-- project_id <- vcf_list$project_id[1] -->
+<!-- project_name <- vcf_list$project_name[1] -->
+<!-- file_name <- vcf_list$file_name[1] -->
+
+<!-- # create output folder -->
+<!-- out_dir <- here("data", "genotypic", tri, "raw") -->
+<!-- dir.create(out_dir, recursive = TRUE, showWarnings = FALSE) -->
+
+<!-- out_file <- file.path(out_dir, paste0(tri, "_", row$project_name, ".vcf.gz")) -->
+<!-- # download -->
+<!-- wheat$vcf_archived( -->
+<!--   output = out_file, -->
+<!--   genotyping_protocol_id = prot, -->
+<!--   genotyping_project_id = project_id, -->
+<!--   file_name = file_name, -->
+<!--   verbose = FALSE -->
+<!-- ) -->
+
+<!-- # verify download -->
+<!-- out_file -->
+<!-- file.exists(out_file) -->
+
+<!-- # write manifest -->
+<!-- manifest <- data.frame( -->
+<!--   trial = tri, -->
+<!--   protocol_id = prot, -->
+<!--   protocol_name = "ThermoFisher AgriSeq 4K", -->
+<!--   project_id = project_id, -->
+<!--   project_name = project_name, -->
+<!--   file_name = file_name, -->
+<!--   out_file = out_file, -->
+<!--   stringsAsFactors = FALSE -->
+<!-- ) -->
+
+<!-- manifest_path <- here("data", "genotypic", tri, "manifest.csv") -->
+<!-- write.csv(manifest, manifest_path, row.names = FALSE) -->
+
+<!-- manifest_path -->
+<!-- file.exists(manifest_path) -->
+
+
+<!-- ``` -->
+
+<!-- ### OHRWW_2025_SPO -->
+
+<!-- Download the OHRWW_2025_SPO -->
+
+<!-- ```{r} -->
+<!-- tri <- "OHRWW_2025_SPO" -->
+
+<!-- one <- geno_matches_df |> dplyr::filter(trial == tri) -->
+<!-- prot_cols <- setdiff(colnames(one), c("trial","accession","accessionName")) -->
+
+<!-- counts <- sapply(prot_cols, function(p){ -->
+<!--   x <- one[[p]] -->
+<!--   x[is.na(x)] <- FALSE -->
+<!--   sum(x) -->
+<!-- }) -->
+
+<!-- sort(counts, decreasing = TRUE) -->
+<!-- best_prot_name <- names(which.max(counts)) -->
+<!-- best_prot_name -->
+
+<!-- ## Protocal IDs -->
+<!-- prot_data <- wheat$wizard( -->
+<!--   "genotyping_protocols", -->
+<!--   list(accessions = geno_number[[tri]]), -->
+<!--   verbose = FALSE -->
+<!-- )$data -->
+
+<!-- prot_tbl <- data.frame( -->
+<!--   protocol_id = prot_data$ids, -->
+<!--   protocol_name = prot_data$names, -->
+<!--   stringsAsFactors = FALSE -->
+<!-- ) -->
+
+<!-- prot_tbl -->
+<!-- prot_id <- prot_tbl$protocol_id[prot_tbl$protocol_name == best_prot_name] -->
+<!-- prot_id -->
+
+<!-- #Archive protocal 299 -->
+<!-- prot <- 299 -->
+
+<!-- vcf_list <- wheat$vcf_archived_list(genotyping_protocol_id = prot, verbose = FALSE) -->
+
+<!-- # Inspect the returned table -->
+<!-- vcf_list -->
+<!-- names(vcf_list) -->
+
+<!-- #Download the vcf -->
+<!-- #Filtering the correct project  -->
+<!-- row <- vcf_list |>  -->
+<!--   dplyr::filter(project_name == "UWM_2025_3K") -->
+
+<!-- stopifnot(nrow(row) == 1) -->
+
+<!-- project_id   <- row$project_id -->
+<!-- project_name <- row$project_name -->
+<!-- file_name    <- row$file_name -->
+
+
+<!-- # create output folder -->
+<!-- out_dir <- here("data", "genotypic", tri, "raw") -->
+<!-- dir.create(out_dir, recursive = TRUE, showWarnings = FALSE) -->
+
+<!-- out_file <- file.path(out_dir, paste0(tri, "_", row$project_name, ".vcf.gz")) -->
+
+<!-- # download -->
+<!-- wheat$vcf_archived( -->
+<!--   output = out_file, -->
+<!--   genotyping_protocol_id = prot, -->
+<!--   genotyping_project_id = project_id, -->
+<!--   file_name = file_name, -->
+<!--   verbose = FALSE -->
+<!-- ) -->
+
+<!-- # verify download -->
+<!-- out_file -->
+<!-- file.exists(out_file) -->
+
+<!-- # write manifest -->
+<!-- manifest <- data.frame( -->
+<!--   trial = tri, -->
+<!--   protocol_id = prot, -->
+<!--   protocol_name = "ThermoFisher AgriSeq 4K", -->
+<!--   project_id = project_id, -->
+<!--   project_name = project_name, -->
+<!--   file_name = file_name, -->
+<!--   out_file = out_file, -->
+<!--   stringsAsFactors = FALSE -->
+<!-- ) -->
+
+<!-- manifest_path <- here("data", "genotypic", tri, "manifest.csv") -->
+<!-- write.csv(manifest, manifest_path, row.names = FALSE) -->
+
+<!-- manifest_path -->
+<!-- file.exists(manifest_path) -->
+<!-- ``` -->
+
+
+<!-- ### CornellMaster_2025_McGowan -->
+
+<!-- Download the CornellMaster_2025_McGowan -->
+
+<!-- ```{r} -->
+<!-- tri <- "CornellMaster_2025_McGowan" -->
+
+<!-- one <- geno_matches_df |> dplyr::filter(trial == tri) -->
+<!-- prot_cols <- setdiff(colnames(one), c("trial","accession","accessionName")) -->
+
+<!-- counts <- sapply(prot_cols, function(p){ -->
+<!--   x <- one[[p]] -->
+<!--   x[is.na(x)] <- FALSE -->
+<!--   sum(x) -->
+<!-- }) -->
+
+<!-- sort(counts, decreasing = TRUE) -->
+<!-- best_prot_name <- names(which.max(counts)) -->
+<!-- best_prot_name -->
+
+<!-- ## Protocal IDs -->
+<!-- prot_data <- wheat$wizard( -->
+<!--   "genotyping_protocols", -->
+<!--   list(accessions = geno_number[[tri]]), -->
+<!--   verbose = FALSE -->
+<!-- )$data -->
+
+<!-- prot_tbl <- data.frame( -->
+<!--   protocol_id = prot_data$ids, -->
+<!--   protocol_name = prot_data$names, -->
+<!--   stringsAsFactors = FALSE -->
+<!-- ) -->
+
+<!-- prot_tbl -->
+<!-- prot_id <- prot_tbl$protocol_id[prot_tbl$protocol_name == best_prot_name] -->
+<!-- prot_id -->
+
+<!-- # Archived protocol for this trial -->
+<!-- prot <- 304 -->
+
+<!-- vcf_list <- wheat$vcf_archived_list(genotyping_protocol_id = prot, verbose = FALSE) -->
+
+<!-- # For reproducibility: always define protocol name from vcf_list -->
+<!-- prot_name <- unique(vcf_list$protocol_name) -->
+<!-- stopifnot(length(prot_name) == 1) -->
+
+<!-- # Filter the correct project (exact match is OK since vcf_list has one row) -->
+<!-- row <- vcf_list |> -->
+<!--   dplyr::filter(project_name == "Cornell_WWWMasterScreening_2024_V2") -->
+
+<!-- stopifnot(nrow(row) == 1) -->
+
+<!-- project_id   <- row$project_id -->
+<!-- project_name <- row$project_name -->
+<!-- file_name    <- row$file_name -->
+
+<!-- # create output folder -->
+<!-- out_dir <- here("data", "genotypic", tri, "raw") -->
+<!-- dir.create(out_dir, recursive = TRUE, showWarnings = FALSE) -->
+
+<!-- out_file <- file.path(out_dir, paste0(tri, "_", row$project_name, ".vcf.gz")) -->
+
+<!-- # download -->
+<!-- wheat$vcf_archived( -->
+<!--   output = out_file, -->
+<!--   genotyping_protocol_id = prot, -->
+<!--   genotyping_project_id = project_id, -->
+<!--   file_name = file_name, -->
+<!--   verbose = FALSE -->
+<!-- ) -->
+
+<!-- stopifnot(file.exists(out_file)) -->
+
+<!-- # Write the manifest  -->
+<!-- manifest <- data.frame( -->
+<!--   trial = tri, -->
+<!--   protocol_id = prot, -->
+<!--   protocol_name = prot_name, -->
+<!--   project_id = project_id, -->
+<!--   project_name = project_name, -->
+<!--   file_name = file_name, -->
+<!--   out_file = out_file, -->
+<!--   stringsAsFactors = FALSE -->
+<!-- ) -->
+
+<!-- manifest_path <- here("data", "genotypic", tri, "manifest.csv") -->
+<!-- write.csv(manifest, manifest_path, row.names = FALSE) -->
+
+<!-- manifest -->
+<!-- ``` -->
+
+<!-- ### 24Crk_AY2-3 -->
+
+<!-- Download the 24Crk_AY2-3 -->
+
+<!-- ```{r} -->
+<!-- tri <- "24Crk_AY2-3" -->
+
+<!-- one <- geno_matches_df |> dplyr::filter(trial == tri) -->
+<!-- prot_cols <- setdiff(colnames(one), c("trial","accession","accessionName")) -->
+
+<!-- counts <- sapply(prot_cols, function(p){ -->
+<!--   x <- one[[p]] -->
+<!--   x[is.na(x)] <- FALSE -->
+<!--   sum(x) -->
+<!-- }) -->
+
+<!-- sort(counts, decreasing = TRUE) -->
+<!-- best_prot_name <- names(which.max(counts)) -->
+<!-- best_prot_name -->
+
+<!-- ## Protocal IDs -->
+<!-- prot_data <- wheat$wizard( -->
+<!--   "genotyping_protocols", -->
+<!--   list(accessions = geno_number[[tri]]), -->
+<!--   verbose = FALSE -->
+<!-- )$data -->
+
+<!-- prot_tbl <- data.frame( -->
+<!--   protocol_id = prot_data$ids, -->
+<!--   protocol_name = prot_data$names, -->
+<!--   stringsAsFactors = FALSE -->
+<!-- ) -->
+
+<!-- prot_tbl -->
+<!-- prot_id <- prot_tbl$protocol_id[prot_tbl$protocol_name == best_prot_name] -->
+<!-- prot_id -->
+
+<!-- # Archived protocol for this trial -->
+<!-- prot <- 294 -->
+
+<!-- vcf_list <- wheat$vcf_archived_list(genotyping_protocol_id = prot, verbose = FALSE) -->
+<!-- vcf_list   -->
+
+<!-- # For reproducibility: always define protocol name from vcf_list -->
+<!-- prot_name <- unique(vcf_list$protocol_name) -->
+<!-- stopifnot(length(prot_name) == 1) -->
+
+<!-- # Filter the correct project (exact match is OK since vcf_list has one row) -->
+<!-- row <- vcf_list |> -->
+<!--   dplyr::filter(project_name == "UMN_2022_GBS") -->
+
+<!-- stopifnot(nrow(row) == 1) -->
+
+<!-- project_id   <- row$project_id -->
+<!-- project_name <- row$project_name -->
+<!-- file_name    <- row$file_name -->
+
+<!-- # create output folder -->
+<!-- out_dir <- here("data", "genotypic", tri, "raw") -->
+<!-- dir.create(out_dir, recursive = TRUE, showWarnings = FALSE) -->
+
+<!-- out_file <- file.path(out_dir, paste0(tri, "_", row$project_name, ".vcf.gz")) -->
+
+<!-- # download -->
+<!-- wheat$vcf_archived( -->
+<!--   output = out_file, -->
+<!--   genotyping_protocol_id = prot, -->
+<!--   genotyping_project_id = project_id, -->
+<!--   file_name = file_name, -->
+<!--   verbose = FALSE -->
+<!-- ) -->
+
+<!-- stopifnot(file.exists(out_file)) -->
+
+<!-- # Write the manifest  -->
+<!-- manifest <- data.frame( -->
+<!--   trial = tri, -->
+<!--   protocol_id = prot, -->
+<!--   protocol_name = prot_name, -->
+<!--   project_id = project_id, -->
+<!--   project_name = project_name, -->
+<!--   file_name = file_name, -->
+<!--   out_file = out_file, -->
+<!--   stringsAsFactors = FALSE -->
+<!-- ) -->
+
+<!-- manifest_path <- here("data", "genotypic", tri, "manifest.csv") -->
+<!-- write.csv(manifest, manifest_path, row.names = FALSE) -->
+
+<!-- manifest -->
+<!-- ``` -->
+
+
+
+<!-- ### YT_Urb_25 -->
+
+<!-- Download the YT_Urb_25 -->
+
+<!-- ```{r} -->
+<!-- tri <- "YT_Urb_25" -->
+
+<!-- one <- geno_matches_df |> dplyr::filter(trial == tri) -->
+<!-- prot_cols <- setdiff(colnames(one), c("trial","accession","accessionName")) -->
+
+<!-- counts <- sapply(prot_cols, function(p){ -->
+<!--   x <- one[[p]] -->
+<!--   x[is.na(x)] <- FALSE -->
+<!--   sum(x) -->
+<!-- }) -->
+
+<!-- sort(counts, decreasing = TRUE) -->
+<!-- best_prot_name <- names(which.max(counts)) -->
+<!-- best_prot_name -->
+
+<!-- ## Protocal IDs -->
+<!-- prot_data <- wheat$wizard( -->
+<!--   "genotyping_protocols", -->
+<!--   list(accessions = geno_number[[tri]]), -->
+<!--   verbose = FALSE -->
+<!-- )$data -->
+
+<!-- prot_tbl <- data.frame( -->
+<!--   protocol_id = prot_data$ids, -->
+<!--   protocol_name = prot_data$names, -->
+<!--   stringsAsFactors = FALSE -->
+<!-- ) -->
+
+
+<!-- prot_tbl -->
+<!-- prot_id <- prot_tbl$protocol_id[prot_tbl$protocol_name == best_prot_name] -->
+<!-- prot_id -->
+
+<!-- prot <- prot_tbl$protocol_id[prot_tbl$protocol_name == best_prot_name] -->
+<!-- stopifnot(length(prot) == 1) -->
+
+<!-- # Archived protocol for this trial -->
+<!-- vcf_list <- wheat$vcf_archived_list(genotyping_protocol_id = prot, verbose = FALSE) -->
+<!-- vcf_list   -->
+
+<!-- # For reproducibility: always define protocol name from vcf_list -->
+<!-- prot_name <- unique(vcf_list$protocol_name) -->
+<!-- stopifnot(length(prot_name) == 1) -->
+
+<!-- # Filter the correct project (exact match is OK since vcf_list has one row) -->
+<!-- row <- vcf_list |> -->
+<!--   dplyr::filter(project_name == "UIUC_2024_GBS_V2") -->
+<!-- stopifnot(nrow(row) == 1) -->
+
+<!-- project_id   <- row$project_id -->
+<!-- project_name <- row$project_name -->
+<!-- file_name    <- row$file_name -->
+
+<!-- # create output folder -->
+<!-- out_dir <- here("data", "genotypic", tri, "raw") -->
+<!-- dir.create(out_dir, recursive = TRUE, showWarnings = FALSE) -->
+
+<!-- out_file <- file.path(out_dir, paste0(tri, "_", row$project_name, ".vcf.gz")) -->
+
+<!-- # download -->
+<!-- wheat$vcf_archived( -->
+<!--   output = out_file, -->
+<!--   genotyping_protocol_id = prot, -->
+<!--   genotyping_project_id = project_id, -->
+<!--   file_name = file_name, -->
+<!--   verbose = FALSE -->
+<!-- ) -->
+
+<!-- stopifnot(file.exists(out_file)) -->
+
+<!-- # Write the manifest  -->
+<!-- manifest <- data.frame( -->
+<!--   trial = tri, -->
+<!--   protocol_id = prot, -->
+<!--   protocol_name = prot_name, -->
+<!--   project_id = project_id, -->
+<!--   project_name = project_name, -->
+<!--   file_name = file_name, -->
+<!--   out_file = out_file, -->
+<!--   stringsAsFactors = FALSE -->
+<!-- ) -->
+
+<!-- manifest_path <- here("data", "genotypic", tri, "manifest.csv") -->
+<!-- write.csv(manifest, manifest_path, row.names = FALSE) -->
+
+<!-- manifest -->
+<!-- ``` -->
+
+
+
+<!-- ### STP1_2025_MCG -->
+
+<!-- Download the STP1_2025_MCG -->
+
+<!-- ```{r} -->
+<!-- tri <- "STP1_2025_MCG" -->
+
+<!-- one <- geno_matches_df |> dplyr::filter(trial == tri) -->
+<!-- prot_cols <- setdiff(colnames(one), c("trial","accession","accessionName")) -->
+
+<!-- counts <- sapply(prot_cols, function(p){ -->
+<!--   x <- one[[p]] -->
+<!--   x[is.na(x)] <- FALSE -->
+<!--   sum(x) -->
+<!-- }) -->
+
+<!-- sort(counts, decreasing = TRUE) -->
+<!-- best_prot_name <- names(which.max(counts)) -->
+<!-- best_prot_name -->
+
+<!-- ## Protocal IDs -->
+<!-- prot_data <- wheat$wizard( -->
+<!--   "genotyping_protocols", -->
+<!--   list(accessions = geno_number[[tri]]), -->
+<!--   verbose = FALSE -->
+<!-- )$data -->
+
+<!-- prot_tbl <- data.frame( -->
+<!--   protocol_id = prot_data$ids, -->
+<!--   protocol_name = prot_data$names, -->
+<!--   stringsAsFactors = FALSE -->
+<!-- ) -->
+<!-- prot_tbl -->
+
+<!-- prot <- prot_tbl$protocol_id[prot_tbl$protocol_name == best_prot_name] -->
+<!-- stopifnot(length(prot) == 1) -->
+
+
+<!-- # Archived protocol for this trial -->
+<!-- vcf_list <- wheat$vcf_archived_list(genotyping_protocol_id = prot, verbose = FALSE) -->
+<!-- vcf_list   -->
+
+<!-- # For reproducibility: always define protocol name from vcf_list -->
+<!-- prot_name <- unique(vcf_list$protocol_name) -->
+<!-- stopifnot(length(prot_name) == 1) -->
+
+<!-- # Filter the correct project (exact match is OK since vcf_list has one row) -->
+<!-- row <- vcf_list |> -->
+<!--   dplyr::filter(project_name == "TAMU_2025_MCG25") -->
+<!-- stopifnot(nrow(row) == 1) -->
+
+<!-- project_id   <- row$project_id -->
+<!-- project_name <- row$project_name -->
+<!-- file_name    <- row$file_name -->
+
+<!-- # create output folder -->
+<!-- out_dir <- here("data", "genotypic", tri, "raw") -->
+<!-- dir.create(out_dir, recursive = TRUE, showWarnings = FALSE) -->
+
+<!-- out_file <- file.path(out_dir, paste0(tri, "_", row$project_name, ".vcf.gz")) -->
+
+<!-- # download -->
+<!-- wheat$vcf_archived( -->
+<!--   output = out_file, -->
+<!--   genotyping_protocol_id = prot, -->
+<!--   genotyping_project_id = project_id, -->
+<!--   file_name = file_name, -->
+<!--   verbose = FALSE -->
+<!-- ) -->
+
+<!-- stopifnot(file.exists(out_file)) -->
+
+<!-- # Write the manifest  -->
+<!-- manifest <- data.frame( -->
+<!--   trial = tri, -->
+<!--   protocol_id = prot, -->
+<!--   protocol_name = prot_name, -->
+<!--   project_id = project_id, -->
+<!--   project_name = project_name, -->
+<!--   file_name = file_name, -->
+<!--   out_file = out_file, -->
+<!--   stringsAsFactors = FALSE -->
+<!-- ) -->
+
+<!-- manifest_path <- here("data", "genotypic", tri, "manifest.csv") -->
+<!-- write.csv(manifest, manifest_path, row.names = FALSE) -->
+
+<!-- manifest -->
+
+<!-- ``` -->
+
+<!-- ### 2025_AYT_Aurora -->
+
+<!-- ```{r} -->
+<!-- tri <- "2025_AYT_Aurora" -->
+
+<!-- one <- geno_matches_df |> dplyr::filter(trial == tri) -->
+<!-- prot_cols <- setdiff(colnames(one), c("trial","accession","accessionName")) -->
+
+<!-- counts <- sapply(prot_cols, function(p){ -->
+<!--   x <- one[[p]] -->
+<!--   x[is.na(x)] <- FALSE -->
+<!--   sum(x) -->
+<!-- }) -->
+
+<!-- sort(counts, decreasing = TRUE) -->
+<!-- best_prot_name <- names(which.max(counts)) -->
+<!-- best_prot_name -->
+
+<!-- ## Protocal IDs -->
+<!-- prot_data <- wheat$wizard( -->
+<!--   "genotyping_protocols", -->
+<!--   list(accessions = geno_number[[tri]]), -->
+<!--   verbose = FALSE -->
+<!-- )$data -->
+
+<!-- prot_tbl <- data.frame( -->
+<!--   protocol_id = prot_data$ids, -->
+<!--   protocol_name = prot_data$names, -->
+<!--   stringsAsFactors = FALSE -->
+<!-- ) -->
+<!-- prot_tbl -->
+
+<!-- prot <- prot_tbl$protocol_id[prot_tbl$protocol_name == best_prot_name] -->
+<!-- stopifnot(length(prot) == 1) -->
+
+
+<!-- # Archived protocol for this trial -->
+<!-- vcf_list <- wheat$vcf_archived_list(genotyping_protocol_id = prot, verbose = FALSE) -->
+<!-- vcf_list   -->
+
+<!-- # For reproducibility: always define protocol name from vcf_list -->
+<!-- prot_name <- unique(vcf_list$protocol_name) -->
+<!-- stopifnot(length(prot_name) == 1) -->
+
+<!-- # Filter the correct project (exact match is OK since vcf_list has one row) -->
+<!-- row <- vcf_list |> -->
+<!--   dplyr::filter(project_name == "SDSU_2025_GBS") -->
+<!-- stopifnot(nrow(row) == 1) -->
+
+<!-- project_id   <- row$project_id -->
+<!-- project_name <- row$project_name -->
+<!-- file_name    <- row$file_name -->
+
+<!-- # create output folder -->
+<!-- out_dir <- here("data", "genotypic", tri, "raw") -->
+<!-- dir.create(out_dir, recursive = TRUE, showWarnings = FALSE) -->
+
+<!-- out_file <- file.path(out_dir, paste0(tri, "_", row$project_name, ".vcf.gz")) -->
+
+<!-- # download -->
+<!-- wheat$vcf_archived( -->
+<!--   output = out_file, -->
+<!--   genotyping_protocol_id = prot, -->
+<!--   genotyping_project_id = project_id, -->
+<!--   file_name = file_name, -->
+<!--   verbose = FALSE -->
+<!-- ) -->
+
+<!-- stopifnot(file.exists(out_file)) -->
+
+<!-- # Write the manifest  -->
+<!-- manifest <- data.frame( -->
+<!--   trial = tri, -->
+<!--   protocol_id = prot, -->
+<!--   protocol_name = prot_name, -->
+<!--   project_id = project_id, -->
+<!--   project_name = project_name, -->
+<!--   file_name = file_name, -->
+<!--   out_file = out_file, -->
+<!--   stringsAsFactors = FALSE -->
+<!-- ) -->
+
+<!-- manifest_path <- here("data", "genotypic", tri, "manifest.csv") -->
+<!-- write.csv(manifest, manifest_path, row.names = FALSE) -->
+
+<!-- manifest -->
+
+<!-- ``` -->
+
+
+<!-- ### AWY1_DVPWA_2024 -->
+
+<!-- ```{r} -->
+<!-- tri <- "AWY1_DVPWA_2024" -->
+
+<!-- one <- geno_matches_df |> dplyr::filter(trial == tri) -->
+<!-- prot_cols <- setdiff(colnames(one), c("trial","accession","accessionName")) -->
+
+<!-- counts <- sapply(prot_cols, function(p){ -->
+<!--   x <- one[[p]] -->
+<!--   x[is.na(x)] <- FALSE -->
+<!--   sum(x) -->
+<!-- }) -->
+
+<!-- sort(counts, decreasing = TRUE) -->
+<!-- best_prot_name <- names(which.max(counts)) -->
+<!-- best_prot_name -->
+
+<!-- ## Protocal IDs -->
+<!-- prot_data <- wheat$wizard( -->
+<!--   "genotyping_protocols", -->
+<!--   list(accessions = geno_number[[tri]]), -->
+<!--   verbose = FALSE -->
+<!-- )$data -->
+
+<!-- prot_tbl <- data.frame( -->
+<!--   protocol_id = prot_data$ids, -->
+<!--   protocol_name = prot_data$names, -->
+<!--   stringsAsFactors = FALSE -->
+<!-- ) -->
+<!-- prot_tbl -->
+
+<!-- prot <- prot_tbl$protocol_id[prot_tbl$protocol_name == best_prot_name] -->
+<!-- stopifnot(length(prot) == 1) -->
+
+
+<!-- # Archived protocol for this trial -->
+<!-- vcf_list <- wheat$vcf_archived_list(genotyping_protocol_id = prot, verbose = FALSE) -->
+<!-- vcf_list   -->
+
+<!-- # For reproducibility: always define protocol name from vcf_list -->
+<!-- prot_name <- unique(vcf_list$protocol_name) -->
+<!-- stopifnot(length(prot_name) == 1) -->
+<!-- my_accessions <- geno_number[[tri]] -->
+<!-- resp <- db$filter_geno_projects(my_accessions) -->
+<!-- row <- vcf_list |> -->
+<!--   dplyr::filter(project_id == 14509) |> #10657) |>  -->
+<!--   head(1) -->
+<!-- stopifnot(nrow(row) == 1) -->
+
+<!-- project_id   <- row$project_id -->
+<!-- project_name <- row$project_name -->
+<!-- file_name    <- row$file_name -->
+
+<!-- # create output folder -->
+<!-- out_dir <- here("data", "genotypic", tri, "raw") -->
+<!-- dir.create(out_dir, recursive = TRUE, showWarnings = FALSE) -->
+
+<!-- out_file <- file.path(out_dir, paste0(tri, "_", row$project_name, ".vcf.gz")) -->
+
+<!-- # download -->
+<!-- wheat$vcf_archived( -->
+<!--   output = out_file, -->
+<!--   genotyping_protocol_id = prot, -->
+<!--   genotyping_project_id = project_id, -->
+<!--   file_name = file_name, -->
+<!--   verbose = FALSE -->
+<!-- ) -->
+
+<!-- stopifnot(file.exists(out_file)) -->
+
+<!-- # Write the manifest  -->
+<!-- manifest <- data.frame( -->
+<!--   trial = tri, -->
+<!--   protocol_id = prot, -->
+<!--   protocol_name = prot_name, -->
+<!--   project_id = project_id, -->
+<!--   project_name = project_name, -->
+<!--   file_name = file_name, -->
+<!--   out_file = out_file, -->
+<!--   stringsAsFactors = FALSE -->
+<!-- ) -->
+
+<!-- manifest_path <- here("data", "genotypic", tri, "manifest.csv") -->
+<!-- write.csv(manifest, manifest_path, row.names = FALSE) -->
+
+<!-- manifest -->
+<!-- ``` -->
+
+
+# Convert vcf files to genomic matrix
+
+Take the vcf file downloaded from the Predictathon webpage.
+Define the path to the vcf file and use the custom function `format_curate_vcf` to generate an imputed numeric matrix.
+
+```{r}
+for(tri in trials_predictathon){
+  write(paste0("Processing trial: ", tri), stdout())
+  #file <- list.files(here("data","genotypic",tri,"raw"))[1]
+  file <- list.files(here("data","genotypic",tri,"T3"))
+  p2d <- here("data","genotypic",tri,"clean")
+  if(!dir.exists(p2d)) dir.create(p2d, recursive = TRUE)
+  
+  vcf.p2f <- paste0(here("data","genotypic",tri,"T3"),"/",file)
+  
+  p2f.export.vcf <- paste0(p2d,"/",tri,"_Predictathon_genotypes_curated.vcf.gz")
+  ## use custom function from useful_functions.R
+  geno <- format_curate_vcf(vcf.p2f=vcf.p2f,
+                            p2f.export.vcf=p2f.export.vcf,
+                            remove.chrUkn=TRUE,
+                            check.mrk.dups=TRUE,
+                            remove.nonPolyMrk=FALSE,
+                            tresh.heterozygous=NULL,
+                            check.geno.dups=TRUE,
+                            thresh.NA.ind=0.5,
+                            thresh.NA.mrk=0.5,
+                            format.names=FALSE,
+                            imputation="Beagle",
+                            p2f.beagle=here("code","beagle.27Feb25.75f.jar"),
+                            thresh.MAF=0.01,
+                            verbose=1)
+  
+  ## export numeric imputed geno file
+  p2f <- paste0(p2d,"/",tri,"_Predictathon_genotypes_curated_numeric.rds")
+  saveRDS(geno, file=p2f)
+  # 
+  # vcf <- vcfR::read.vcfR(file=vcf.p2f, verbose=FALSE)
+  # gt <- vcfR::extract.gt(vcf, element = "GT",
+  #                        as.numeric=F, IDtoRowNames = T)
+  # mrk_info <- tibble::as_tibble(vcfR::getFIX(vcf)) 
+  # mrk_info <- mrk_info |> 
+  #   mutate(POS=as.numeric(POS)) |> arrange(CHROM, POS) 
+  # # save R data
+  # rownames(gt) <- mrk.info$ID
+  # 
+  # 
+  # ## transform to 0/1/2 matrix
+  # 
+  # 
+  # ## export
+  # 
+  # out_rdata <- here("data", "genotypic", tri, "raw", paste0(tri,"_genotypes.RData"))
+  # save(gt, mrk_info, file=out_rdata)
+  # message("Saved RData to: ", out_rdata)
+  
+}
+```
+
+
+
+<!-- For the first trial (AWY1_DVPWA_2024), there is only one genotyping protocol (291 = ThermoFisher AgriSeq 5K), let's download a VCF for this one. -->
+
+<!-- ## Download vcf for one trial -->
+
+<!-- ```{r} -->
+<!-- tri <- "AWY1_DVPWA_2024" -->
+<!-- (prot <- geno_protocols[[tri]][1]) -->
+<!-- (geno_ids <- geno_number[[tri]]) -->
+<!-- geno_names <- wheat$wizard("accessions", list(trials = tri), verbose=F)$data$names -->
+<!-- proj <-  wheat$wizard("genotyping_projects", list(accessions = geno_ids), verbose=F)$data$ids -->
+
+<!-- ## check available files for this protocol -->
+<!-- wheat$vcf_archived_list(genotyping_protocol_id=prot, verbose=T) -->
+
+<!-- ## define path to file to export -->
+<!-- p2f <- here("data","genotypic",paste0(tri,"_genotypes_",prot,"protocol.vcf")) -->
+<!-- ## export vcf -->
+<!-- wheat$vcf_archived( -->
+<!--   output=p2f, -->
+<!--   genotyping_protocol_id = prot, -->
+<!--   genotyping_project_id = proj, -->
+<!--   file_name = "2025-12-10_17:56:29_filevCTU", -->
+<!--   verbose = FALSE -->
+<!-- ) -->
+<!-- ``` -->
+
+<!-- There are two files for the same genotyping project and protocol => check if we need to combine them or if they are the same. -->
+
+<!-- ## Load downloaded vcf -->
+
+<!-- ```{r} -->
+<!-- vcf <- list() -->
+<!-- vcf.read <- vcfR::read.vcfR(file=p2f, verbose=FALSE)   -->
+<!-- vcf$gt <- vcfR::extract.gt(vcf.read, element = "GT", -->
+<!--                            as.numeric=F, IDtoRowNames = T) -->
+<!-- vcf$mrk.info <- tibble::as_tibble(vcfR::getFIX(vcf.read)) -->
+<!-- vcf$mrk.info <- vcf$mrk.info |> -->
+<!--   mutate(POS=as.numeric(POS)) |> arrange(CHROM, POS) -->
+<!-- ap(vcf) -->
+<!-- dim(vcf$gt) -->
+<!-- gt <- vcf$gt -->
+<!-- setdiff(geno_names, colnames(gt)) # 4 accessions missing -->
+
+<!-- # other lines genotyped with this protocol not tested in this trial -->
+<!-- length(setdiff(colnames(gt), geno_names))  -->
+<!-- ``` -->
+
+<!-- # Select genotyping protocol for each trial -->
+
+<!-- Question: what to do with lines without any genotyping information? -->
+
+<!-- ## Number of lines genotyped per trial and protocol -->
+
+<!-- ```{r} -->
+<!-- geno_matches_df[,protocols] <- apply(geno_matches_df[,protocols], 2, \(x){ -->
+<!--   x[is.na(x)] <- FALSE -->
+<!--   return(x) -->
+<!-- }) -->
+
+<!-- df <- tidyr::pivot_longer(geno_matches_df, cols=all_of(protocols)) |>  -->
+<!--   group_by(trial,name) |>  -->
+<!--   summarise(nb_lines_geno=sum(value)) |>  -->
+<!--   filter(nb_lines_geno >0) |>  -->
+<!--   arrange(desc(nb_lines_geno)) -->
+
+<!-- print_table(df) -->
+<!-- ``` -->
+
+<!-- ## Add info -->
+
+<!-- Add ratio of lines genotyped in each trial and protocol id -->
+
+<!-- ```{r} -->
+<!-- df <- df |>  -->
+<!--   rowwise() |>  -->
+<!--   mutate(nb_lines_trial = length(geno_number[[trial]]), -->
+<!--          ratio_geno = round(100*nb_lines_geno/nb_lines_trial,1)) |>  -->
+<!--   left_join(df_protocols, by=c("name"="protocol_name"))  -->
+<!-- print_table(df) -->
+
+<!-- ``` -->
+
+
+<!-- # Seek associated trial metadata -->
+
+<!-- For a given genotyping protocol, which lines have been genotyped? -->
+<!-- ```{r} -->
+<!-- ## start with one genotyping protocol -->
+<!-- prot_id <- 299 ## wheat 3K for OHRWW_2025_SPO -->
+<!-- trials <- wheat$wizard("trials", list(genotyping_protocols = prot_id))$data$names -->
+<!-- length(trials) -->
+<!-- ## restrict to the most recent years and to the target breeding program -->
+<!-- trials <- wheat$wizard("trials", list(genotyping_protocols = prot_id,years=c(2022:2025),  -->
+<!--                                       breeding_programs=c("University of Wisconsin")))$data$names -->
+<!-- ``` -->
+
+
+<!-- # Download vcf for all the selected trials -->
+
+<!-- ```{r} -->
+<!-- ## TODO -->
+<!-- ``` -->
+
+
+
+
+<!-- ```{r} -->
+<!-- resp <- wheat$get("/programs", page="all") -->
+<!-- programs <- sort(sapply(resp$combined_data, \(x) { x$programName })) -->
+
+<!-- selected_breeding_program <- "University of Nebraska" -->
+<!-- resp <- wheat$get("/studies", query=list(programName=selected_breeding_program), page="all") -->
+<!-- trials <- lapply(resp$combined_data, \(x) { list(id=x$studyDbId, name=x$studyName) }) -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- selected_trials <- c("","") -->
+<!-- for ( trial_name in selected_trials ) { -->
+<!--   resp <- wheat$get("/studies", query=list(studyName=trial_name)) -->
+<!--   trial_metadata <- resp$data[[1]] -->
+<!--   trial_id <- trial_metadata$studyDbId -->
+<!--   location <- trial_metadata$locationName -->
+<!--   planting_date <- trial_metadata$startDate -->
+<!--   harvest_date <- trial_metadata$endDate -->
+<!--   design <- trial_metadata$experimentalDesign$PUI -->
+<!-- } -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- geno <- wheat$wizard("genotyping_protocols", list(accessions = "LINKERT")) -->
+
+<!-- #geno <- wheat$wizard("genotyping_protocols", list(accessions = accessions$data$ids)) -->
+<!-- ``` -->
+

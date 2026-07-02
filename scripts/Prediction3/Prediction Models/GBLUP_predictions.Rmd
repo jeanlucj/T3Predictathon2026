@@ -1,0 +1,433 @@
+---
+title: "GBLUP"
+author: "Prediction3 Team"
+date: "2026-03-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This script uses the trial G ([trial_Gmat.rds](Analysis/trial_Gmat.rds)) and W ([Trial_W_mat.csv](Analysis/Trial_W_mat.csv)) matrices to select optimal training data for each test set trial. Functions are developed to run GBLUP and multikernel BLUP models for each test set. The multikernel BLUP model fits random effects for genotype and environment using the combined GRM (output from [genomic_analysis.Rmd](Analysis/genomic_analysis.Rmd)) and trial-wise W matrix as covariance structures. Leave-One-Trial-Out Cross Validation is performed to evaluate prediction accuracies among one-trial subsets of the training data. Functions are developed to generate CV0 and CV00 predictions for the different models. Ultimately,the multikernel BLUP model was used for T3 Predictathon competition submissions.
+
+## Load Packages
+
+```{r load packages, message=FALSE}
+library(devtools) #install.packages("devtools")
+devtools::install_github("TriticeaeToolbox/BrAPI.R")
+library(BrAPI)
+library(tidyverse) #install.packages("tidyverse")
+library(janitor) #install.packages("janitor")
+library(readr) #install.packages("readr")
+library(here) #install.packages("here")
+library(vcfR) #install.packages("vcfR")
+library(stringr) #install.packages("stringr")
+devtools::install_github("cran/CovCombR")
+library(CovCombR)
+library(rrBLUP) #install.packages("rrBLUP")
+library(sommer) #install.packages("sommer")
+library(AGHmatrix) #install.packages("AGHmatrix")
+#library(asreml)
+```
+
+## Set BrAPI Connection
+
+```{r set BrAPI connection, message=FALSE}
+conn <- createBrAPIConnection("wheat.triticeaetoolbox.org", is_breedbase = TRUE)
+```
+
+## Load Data
+```{r load data, message=FALSE}
+test_trials <- readr::read_csv(here::here("data","test_trial_metadata.csv"))
+test_set <- test_trials$study_name
+training_trials <- readr::read_csv(here::here("data","genotyped_phenotyped_trials.csv"))
+phenotypes <- readr::read_csv(here::here("data","genotyped_trial_phenotypes.csv"))
+
+trial_W <- readr::read_csv(here::here("analysis","trial_W_mat.csv"))
+rownames(trial_W) <- colnames(trial_W)
+trial_G <- as.data.frame(readr::read_rds(here::here("analysis","trial_Gmat.rds")))
+
+comb_grm <- read_rds(here::here("analysis", "comb_grm_mat.rds"))
+```
+
+## Select Training Set Trials for each Test Set
+
+```{r Construct Training Datasets function}
+select_training_data <- function(test_trials, test_trial_metadata_df, training_trial_metadata_df, trial_W, trial_G, phenotypes, comb_grm, test_trial_metadata, top_n = 15){
+  ## ARGS
+  
+  ## Returns
+  result <- vector("list", length(test_trials))
+  names(result) <- test_trials
+  
+  for (test_trial in test_trials){
+    
+    test_accessions <- conn$wizard("accessions",filters = list(trials = test_trial))$data$names
+    result[[test_trial]]$test_accessions <- test_accessions
+    
+    result[[test_trial]]$test_trial_metadata <- test_trial_metadata_df |> filter(study_name == test_trial)
+    
+    trial_W <- as.matrix(trial_W)
+    env_similarities <- trial_W[,test_trial]
+    env_similarities <- env_similarities[names(env_similarities) != test_trial]
+    top_envs <- names(sort(env_similarities, decreasing = TRUE))[1:top_n]
+    
+    trial_G <- as.matrix(trial_G)
+    gen_similarities <- trial_G[,test_trial]
+    gen_similarities <- gen_similarities[names(gen_similarities) != test_trial]
+    top_gens <- names(sort(gen_similarities, decreasing = TRUE))[1:top_n]
+    training_set_trials <-  unique(c(top_envs, top_gens))
+    
+    result[[test_trial]]$training_set_trials <- training_set_trials
+    
+    result[[test_trial]]$training_set_metadata <- training_trial_metadata_df |> filter(study_name %in% training_set_trials)
+    
+    training_data <- phenotypes |> dplyr::filter(study_name %in% training_set_trials)
+    result[[test_trial]]$training_data <- training_data
+    
+    training_accessions <- unique(training_data$germplasm_name)
+    result[[test_trial]]$training_accessions <- training_accessions
+    
+    genotyped_accessions <- intersect(unique(c(test_accessions,training_accessions)), rownames(comb_grm))
+    
+    subset_grm <- comb_grm[genotyped_accessions,genotyped_accessions]
+    result[[test_trial]]$subset_grm <- subset_grm
+    
+    subset_W <- trial_W[c(test_trial,training_set_trials), c(test_trial,training_set_trials)]
+    result[[test_trial]]$subset_W <- subset_W
+    
+    subset_pheno <- training_data |> 
+      dplyr::filter(germplasm_name %in% genotyped_accessions) |> 
+      dplyr::select(study_db_id,study_name,germplasm_name,grain_yield_kg_ha_co_321_0001218)
+    result[[test_trial]]$subset_pheno <- subset_pheno
+    
+    test_pheno <- data.frame(
+      germplasm_name = test_accessions, 
+      study_name = test_trial, 
+      study_db_id = dplyr::filter(test_trial_metadata,study_name == test_trial)$study_db_id, 
+      grain_yield_kg_ha_co_321_0001218 = NA
+    ) |> 
+      dplyr::filter(germplasm_name %in% genotyped_accessions)
+    result[[test_trial]]$test_pheno <- test_pheno
+    
+    result[[test_trial]]$combined_pheno <- rbind(subset_pheno,test_pheno)
+  }
+  
+  return(result)
+}
+```
+
+```{r pull training data}
+training_data <- select_training_data(test_trials = test_set, test_trial_metadata_df=test_trials, training_trial_metadata_df = training_trials, trial_W = trial_W, trial_G = trial_G, phenotypes = phenotypes, comb_grm = comb_grm, test_trial_metadata = test_trials)
+```
+
+```{r fit GBLUP models}
+## Without trial fixed effect
+gblup_base <- function(training_data){
+  # -----------------------------------
+  # DESCRIPTION:
+  # Performs genomic prediction (y = mu + ug + e) for a given test set of trials using a provided training data from selected trials
+  #
+  # ARGS:
+  # training_data: list
+  #   A list of training data set where each element contains    
+  #
+  # DEPENDENDCIES:
+  #
+  #
+  # RETURNS: 
+  #
+  #
+  # -----------------------------------
+  result <- vector("list", length(training_data))
+  names(result) <- names(training_data)
+  
+  pb <- txtProgressBar(min = 0, max = length(training_data), style = 3)
+  
+  for (i in seq_along(training_data)){
+    test_trial <- names(training_data)[i]
+    current_data <- training_data[[test_trial]]
+    result[[test_trial]] <- rrBLUP::kin.blup(
+      data = as.data.frame(current_data$combined_pheno),
+      geno = "germplasm_name",
+      pheno = "grain_yield_kg_ha_co_321_0001218",
+      K = as.matrix(current_data$subset_grm)
+    )
+    setTxtProgressBar(pb, i)
+  }
+  close(pb)
+  return(result)
+}
+
+```
+
+```{r run base GBLUP}
+base_GBLUP <- gblup_base(training_data)
+```
+
+```{r GBLUP LOO_CV}
+GBLUP_LOO_CV <- function(training_data)
+```
+
+
+Model: $$ y \sim \mu + Z_Gu_G + Z_Eu_E + e$$ 
+
+
+```{r multikernel GBLUP function}
+multi_GBLUP <- function(training_data){
+  
+  predictions <- vector("list", length(training_data))
+  names(predictions) <- names(training_data)
+  
+  for (test_trial in seq_along(training_data)){
+    # Pull data for current test trial from training data list
+    current_data <- training_data[[test_trial]]
+    y <- current_data$combined_pheno
+    test_env <- current_data$test_trial_metadata$study_name
+    
+    # Get genotypes and environment information for all trials and set as factors
+    gens <- unique(y$germplasm_name)
+    envs <- unique(y$study_name)
+    y$germplasm_name <- factor(y$germplasm_name, levels = gens)
+    y$study_name <- factor(y$study_name, levels = envs)
+    
+    # Format the genomic relationship matrix and environmental similarity matrix
+    G <- as.matrix(current_data$subset_grm)[gens,gens]
+    rownames(G) <- colnames(G) <- gens
+    
+    E <- as.matrix(current_data$subset_W)[envs,envs]
+    rownames(E) <- colnames(E) <- envs
+    
+    # Remove test trial from training
+    train_data <- y %>% filter(study_name != test_env)
+
+    train_data$germplasm_name <- factor(train_data$germplasm_name, levels = rownames(G))
+    train_data$study_name <- factor(train_data$study_name, levels = rownames(E))
+
+    # Fit model
+    multikernel_mod_fit <- mmer(
+      grain_yield_kg_ha_co_321_0001218 ~ 1,
+      random = ~ vs(germplasm_name, Gu = G) +
+                vs(study_name, Gu = E),
+      data = train_data
+    )
+  
+  # Calculate model BLUPs
+    mu <- multikernel_mod_fit$Beta$Estimate
+    g_blup <- multikernel_mod_fit$U$`u:germplasm_name`$grain_yield_kg_ha_co_321_0001218
+    e_blup <- multikernel_mod_fit$U$`u:study_name`$grain_yield_kg_ha_co_321_0001218
+  
+  # Predict test trial
+    test_data <- y %>% filter(study_name == test_env)
+    test_pred <- test_data %>%
+      dplyr::mutate(
+        g = g_blup[as.character(germplasm_name)],
+        e = e_blup[as.character(study_name)],
+        g = ifelse(is.na(g), 0, g),
+        e = ifelse(is.na(e), 0, e),
+        pred = mu + g + e
+      )
+    
+  # Record Predictions
+    predictions[[test_trial]] <- list(test_env = test_env, model = multikernel_mod_fit, predictions = test_pred)
+  }
+  return(predictions)
+}
+```
+
+```{r run multikernel CV0 model}
+multikernel_testset_predictions <- multi_GBLUP(training_data)
+```
+
+
+```{r Multi-Kernel Leave-One-Out Cross Validation function}
+MK_LOO_CV <- function(training_data){
+  
+  CV_output <- vector("list", length(training_data))
+  names(CV_output) <- names(training_data)
+  
+  for (test_trial in seq_along(training_data)){
+    
+    #Input data
+    current_data <- training_data[[test_trial]]
+    y <- current_data$combined_pheno |> 
+      dplyr::filter(study_name != current_data$test_trial_metadata$study_name)
+    
+    # Assign fold IDs for each study
+    study_assignments <- data.frame(study_name = unique(y$study_name), fold = seq(1:length( unique(y$study_name))))
+    y <- y |> left_join(study_assignments, by = "study_name")
+    
+    # Get genotypes and environment information for all trials and set as factors
+    gens <- unique(y$germplasm_name)
+    envs <- unique(y$study_name)
+    y$germplasm_name <- factor(y$germplasm_name, levels = gens)
+    y$study_name <- factor(y$study_name, levels = envs)
+    
+    # Format the genomic relationship matrix and environmental similarity matrix
+    G <- as.matrix(current_data$subset_grm)[gens,gens]
+    rownames(G) <- colnames(G) <- gens
+    
+    E <- as.matrix(current_data$subset_W)[envs,envs]
+    rownames(E) <- colnames(E) <- envs
+    
+    # Run CV
+    cv_results <- list()
+
+    for (fold_id in unique(y$fold)) {
+  
+      # Split data
+      train_data <- dplyr::filter(y, fold != fold_id)
+      test_data  <- dplyr::filter(y, fold == fold_id)
+  
+      # Subset G and E for training data
+      train_gens <- unique(train_data$germplasm_name)
+      train_envs <- unique(train_data$study_name)
+  
+      # Ensure factor levels match matrices
+      train_data$germplasm_name <- factor(train_data$germplasm_name, levels = rownames(G))
+      train_data$study_name <- factor(train_data$study_name, levels = rownames(E))
+  
+      # Fit model on training data
+      cv_fit <- mmer(
+        grain_yield_kg_ha_co_321_0001218 ~ 1,
+        random = ~ vs(germplasm_name, Gu = G) +
+               vs(study_name, Gu = E),
+        data = train_data
+      )
+  
+      # Extract BLUPs
+      mu <- cv_fit$Beta$Estimate
+      cv_g_blup <- cv_fit$U$`u:germplasm_name`$grain_yield_kg_ha_co_321_0001218
+      cv_e_blup <- cv_fit$U$`u:study_name`$grain_yield_kg_ha_co_321_0001218
+  
+      # Predict test set
+      test_pred <- test_data %>%
+        dplyr::mutate(
+          g = cv_g_blup[as.character(germplasm_name)],
+          e = cv_e_blup[as.character(study_name)],
+          pred = mu + g + e
+        )
+  
+      cv_results[[fold_id]] <- test_pred %>% 
+        dplyr::select(study_name, germplasm_name, grain_yield_kg_ha_co_321_0001218, pred)
+    }
+    # Combine predictions
+    cv_df <- bind_rows(cv_results)
+
+    # Accuracy metrics
+    correlation <- if (sum(!is.na(cv_df$grain_yield_kg_ha_co_321_0001218) & !is.na(cv_df$pred)) > 0){
+      cor(cv_df$grain_yield_kg_ha_co_321_0001218, cv_df$pred, use = "complete.obs")
+    } else{
+      NA_real_
+    }
+    rmse <- sqrt(mean((cv_df$grain_yield_kg_ha_co_321_0001218 - cv_df$pred)^2, na.rm = TRUE))
+    
+    within_env <- cv_df %>%
+    dplyr::group_by(study_name) %>%
+    dplyr::summarise(
+      n_obs = sum(!is.na(`grain_yield_kg_ha_co_321_0001218`)),
+      correlation = if (sum(!is.na(`grain_yield_kg_ha_co_321_0001218`) & !is.na(pred)) > 0){
+        cor(`grain_yield_kg_ha_co_321_0001218`, pred, use = "complete.obs")
+        } else {
+          NA_real_
+        },
+      rmse = sqrt(mean((`grain_yield_kg_ha_co_321_0001218` - pred)^2, na.rm = TRUE))
+    ) %>% arrange(desc(correlation))
+
+    CV_output[[test_trial]] <- list(test_env = current_data$test_trial_metadata$study_name, CV_predictions = cv_df, correlation = correlation, rmse = rmse, within_env_acc = within_env)
+  }
+  
+  return(CV_output)
+  
+} 
+```
+
+```{r run multikernel CV}
+multikernel_CV <- MK_LOO_CV(training_data)
+```
+
+```{r prediction submissions}
+for (test_trial in test_set){
+  predictions <- multikernel_testset_predictions[[test_trial]]$predictions |>dplyr::select(germplasm_name,pred)
+  colnames(predictions) <- c("germplasmName","prediction")
+  write_csv(predictions, here::here("predictions",test_trial, "CV0_Predictions.csv"))
+  
+  trials <- data.frame(studyName=training_data[[test_trial]]$training_set_trials)
+  write_csv(trials, here::here("predictions",test_trial, "CV0_Trials.csv"))
+  
+  accessions <- data.frame(germplasmName = training_data[[test_trial]]$training_accessions)
+  write_csv(accessions, here::here("predictions",test_trial, "CV0_Accessions.csv"))
+}
+```
+
+
+## CV 00
+
+```{r Remove test accessions from training data}
+CV00_training_data <- vector("list", length(training_data))
+names(CV00_training_data) <- names(training_data)
+
+for (test_trial in names(training_data)) {
+  
+  trial_data <- training_data[[test_trial]]
+  
+  # -------------------------------
+  # Remove test-set accessions from training
+  # -------------------------------
+  training_accessions <- setdiff(trial_data$training_accessions, trial_data$test_accessions)
+  
+  # Keep only genotyped lines in GRM
+  training_accessions <- intersect(training_accessions, rownames(trial_data$subset_grm))
+  
+  # -------------------------------
+  # Subset phenotype for training only
+  # -------------------------------
+  subset_pheno <- trial_data$training_data %>%
+    dplyr::filter(germplasm_name %in% training_accessions) %>%
+    dplyr::select(study_db_id, study_name, germplasm_name, grain_yield_kg_ha_co_321_0001218)
+  
+  # -------------------------------
+  # Keep test phenotypes (all NA)
+  # -------------------------------
+  test_pheno <- trial_data$test_pheno
+  
+  # -------------------------------
+  # Combine phenotype
+  # -------------------------------
+  combined_pheno <- rbind(subset_pheno, test_pheno)
+  
+  # -------------------------------
+  # Save CV00-ready data
+  # -------------------------------
+  CV00_training_data[[test_trial]] <- list(
+    training_accessions = training_accessions,
+    test_accessions = trial_data$test_accessions,
+    subset_grm = trial_data$subset_grm,
+    subset_W = trial_data$subset_W,
+    combined_pheno = combined_pheno,
+    test_trial_metadata = trial_data$test_trial_metadata
+  )
+}
+
+
+```
+
+```{r CV00 predictions}
+CV00_multikernel_predictions <- multi_GBLUP(CV00_training_data)
+```
+```{r CV00 prediction submissions}
+for (test_trial in test_set){
+  predictions <- CV00_multikernel_predictions[[test_trial]]$predictions |>dplyr::select(germplasm_name,pred)
+  colnames(predictions) <- c("germplasmName","prediction")
+  write_csv(predictions, here::here("predictions",test_trial, "CV00_Predictions.csv"))
+  
+  trials <- data.frame(studyName=CV00_training_data[[test_trial]]$training_set_trials)
+  write_csv(trials, here::here("predictions",test_trial, "CV00_Trials.csv"))
+  
+  accessions <- data.frame(germplasmName = CV00_training_data[[test_trial]]$training_accessions)
+  write_csv(accessions, here::here("predictions",test_trial, "CV00_Accessions.csv"))
+}
+```

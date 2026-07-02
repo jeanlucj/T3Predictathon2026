@@ -1,0 +1,39 @@
+---
+title: "Home Predictathon"
+site: workflowr::wflow_site
+output:
+  workflowr::wflow_html:
+    toc: false
+editor_options:
+  chunk_output_type: console
+---
+
+# Pull and explore input data
+
+## Phenotype data 
+
+- [Pull phenotypic data from T3](phenotypic_data.html). In that script, we pull metadata out of the trials related to target trials
+
+- [Analyze phenotypic data](pheno_data_analysis.html). In this script, we load phenotypic data and explore phenotypic data distribution, structure, and check for outliers.
+
+## Genotypic data
+
+- [Pull genotypic data focal accessions](pullGenoTrial.html). In that script, we download vcf data for focal accession genotypes
+
+- [Pull genotypic data non-focal accessions](pullGenoAssociatedTrials.html). In this script, we download vcf files for more genotypes, not only focal accessions but also genotypes tested in the same program.
+
+## Environmental covariates
+
+- [Pull environmental covariates from NASA POWER](environmental_covariates.html). In this script, we download weather data for a few variables (temperature, ALLSKY_SFC_SW_DWN, and total precipitation), based on the GPS coordinates of the trial location.
+
+# Fit prediction models
+
+- TODO: Optimize inputs for genomic prediction
+
+- [Genomic prediction GBLUP/RKHS](genom_pred.html). In this script, we apply genomic prediction for the CV0 and CV00.
+
+- [Analyze genomic prediction results](analyze_genom_pred.html). In this script, we analyze the results of genomic prediction, looking at the distribution of observed vs. predicted values, and the correlation between them for each environment and program.
+
+- TODO: Make final predictions
+
+

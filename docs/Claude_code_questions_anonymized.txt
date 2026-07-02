@@ -1,0 +1,55 @@
+[2026-05-20 11:44:30] Do all of the Prediction algorithms calculate a GRM or do some use SNPs directly as predictors?
+[2026-05-21 09:05:30] Is the runnability report up to date now??
+[2026-05-21 09:09:45] Does the writing>notes>Algorithm_characterization file have any PII?
+[2026-05-21 13:47:37] It looks to me like genom_pred.Rmd makes three predictions for each of CV0 and CV00.  How can we tell which prediction was actually submitted?
+[2026-06-03 11:46:33] How can I set Opus as the default, so that when I fire up a new session I don't have to switch over from Sonnet?
+[2026-06-03 11:48:08] OK.  Well my lived experience is that every time I start a new claude code session it lists Sonnet as the current model.  Note that I start by "claude-pro".  Is there something in that alias that affects the behavior?
+[2026-06-03 11:49:29] Yesterday we were working on a histogram and now I can't find that in my files.  Where did we put that work?
+[2026-06-03 16:51:09] This scrambling of the genotypes in genomic_analysis.Rmd, in what rows of the code does it happen?
+[2026-06-03 17:12:51] Getting close, but still not everything is processing.  Processing raw_project_6365.vcf
+  (subsetting to 254 of 311 samples to bound memory)  Skipping raw_project_6365.vcf: vector memory limit of 16.0 Gb reached, see mem.maxVSize()  In this case, I think there are more markers than we need (1263570 markers...).  Is it possible to get the read.vcfR to read only every 10th marker or something?
+[2026-06-04 11:52:09] How many GRMs have been written?
+[2026-06-04 16:44:46] Before you go on, can you try to figure out why CV0 and CV00 use different training data?
+[2026-06-04 16:55:48] Cool.  I have a quick question on how this is all working before you proceed.  Sometimes, as you are reasoning, you "test hypotheses" and those tests appear to go pretty fast.  Are you testing the hypotheses by launching shells on my computer or some other way?
+[2026-06-04 17:31:52] I have to close the laptop clamshell while I go home.  That will not disrupt processes, will it?
+[2026-06-04 17:53:42] I'm assuming the processes are all running nicely.  I'm away from my computer now, but would like you to notify me when you next need my input.  I have installed the ntfy app on my phone.  Send a notification to jannink_4llingBirds_alert1 when you need my input.  Can you set that up?
+[2026-06-04 17:58:01] I'm not sure what you have committed to memory about this notification.  I only want you to notify me when I explicitly say something along the lines "I'm going to be away from my computer, notify me if you need my input".  Then, when I get back to my computer, I will start typing again in the terminal and you can remove the notification instruction.  Does that make sense?
+[2026-06-04 19:07:55] In Analysis_Claude > output > per_trial_grm the names don't seem to distinguish between CV0 and CV00.  Shoudn't they?
+[2026-06-04 19:14:22] I think some of the logic behind the Prediction3 algorithm should lead the two CV schemes to pick different training trials and therefore to need different GRMs.  If you pick the top 15 genomically related trials, but those trials are different because in CV0 the genomic relationship includes the focal accession but in CV00 it does not include the focal accessions, then you should end up wanting to train on different accessions for CV0 versus CV00 and hence you would require a different GRM.  So either my logic breaks down or Prediction3 doesn't implement my logic.  And if Prediction3 doesn't implement my logic, in what way does it depart from that?
+[2026-06-04 20:20:57] Looks like the shells are done, no?
+[2026-06-05 10:51:02] Is there some way of assessing progress on the membership queries?
+[2026-06-05 11:17:07] Let's think about this sum-based PEA for the x-axis.  The reason I thought it should be sum based is simply that a large training population should be better than a small one.  So, all else equal, if g_ij = 0.1 (say) for all training individuals, you would rather have 1000 of those individuals than 100.  What the sum based version does, unfortunately, is fail to account for the fact that each training individual is not contributing independent information.  That is, summing incorporates an assumption that each training individual is providing independent information.  There probably would be a way to use the GRM to modify the sum to account for "how much information from i' was already contributed by i" where i and i' are two training individuals.  I'm not clever enough to figure out how to do the modification of PEA.  Do you have any ideas?
+[2026-06-05 11:39:23] I have not looked at the GRMs that have been calculated: how much variation is there in g_jj in any given GRM?
+[2026-06-10 10:10:22] Your answer interface didn't work.  I had to escape out of it.  Question: did you use the task mean or the square root mean reliability?
+[2026-06-10 10:13:55] Remove the confidence bands.  Can you replace the algorithm submission folders with "Prediction1", "Prediction2", etc?  That is, do you know which submission folders correspond to which Prediction numbers?
+[2026-06-10 13:07:52] I need a good and theoretically sound understanding of the statistics around whether different algorithms have different FW slopes.  We have a significant LRT on the slope heterogeneity, but it's on a singular model.  You explained earlier like this: In fact that's exactly the collinearity we already saw: in the full model (1|task) did
+  collapse to ~0, because the algorithm random slopes average ≈0.94 and slope × index
+  reconstructs the task mean — leaving the task intercept nothing to explain. Adding a
+  fixed index would just make that explicit (and arguably worse). So it's intrinsic to
+  doing FW on task means; your specified model is the right one, and the LRT conclusion
+  stands: χ²(2) = 22.1, p ≈ 1.6×10⁻⁵ — algorithms differ in their sensitivity to the 
+  task index..  What can and cannot be determined from LRTs on singular models?
+[2026-06-10 20:34:46] Some clarifying questions.  You say "Each evaluation runs a configuration on a fresh random trial and scores it by the Predictathon's own metric".  What all is included in one "evaluation run"?
+[2026-06-11 12:03:43] When I work with this optimizer, I will probably do so from within the RStudio environment.  Please make a .Rproj for the optimizer in the optimizer folder.  Call it Predictathon2026.Rproj
+[2026-06-11 12:35:36] I am currently running Claude Code on a little Mac laptop.  I will be able to test the optimizer on this computer but realistically to run it at scale, I will want to run it on a server.  I have access to Cornell University's BioHPC.  In the README.md, add considerations for running the opimizer on a remote server.  What aspects of set up might be different?  What will need to be saved when the server rental time is up and how to restore a session if you want to resume one that was ended on the server.  Can the optimizer be used when task scheduling uses SLURM?
+[2026-06-17 13:13:02] I'm confused about projects 8159/10670.  Somehow you identified them as relevant.  But upon downloading, they VCFs do not have sample codes that correspond to T3 accessions.  That must mean that the accessions used in the wizard (with which you found these projects) are not the same as the samples in the archive.  Is that right?
+[2026-06-18 16:21:37] Just so I'm clear on the issue with the existing caches.  Because these caches were made when the script was only looking for primary name caches, they may not have saved some useful data if it was labeled with a synonym.  So the caches are incomplete.  Is that correct?
+[2026-06-18 16:52:18] What is an "alias" in the synonym map?
+[2026-06-18 21:07:22] Sure.  I'm curious about the 10670 lines.  Do they not enter into any GRM?
+[2026-06-22 12:40:31] The two Pareto analyses should use the same x-axis.  And again, on the figure output in scripts > Analysis_Claude > output > reliability > pareto_scatter_genotyped_CV0.png, the x-axis says "genotyped training size" which suggests that for that figure you _did_ use the intersection between the declared accessions and the genotyped accessions.  Please verify.  Also, what are the rrBLUP::A.mat() defaults?
+[2026-06-24 11:02:36] Another conclusion we drew was "the observed accuracy ranked the algorithms differently from the expected reliability" Is that statement amenable to a statistical test?
+[2026-06-28 18:28:25] Tell me more about pkgdown.  I'm not sure what redeploy pkgdown means
+[2026-06-28 20:16:24] I need to rename the remote in my local project, right?  What was the command for that?
+[2026-06-28 20:33:23] In the settings.R of the optimizer, there is a parameter incumbent_min_reps  = 2,     # trials a config needs before it can be "incumbent".  What is the meaning of incumbent?
+[2026-06-28 20:45:52] I did trial <- sample_real_trial(s, conn)                       # a random usable trial
+Error in `dplyr::filter()` at R/data_access.R:97:3:
+ℹ In argument: `!is.na(studyDbId)`.
+Caused by error:
+! object 'studyDbId' not found
+Run `rlang::last_trace()` to see where the error occurred. We might have a bunch of problems of that sort because the snake_case T3BrapiHelpers uses janitor on its variable names.  Can you check throughout?
+[2026-06-29 06:57:10] In a first real attempt, I got this Error in sample_real_trial(s, conn) : 
+  Could not find a usable random trial in 12 tries.  To set up the trial catalogue, you use T3BrapiHelpers::get_all_trial_meta_data. I think it might be faster but certainly more useful to use the wizard or $search to only get trials that have data on the focal_trait.  Is there any reason to get metadata on ALL trials?
+[2026-06-29 12:54:42] A trial can look infeasible not because it actually is but because there is a bug in the code that is preventing the full data to be visible to the script.  Now that we have this "infeasible" classification that allows the script to continue, how do I check for the latter?
+[2026-06-29 14:23:36] A couple things: 1. Some of the Predictathon trials, particularly, 24Crk_Ay2-3, STP1_2025_MCG, and AWY1_DVPWA_2024 will probably not work well for some of the methods.  Rather than trying hard to include them, work mostly with the other trials.  2. I'm a little confused about calibrate_canary_trials: for that to run properly, do we need to assume that a number of the functions that now exist are bug-free?  We might have a catch-22 here where we are trying to setup a bug-checking approach using functions that haven't been properly debugged.  If I'm right, how to get out of that catch-22?
+[2026-06-29 14:50:50] Remove the all_with_yield method.  It's not going to work I believe.  In my understanding, the Calibration probe (point 1) is iterative (unless by some miracle there are no bugs).  You run the probe once and produce diagnostics alongside the canary_anchor, then we think about what to work on first.  Is that right?
+[2026-07-01 16:49:31] I want to simplify build_targets.  First, is build_targets used both for training trials and for the focal (test) trial?

@@ -1,0 +1,7 @@
+# Generated outputs (large, regenerable): per-project dosage cache, per-trial
+# GRMs, and any global combined GRM. Scripts are tracked; outputs are not.
+output/
+
+# One-off / exploratory data-prep + T3-exploration scripts -- kept local only
+# (the tracked analysis scripts consume their cached outputs, not the scripts).
+Debugging_scripts/

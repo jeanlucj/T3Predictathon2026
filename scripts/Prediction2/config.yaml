@@ -1,0 +1,42 @@
+focal_trials:
+  - AWY1_DVPWA_2024
+  - TCAP_2025_MANKS
+  - 25_Big6_SVREC_SVREC
+  - OHRWW_2025_SPO
+  - CornellMaster_2025_McGowan
+  - 24Crk_AY2-3
+  - 2025_AYT_Aurora
+  - YT_Urb_25
+  - STP1_2025_MCG
+
+traits:
+  target_trait: value
+
+model:
+  use_ml: false
+  lambda_factor: 1e-5
+
+paths:
+  # Processed phenotype and env files
+  processed_data: data/processed
+
+  # Predictathon trial directories
+  predictathon_root: data/predictathon
+
+  # Per-trial model directory
+  trained_models_root: trained_models
+
+  # Global grm directory
+  global_grm_root: data/processed/global_union
+  global_grm_path: data/processed/global_union/GRM_global_union.npy
+  global_grm_samples: data/processed/global_union/G_global_union_samples.txt
+
+  # Output directories
+  results_root: results
+  cv0_predictions: results/cv0_predictions
+  cv00_predictions: results/cv00_predictions
+  expected_accuracy: results/expected_accuracy
+  submission_root: submission
+
+phenotypes:
+  unified_training: data/processed/unified_training_pheno_mapped.csv

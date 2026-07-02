@@ -1,0 +1,20 @@
+# Local downloads / scratch
+New_VCF/
+
+# Data files (too large for git)
+unzipped/
+Genotype Data for Prediction Trials/
+Training Data/
+training_vcf_cache/
+weather_cache/
+
+# Outputs
+submission.zip
+
+# Python
+__pycache__/
+*.pyc
+.env
+
+# macOS
+.DS_Store

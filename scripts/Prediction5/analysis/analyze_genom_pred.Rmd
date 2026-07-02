@@ -1,0 +1,97 @@
+---
+title: "Analyze genomic prediction results"
+author: "Prediction5 Team"
+output: html_document
+df_print: kable
+date: '`r format(Sys.time(), "%d %B, %Y")`'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      engine.opts = list(bash = "-l"))
+```
+
+# Libraries
+
+```{r load libraries}
+suppressPackageStartupMessages(library(here)) # root directory
+suppressPackageStartupMessages(library(data.table)) # load data
+suppressPackageStartupMessages(library(apercu)) # ap
+suppressPackageStartupMessages(library(dplyr)) # formatting
+suppressPackageStartupMessages(library(ggplot2)) # plot
+suppressPackageStartupMessages(library(paletteer)) # plot palette
+suppressPackageStartupMessages(library(purrr)) # list handling
+suppressPackageStartupMessages(library(bigstatsr)) # ggplot theme
+suppressPackageStartupMessages(library(ggbeeswarm)) # ggplot geom_quasirandom
+```
+
+
+# Set up root directory
+
+```{r current dir}
+here::i_am("analysis/analyze_genom_pred.Rmd")
+source(here("code","useful_functions.R")) # getFolds function
+```
+
+
+This R chunk is used to assess how much time it takes to execute the R code in this document until the end:
+
+```{r time_0}
+t0 <- proc.time()
+```
+
+```{r}
+target.pred <- c("AWY1_DVPWA_2024","TCAP_2025_MANKS","25_Big6_SVREC_SVREC",
+                 "OHRWW_2025_SPO","CornellMaster_2025_McGowan","24Crk_AY2-3",
+                 "2025_AYT_Aurora","YT_Urb_25","STP1_2025_MCG")
+tri <- "2025_AYT_Aurora"
+```
+
+# Load observed vs. predicted values
+
+Generated in `genom_pred.Rmd`.
+
+## GBLUP
+
+### CV0
+
+```{r}
+df_pred_e <- readRDS(here("output","GP_GBLUP_CV0_combined-GRM_common-pheno_obs-pred.rds"))
+df_pred_e |> 
+  filter(target.trial %in% "24Crk_AY2-3") |>
+  filter(!is.na(YLD)) |> 
+  group_by(ENV) |> 
+  summarize(corP=cor(YLD,pred, use="pairwise.complete.obs"), n=n())
+
+df_pred_e |> filter(target.trial %in% "24Crk_AY2-3", YEAR %in% 2023) |> 
+  ggplot(aes(x=YLD, y=pred, color=ENV)) +
+  geom_point(alpha=0.6, size=1) +
+  geom_smooth(method="lm", se=FALSE)+
+  geom_rug(sides="bl")+
+  #paletteer::scale_color_paletteer_d("ggthemes::Jewel_Bright") +
+  ggpubr::stat_cor(method="pearson", size=3)+
+  geom_abline(intercept=0, slope=1, color="grey", linetype="dashed")+
+  ggtitle(paste0("Predicted vs. observed values for trial ", tri),
+          subtitle=paste0("GBLUP genomic selection method"))+
+  theme_bigstatsr(size.rel=0.8)
+
+
+```
+
+## CV00
+
+```{r}
+
+```
+
+
+
+# Appendix
+
+```{r info}
+t1 <- proc.time(); t1 - t0
+print(sessionInfo(), locale=FALSE)
+```
+
+
+

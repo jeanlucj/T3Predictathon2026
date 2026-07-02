@@ -1,0 +1,200 @@
+---
+title: "Genomic_data_import"
+author: "Prediction3 Team"
+date: "2025-12-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This script takes the output .csv document ([genotyped_phenotyped_trials.csv](genotyped_phenotyped_trials.csv)) from [T3_trial_import_and_filtering.Rmd](T3_trial_import_and_filtering.Rmd) and uses the selected study ids and the BrAPI.R package to pull vcf files from genotyping projects that cover the accessions in our selected studies. 26 Raw vcf files and 26 vcf files that have been filtered to contain only marker data from accessions included in our studies are stored in a directory **/data/vcf_genotyped_data**.
+
+## Load Packages
+
+```{r Load Packages, message=FALSE}
+library(devtools) #install.packages("devtools")
+devtools::install_github("TriticeaeToolbox/BrAPI.R")
+library(BrAPI)
+library(tidyverse) #install.packages("tidyverse")
+library(janitor) #install.packages("janitor")
+library(vcfR) #install.packages("vcfR")
+library(here) #install.packages("here")
+library(readr) #install.packages("readr")
+```
+
+## Set BrAPI Server
+
+*Need to include "is_breedbase=TRUE argument for later functions*
+
+```{r Create BrAPI Connection, message=FALSE}
+conn <- createBrAPIConnection("wheat.triticeaetoolbox.org", is_breedbase = TRUE)
+```
+
+## Load Data
+
+This is the output data frame from our trial filtering in [T3_trial_import_and_filtering.Rmd](T3_trial_import_and_filtering.Rmd)
+
+```{r Load Data, message=FALSE}
+selected_trials <- readr::read_csv(here("data","genotyped_phenotyped_trials.csv"))
+test_trials <- readr::read_csv(here::here("data","test_trial_metadata.csv"))
+```
+
+## Determine where accessions were genotyped
+
+BrAPI does not have ideal endpoints for querying genotypic datasets from T3. The curators of the BrAPI.R package have added a "wizard" function that allows you to search for certain data types housed in T3 without using the curated BrAPI endpoints. We can use this to pull information about accessions and genotyping projects as well as download archived VCF files.  
+
+To start, from our selected trials, we can pull the names of all of the germplasm grown in the those studies. We can then query T3 to see which genotyping projects those accessions have been included in.
+
+```{r pull accessions and genotyping projects}
+accessions <- conn$wizard("accessions", list(trials = c(selected_trials$study_name, test_trials$study_name)))
+
+accession_list <- accessions$data$ids
+
+geno_projects <- conn$wizard("genotyping_projects", list(accessions = accession_list))
+
+print(length(geno_projects$data$names))
+```
+
+As we can see, there are many genotyping projects where accessions in our studies of interest have been genotyped. To increase the speed of our scripts, we don't need redundant genotyping records. We can try to determine the minimum set of genotyping projects required to get maximum coverage of our study accessions. 
+
+get_accessions_by_project lists out which accessions are included on each genotyping project in a list we give. greedy_set_cover determines the minimum subset of genotyping projects needed to reach maximum coverage of accessions.
+
+```{r functions to determine accession representation on genotyping projects}
+get_accessions_by_project <- function(conn, project_ids, accession_filter) {
+  results <- list()
+  for (pid in project_ids) {
+    message("Checking project ID: ", pid)
+    res <- tryCatch(
+      conn$wizard("accessions", list(genotyping_projects = pid)),
+      error = function(e) NULL
+    )
+    if (!is.null(res) && length(res$data$ids) > 0) {
+      filtered_accessions <- intersect(res$data$ids, accession_filter)
+      if (length(filtered_accessions) > 0) {
+        results[[as.character(pid)]] <- filtered_accessions
+      }
+    }
+    Sys.sleep(0.1)  # optional small delay to be polite to server
+  }
+  return(results)
+}
+
+greedy_set_cover <- function(project_accession_list, all_accessions) {
+  uncovered <- all_accessions
+  selected_projects <- c()
+  
+  while (length(uncovered) > 0) {
+    # Find project covering most uncovered accessions
+    cover_counts <- sapply(project_accession_list, function(accs) length(intersect(accs, uncovered)))
+    
+    # If no project covers any uncovered accession, break (some accessions missing)
+    if (all(cover_counts == 0)) {
+      warning("Some accessions cannot be covered by any project.")
+      break
+    }
+    
+    best_project <- names(which.max(cover_counts))
+    selected_projects <- c(selected_projects, best_project)
+    
+    # Remove covered accessions
+    covered_now <- intersect(project_accession_list[[best_project]], uncovered)
+    uncovered <- setdiff(uncovered, covered_now)
+  }
+  
+  return(selected_projects)
+}
+
+```
+
+We can run our functions to determing our selected genotyping project ids
+
+```{r select minimum genotyping project subset, message=FALSE}
+project_accession_map <- get_accessions_by_project(conn,unique_ids,unique(accessions$data$ids))
+selected_projects <- greedy_set_cover(project_accession_map, unique(accessions$data$ids))
+
+selected_projects <- selected_projects[selected_projects != "8160"] #Project 8160 has downstream issues and must be removed for subsequent analysis
+selected_projects <- c("10684", "11054", "14512",selected_projects) #Add in projects that have been outlined on the t3-prediction-challenge rule page that my function missed out on
+
+
+readr::write_csv(as.data.frame(selected_projects),here::here("data","selected_geno_projects.csv"))
+
+print(paste0("Number of accessions in selected trials: ",length(unique(accessions$data$ids))), sep="")
+print(paste0("Number of genotyping projects to cover accession genotypes: ",length(selected_projects), sep=""))
+```
+
+## Download and filtered stored VCF files
+
+We have found that the most efficient way to download genotyping data from T3 has been to directly download the archived vcf files submitted by the uploader. BrAPI.R package has a "archived_vcf" function that can download the archived vcf file associated with any provided genotyping project id.
+
+In this function we access the raw vcf files, read them with vcfR::read.vcfR(), access the dosage (gt) matrix, and can also filter the matrix to only include accessions from our study. The function, as designed, saves both raw and filtered vcf files to a directory. For downstream analysis, raw vcf files will be needed. 
+
+### Function
+
+```{r download and filter vcfs function}
+download_and_filter_vcfs <- function(conn, project_ids, accession_names, output_directory) {
+  
+  for (id in project_ids) {
+    
+    raw_vcf_filepath <- file.path(output_directory, paste0("raw_project_", id, ".vcf"))
+    filtered_vcf_filepath <- file.path(output_directory, paste0("filtered_project_", id, ".vcf"))
+    
+    # ---- Skip entire project if filtered file already exists ----
+    if (file.exists(filtered_vcf_filepath)) {
+      message("✔ Project ", id, " already processed — skipping")
+      next
+    }
+    
+    # ---- Download only if raw file missing ----
+    if (!file.exists(raw_vcf_filepath)) {
+      message("⬇ Downloading VCF for project ", id)
+      conn$vcf_archived(
+        output = raw_vcf_filepath,
+        genotyping_project_id = id
+      )
+    } else {
+      message("📁 Raw VCF already exists for project ", id)
+    }
+    
+    # ---- Read and filter ----
+    message("🔬 Filtering project ", id)
+    
+    raw_data <- read.vcfR(raw_vcf_filepath)
+    
+    filtered_data <- raw_data
+    filtered_data@gt <- raw_data@gt |>
+      as.data.frame() |>
+      dplyr::select(FORMAT, any_of(accession_names)) |>
+      as.matrix()
+    
+    write.vcf(filtered_data, filtered_vcf_filepath)
+    
+    assign(paste0("raw_vcf_project_", id), raw_data, envir = .GlobalEnv)
+    assign(paste0("filtered_vcf_project_", id), filtered_data, envir = .GlobalEnv)
+    
+    rm(raw_data, filtered_data)
+  }
+}
+```
+
+### Pull Data
+We can now run the function with our set of selected genotyping project ids and put the resulting vcf files in a folder.
+
+***the following code requires you to select in the console which file you would like to download for each project. The user will be prompted to enter a file number for some projects. Typically, file #1 is the file we are trying to access***
+*this will take a few minutes to run*
+
+```{r pull genotype data, message=FALSE,cache=TRUE}
+#remove project 8131, 10157, 8130, and 8124 because the files are missing / messed up
+selected_projects <- selected_projects[selected_projects!="8131"]
+selected_projects <- selected_projects[selected_projects!="10157"]
+selected_projects <- selected_projects[selected_projects!="8130"]
+selected_projects <- selected_projects[selected_projects!="8124"]
+
+readr::write_csv(as.data.frame(selected_projects),here::here("data","selected_geno_projects.csv"))
+
+download_and_filter_vcfs(conn, project_ids = selected_projects, accession_names = accessions$data$names, here::here("data","/vcf_genotyped_data"))
+```
+

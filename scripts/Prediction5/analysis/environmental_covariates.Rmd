@@ -1,0 +1,76 @@
+---
+title: "environmental_covariates"
+author: "Prediction5 Team"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Pulling Environmental Covariates from T3
+
+## Loading Packages
+
+```{r}
+rm(list=ls())
+suppressPackageStartupMessages(library(here))
+suppressPackageStartupMessages(library(BrAPI))
+suppressPackageStartupMessages(library(purrr))
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(here))
+suppressPackageStartupMessages(library(tidygeocoder))
+suppressPackageStartupMessages(library(nasapower))
+```
+
+## Load T3 Trial Metadata
+
+```{r}
+#setwd("[path to Predictathon data directory]")
+here::i_am("analysis/environmental_covariates.Rmd")
+trials <- read.csv(here("analysis", "trial_list.csv"))
+```
+
+## Geocode Locations
+
+```{r}
+trials_geocoded <- trials %>%
+  geocode(address = location, method = 'osm', lat = latitude, long = longitude)
+if(any(is.na(trials_geocoded$latitude))) {
+  warning("Some locations could not be geocoded automatically.")
+}
+```
+
+## Retrieve Environmental Data from NASA
+
+```{r}
+library(dplyr)
+library(purrr)
+library(daymetr)
+
+fetch_daymet <- function(lat, lon, year) {
+  
+  # Notice we are using the lowercase 'year' here to match the argument above
+  dl <- download_daymet(
+    site = "Site",  
+    lat = lat, 
+    lon = lon, 
+    start = year,   
+    end = year,     
+    internal = TRUE, 
+    silent = TRUE 
+  )
+  
+  return(dl$data)
+}
+
+# 2. Your Pipeline (Uppercase 'YEAR' is correct here because it's your column name)
+trials_geocoded <- trials_geocoded %>%
+  mutate(weather_data = pmap(list(latitude, longitude, YEAR), fetch_daymet))
+
+
+trials_env <- trials_geocoded %>%
+  tidyr::unnest(weather_data, names_repair = "unique") %>%
+  dplyr::distinct(ENV, yday, .keep_all = TRUE)
+
+trials_env
+
+write.csv(trials_env, "environmental_covariates.csv")
+```
