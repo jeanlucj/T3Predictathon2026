@@ -152,10 +152,11 @@ select_training_trials <- function(cfg, trial, conn, settings) {
 .trial_similarity <- function(trial, cand_ids, conn, settings, kind) {
   g <- e <- stats::setNames(rep(0, length(cand_ids)), cand_ids)
   if (kind %in% c("genomic", "both")) {
-    for (sid in cand_ids) {
+    # One accession fetch per candidate trial (network on a cold cache) -> progress.
+    g[cand_ids] <- purrr::map_dbl(cand_ids, function(sid) {
       acc <- tryCatch(get_trial_accessions(sid, conn, settings), error = function(e) character())
-      g[sid] <- length(intersect(acc, trial$accessions))
-    }
+      length(intersect(acc, trial$accessions))
+    }, .progress = "Similarity: candidate trials")
     g <- g / (max(g) + 1e-9)
   }
   if (kind %in% c("environmental", "both") && is.finite(trial$lat)) {
@@ -282,11 +283,14 @@ choose_geno_sources <- function(cfg, train_acc, test_acc, conn, settings) {
   }
   # focal_plus_onehop and all_projects both load every covering project; the
   # one-hop bridging is handled in the EM combine (it uses shared accessions).
-  dl <- list()
-  for (pid in projs) {
+  # This is the heaviest loop in the pipeline -- one VCF download + parse per
+  # project on a cold cache -- so it reports progress per project.
+  dl <- purrr::map(projs, function(pid) {
     d <- tryCatch(get_project_dosage(pid, need, conn, settings, thin), error = function(e) NULL)
-    if (!is.null(d) && nrow(d) > 0) dl[[as.character(pid)]] <- d
-  }
+    if (!is.null(d) && nrow(d) > 0) d else NULL
+  }, .progress = "Load project dosages")
+  names(dl) <- as.character(projs)
+  dl <- purrr::compact(dl)
   # Carry how many covering projects we started from, so run_pipeline can tell a
   # genuinely ungenotyped trial (0 projects) from a "found projects but extracted
   # no dosage" bug signature (projects > 0, dosage 0).

@@ -121,6 +121,10 @@ trial_catalog <- function(conn, settings) {
     if ("location_name" %in% names(cand)) cand <- dplyr::filter(cand, location_name %in% td$locations)
     else warning("target_domain$locations set but no location_name column in catalogue")
   }
+  if (!is.null(td$trials)) {
+    if ("study_name" %in% names(cand)) cand <- dplyr::filter(cand, study_name %in% td$trials)
+    else warning("target_domain$trials set but no study_name column in catalogue")
+  }
   cand
 }
 
@@ -267,7 +271,8 @@ get_observations <- function(study_ids, conn, settings) {
       row     = ch(pos$positionCoordinateY),
       rep     = lvl(pos$observationLevelRelationships, "rep"),
       block   = lvl(pos$observationLevelRelationships, "block"))
-  })
+  },
+  .progress = "Extract Observation Unit Position")
   dplyr::distinct(out, unit_id, .keep_all = TRUE)
 }
 
@@ -292,38 +297,55 @@ projects_for_accessions <- function(accessions, conn, settings) {
   cached(settings, key, max_age_days = 30, expr = {
     acc <- unique(as.character(accessions))
     batches <- split(acc, ceiling(seq_along(acc) / 500L))
-    ids <- unlist(lapply(batches, function(b) {
+    ids <- unlist(purrr::map(batches, function(b) {
       w <- tryCatch(conn$wizard("genotyping_projects", list(accessions = b)),
                     error = function(e) NULL)
       if (is.null(w)) character() else as.character(w$data$ids)
-    }), use.names = FALSE)
+    },
+    .progress = "Genotyping projects for accessions"), use.names = FALSE)
     unique(stats::na.omit(ids))
   })
 }
 
 # --- dosage matrix for one genotyping project ------------------------------
-# Download (cached) the archived VCF and extract an accessions x markers dosage
-# matrix (0/1/2), restricted to keep_samples. This mirrors the proven extraction
-# in build_grm_for_cv00.R, including the dosage-transposition fix.
+# Return the accessions x markers dosage (0/1/2) for `project_id`, restricted to
+# keep_samples. Extracts the WHOLE project (all samples) once and caches that,
+# keyed by project (+ marker_thin + the raw VCF's byte size); every later call --
+# for any trial / any keep_samples -- reads that one cache and subsets at read
+# time. So a project's VCF is downloaded and parsed exactly once; afterwards the
+# large raw VCF is redundant and is DELETED to reclaim space.
 #
-# Robustness (learned the hard way -- a flaky/partial download used to poison the
-# cache permanently):
-#   * the raw VCF is validated as COMPLETE before use; a truncated file is
-#     re-downloaded once and, if still bad, an error is raised (so it is retried
-#     next run) rather than silently yielding a tiny matrix;
-#   * the dosage cache key includes the raw VCF's byte size, so a later-complete
-#     download (different size) bypasses any stale dosage cached from a partial
-#     one instead of being shadowed by it forever;
-#   * the key also includes a hash of keep_samples, since the extracted matrix is
-#     subset to those samples -- different callers must not get each other's subset.
+# Robustness (a flaky/partial download used to poison the cache permanently):
+#   * .ensure_project_vcf validates the VCF is COMPLETE before extraction; a
+#     truncated file is re-downloaded once, else an error (retried next run);
+#   * the full-dosage cache name carries the VCF byte size, so a later re-download
+#     at a different size (were the VCF still present) would not be shadowed by a
+#     stale dosage. The cache is looked up by pattern (ignoring size) so it works
+#     WITHOUT the VCF -- which is what lets the VCF be deleted.
 get_project_dosage <- function(project_id, keep_samples, conn, settings,
                                marker_thin = 1L) {
-  path <- .ensure_project_vcf(project_id, conn, settings)
-  sz   <- file.info(path)$size
-  keep_hash <- substr(rlang::hash(sort(unique(as.character(keep_samples)))), 1, 8)
-  thin_tag  <- if (marker_thin > 1) paste0("_thin", marker_thin) else ""
-  cache_name <- paste0("dosage_", project_id, thin_tag, "_sz", sz, "_", keep_hash)
-  cached(settings, cache_name, max_age_days = Inf, expr = .vcf_to_dosage(path, keep_samples, marker_thin))
+  thin_tag <- if (marker_thin > 1) paste0("_thin", marker_thin) else ""
+  # Look up the cached FULL-project dosage without needing the raw VCF.
+  pat  <- paste0("^dosage_", project_id, thin_tag, "_sz[0-9]+[.]rds$")
+  hits <- list.files(settings$cache_dir, pattern = pat, full.names = TRUE)
+  full <- if (length(hits)) {
+    readRDS(hits[[which.max(file.info(hits)$mtime)]])          # newest, if several
+  } else {
+    path <- .ensure_project_vcf(project_id, conn, settings)    # download + validate
+    sz   <- file.info(path)$size
+    d    <- .vcf_to_dosage(path, NULL, marker_thin)            # NULL -> ALL samples
+    if (!is.null(d)) {
+      saveRDS(d, .cache_path(settings, paste0("dosage_", project_id, thin_tag, "_sz", sz)))
+      # full-project dosage now cached -> the (large) raw VCF is redundant; delete it.
+      base <- sub("[.]gz$", "", path)
+      unlink(c(base, paste0(base, ".gz")))
+    }
+    d
+  }
+  if (is.null(full)) return(NULL)
+  keep <- intersect(rownames(full), as.character(keep_samples))
+  if (!length(keep)) return(NULL)
+  full[keep, , drop = FALSE]
 }
 
 # Ensure a complete archived VCF for a project is on disk; return its path
@@ -368,9 +390,10 @@ get_project_dosage <- function(project_id, keep_samples, conn, settings,
   FALSE
 }
 
-# VCF -> dosage (accessions x markers). Subsets to keep_samples; optional
-# genome-wide marker thinning for very large projects. (Condensed from
-# build_grm_for_cv00.R; same encoding and the same transposition fix.)
+# VCF -> dosage (accessions x markers). keep_samples = NULL extracts ALL samples
+# (used to cache the whole project once); a character vector subsets to those
+# samples. Optional genome-wide marker thinning for very large projects.
+# (Condensed from build_grm_for_cv00.R; same encoding and the same transposition fix.)
 .vcf_to_dosage <- function(path, keep_samples, thin = 1L) {
   read_samples <- function(p) {
     con <- if (grepl("[.]gz$", p)) gzfile(p, "rt") else file(p, "rt"); on.exit(close(con))
@@ -378,7 +401,8 @@ get_project_dosage <- function(project_id, keep_samples, conn, settings,
       if (startsWith(line, "#CHROM")) return(strsplit(line, "\t")[[1]][-(1:9)]) }
   }
   samples  <- read_samples(path)
-  keep_cols <- 9 + which(samples %in% keep_samples)
+  keep_cols <- if (is.null(keep_samples)) 9 + seq_along(samples)
+               else 9 + which(samples %in% keep_samples)
   if (!length(keep_cols)) return(NULL)
   read_path <- path
   if (thin > 1) {

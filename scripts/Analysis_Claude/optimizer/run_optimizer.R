@@ -46,7 +46,8 @@ optimizer_step <- function(con, settings, conn = NULL) {
     store_eval(con, choice$cfg, trial$id, scheme, ev$score, ev$n_test,
                ev$status, ev$reason, ev$detail %||% NA_character_, ev$seconds)
     ev
-  })
+  },
+  .progress = "Evaluate config on trials")
   scores   <- vapply(recs, function(r) r$score, numeric(1))
   statuses <- vapply(recs, function(r) r$status, character(1))
   list(source = choice$source, trial = trial$id,

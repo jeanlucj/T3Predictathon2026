@@ -44,8 +44,8 @@ We do **not** optimize accuracy on the nine Predictathon trials. We optimize the
 **expected predictive ability over randomly sampled T3 trials** drawn from a
 configurable **target domain** (`settings$target_domain`). With the domain
 unconstrained, the result is the best all-round pipeline; constraining it to a
-list of breeding programs, years, and/or locations tailors the pipeline to that
-subpopulation (e.g. the best pipeline for one program's recent trials). Only the
+list of breeding programs, years, locations, and/or specific trial names tailors the
+pipeline to that subpopulation (e.g. the best pipeline for one program's recent trials). Only the
 focal trial is constrained -- a pipeline may still pull training trials from
 anywhere. The trait being predicted is also configurable
 (`settings$focal_trait`); it defaults to grain yield but can be any numeric trait.
@@ -152,14 +152,14 @@ Two verification layers, because the failure modes differ:
   against an independent ground truth (the five teams' submission files) via a
   calibrate-then-freeze step and runs at startup in real mode.
 
-See `README_DEVELOP.md` for how to run and read both layers.
+See `EVALUATION.md` for how to run and read both layers.
 
 ## 6. File map
 
 ```
 optimizer/
   README.md            <- how to run it (user-facing)
-  README_DEVELOP.md    <- developer & validation guide (tests, data-flow, tooling)
+  EVALUATION.md        <- evaluation & validation runbook (arm_evaluation, tests, data-flow, tooling)
   DESIGN.md            <- this file (what the optimizer is + where everything lives)
   BACKGROUND.md        <- challenges (statistical + data-management) and how each is met
   run_optimizer.R      <- background entry point (budget, stop-file, checkpoint, canary startup)

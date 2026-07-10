@@ -179,7 +179,7 @@ check_canaries <- function(settings, conn, configs = canary_configs()) {
                      n_test = ev$n_test %||% NA_integer_, score = ev$score,
                      method_signature = sig(cfg), weak = id %in% weak)
     })
-  })
+  }, .progress = "Canary trials")
   bad <- out |> dplyr::filter(status != "ok")
   hard <- bad |> dplyr::filter(!weak)
   soft <- bad |> dplyr::filter(weak)
@@ -291,7 +291,7 @@ canary_anchor <- function(settings, preds_root = NULL) {
       study_name    = study_name,
       anchor_n_pred = suppressWarnings(as.integer(round(stats::median(counts, na.rm = TRUE)))),
       anchor_n_part = sum(is.finite(counts)))
-  })
+  }, .progress = "Read submission anchors")
 }
 
 # Probe each canary trial's data shape THROUGH the real pipeline functions and
@@ -365,7 +365,7 @@ calibrate_canary_trials <- function(settings, conn, anchor = NULL, deep = FALSE)
       our_n_geno_focal  = geno_wizard,
       our_n_geno_dosage = geno_dosage,
       has_coords        = is.finite(trial$lat))
-  })
+  }, .progress = "Calibrate canaries")
 
   out <- dplyr::left_join(rows, anchor, by = c("study_db_id", "study_name")) |>
     dplyr::mutate(

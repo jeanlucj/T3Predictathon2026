@@ -1,7 +1,7 @@
 # Background: sources and design rationale
 
 `README.md` says *how* to run it, `DESIGN.md` says *what* it is and where every
-function lives, and `README_DEVELOP.md` is the developer/validation guide. This
+function lives, and `EVALUATION.md` is the evaluation/validation runbook. This
 document records *why* it is built the way it is — the sources consulted, the design
 decisions (including alternatives considered and rejected), and the statistical and
 data-management challenges it must handle and how each is addressed. It is meant as
@@ -101,7 +101,7 @@ absorbs.
 The set of trials the objective averages over is itself a design choice. By
 default it is "all T3 trials measuring the focal trait," but `settings$target_domain`
 lets the user restrict random focal-trial sampling to a list of breeding programs,
-years, and/or locations. This is what lets the same machinery produce a pipeline
+years, locations, and/or specific trial names (studyName). This is what lets the same machinery produce a pipeline
 tuned for one program rather than a global all-rounder, since the best pipeline
 genuinely differs across populations. Term: we call this the **target domain**;
 in the algorithm-configuration literature the analogous concept is the **instance

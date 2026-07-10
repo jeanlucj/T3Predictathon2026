@@ -5,7 +5,7 @@ literature methods they missed -- into a genomic-prediction pipeline that beats
 any single submission at predicting grain yield in a **randomly chosen T3 trial**.
 
 This file is for **running** the optimizer. If you want to understand, validate,
-or modify the code, see **`README_DEVELOP.md`** (developer & validation guide) and
+or modify the code, see **`EVALUATION.md`** (evaluation & validation runbook) and
 **`DESIGN.md`** (architecture). `BACKGROUND.md` explains why it is built this way.
 
 ## What it does, in one paragraph
@@ -64,7 +64,7 @@ nohup Rscript run_optimizer.R > logs/run.out 2>&1 &
 In real mode the optimizer first runs a **startup self-check** (the "canary"
 check) and prints the result near the top of `logs/run.out`. If you see
 **`CANARY ALARM`** there, the build is failing to read data it should be able to
-read -- **do not trust that run**; see `README_DEVELOP.md` ("Validation & debugging")
+read -- **do not trust that run**; see `EVALUATION.md` ("Validation & debugging tooling")
 before continuing. `canaries OK` means it is reading data correctly.
 
 **3. Monitor:**
@@ -95,7 +95,7 @@ SQLite store at `state/evals.sqlite`. Phenotypes and genotypes are cached under
 - **⚠ Suspected bugs** -- failures whose data funnel looks like a *bug* (real data
   not visible) rather than genuine infeasibility. A non-zero count here, or a
   `CANARY ALARM` in the log, means the build needs a developer's attention
-  (`README_DEVELOP.md`).
+  (`EVALUATION.md`).
 - **Running best** -- the learning curve over evaluation order.
 
 ## Running on a remote server (e.g. Cornell BioHPC)
@@ -210,8 +210,9 @@ vary -- check the current Cornell BioHPC documentation for specifics.
 
 ## Where to go next
 
-- **`README_DEVELOP.md`** -- run/extend the tests, step through the code, trace one
-  evaluation, and use the validation tooling (the canary oracle, `diagnose_trial`).
+- **`EVALUATION.md`** -- the evaluation runbook: step through each module one at a
+  time (`arm_evaluation`), run/extend the tests, trace one evaluation, and use the
+  validation tooling (the canary oracle, `diagnose_trial`).
 - **`DESIGN.md`** -- the architecture: every function, and where outputs go.
 - **`BACKGROUND.md`** -- the statistical and data-management challenges and how
   each is addressed.

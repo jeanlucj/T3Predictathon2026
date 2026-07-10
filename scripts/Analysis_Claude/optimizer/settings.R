@@ -74,14 +74,37 @@ optimizer_settings <- function() {
     # vector to restrict random sampling so the resulting pipeline is tailored
     # to that subpopulation (e.g. one breeding program's recent trials at a few
     # locations). Only the FOCAL trial is constrained -- a pipeline may still
-    # pull training trials from anywhere. Example:
+    # pull training trials from anywhere. `trials` pins the focal set to specific
+    # studyName values directly (the most direct way to say "optimize for these
+    # trials"); it combines (AND) with the other fields. Example:
     #   target_domain = list(programs  = c("Cornell", "OSU"),
     #                        years     = 2018:2025,
-    #                        locations = c("Ithaca", "Wooster"))
+    #                        locations = c("Ithaca", "Wooster"),
+    #                        trials    = c("2025_AYT_Aurora", "YT_Urb_25"))
     target_domain = list(
       programs  = NULL,          # character vector of programName values, or NULL
       years     = NULL,          # integer vector of years, or NULL
-      locations = NULL           # character vector of locationName values, or NULL
+      locations = NULL,          # character vector of locationName values, or NULL
+      # character vector of studyName (trial) values, or NULL
+      trials    = c("CornellMaster_2007_McGowan", "CornellMaster_2008_Helfer",
+                    "CornellMaster_2008_Ketola", "CornellMaster_2008_Snyder",
+                    "CornellMaster_2009_Helfer", "CornellMaster_2009_Ketola",
+                    "CornellMaster_2009_McGowan", "CornellMaster_2010_Helfer",
+                    "CornellMaster_2010_Ketola", "CornellMaster_2010_Snyder",
+                    "CornellMaster_2011_Helfer", "CornellMaster_2011_Ketola",
+                    "CornellMaster_2011_McGowan", "CornellMaster_2012_Helfer",
+                    "CornellMaster_2012_Ketola", "CornellMaster_2012_Snyder",
+                    "CornellMaster_2013_Helfer", "CornellMaster_2013_Ketola",
+                    "CornellMaster_2013_McGowan", "CornellMaster_2014_Helfer",
+                    "CornellMaster_2014_Ketola", "CornellMaster_2014_Snyder",
+                    "CornellMaster_2015_Helfer", "CornellMaster_2015_Ketola",
+                    "CornellMaster_2015_McGowan", "CornellMaster_2016_Helfer",
+                    "CornellMaster_2016_Ketola", "CornellMaster_2016_Snyder",
+                    "CornellMaster_2017_Ketola", "CornellMaster_2017_Snyder",
+                    "CornellMaster_2018_Helfer", "CornellMaster_2018_Ketola",
+                    "CornellMaster_2019_Ketola", "CornellMaster_2020_Helfer",
+                    "CornellMaster_2021_Snyder", "CornellMaster_2022_Helfer",
+                    "CornellMaster_2023_McGowan")
     ),
 
     # ---- paths ------------------------------------------------------------
