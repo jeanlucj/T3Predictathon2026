@@ -10,8 +10,7 @@
 #     conn$wizard("genotyping_projects", ...) for downloadable project ids,
 #     conn$vcf_archived(...)  (see scripts/Prediction5, build_grm_for_cv00.R,
 #     expand_project_universe.R)
-#   * T3BrapiHelpers: get_all_trial_meta_data, find_other_studies_evaluating_same_germplasm,
-#     covariance_combiner
+#   * T3BrapiHelpers: get_all_trial_meta_data, covariance_combiner
 #
 # NOTE: the exact column names in BrAPI responses can vary by server version.
 # The accessors below (.obs_tibble, trial_catalog) normalize the common shapes
@@ -343,6 +342,10 @@ get_project_dosage <- function(project_id, keep_samples, conn, settings,
     d
   }
   if (is.null(full)) return(NULL)
+  # keep_samples = NULL -> the WHOLE project population. Marker QC and allele
+  # frequencies must be estimated from it (subtask D), not from the handful of
+  # accessions a given trial happens to need.
+  if (is.null(keep_samples)) return(full)
   keep <- intersect(rownames(full), as.character(keep_samples))
   if (!length(keep)) return(NULL)
   full[keep, , drop = FALSE]

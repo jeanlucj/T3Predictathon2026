@@ -57,7 +57,9 @@ run_pipeline <- function(cfg, trial, scheme, settings, conn) {
   }
 
   # --- D. build relationship / kernel --------------------------------------
-  K <- build_kernel(cfg, dosage_list)
+  # QC + allele frequencies come from each panel's full population; the GRM itself
+  # covers only the accessions we need to relate.
+  K <- build_kernel(cfg, dosage_list, union(train_acc, focal_acc))
   geno_acc <- rownames(K)
   train_in <- intersect(train_acc, geno_acc)
   test_in  <- intersect(focal_acc, geno_acc)
@@ -105,18 +107,21 @@ select_training_trials <- function(cfg, trial, conn, settings) {
 
   if (m == "accession_overlap") {
     # Primary tier: trials sharing >= primary_min germplasm directly with the focal trial.
-    primary <- .find_related(focal_id, conn, cfg$train_select.primary_min)
+    primary <- .find_related(focal_id, conn, settings, cfg$train_select.primary_min)
     if (identical(cfg$train_select.primary_only, "yes")) return(primary)
-    # Secondary tier: trials sharing germplasm with the primary pool at a higher
-    # threshold (one expansion hop from a few primary trials) -- friends-of-friends.
-    secondary <- character()
-    for (sid in utils::head(primary, 10)) {
-      secondary <- union(secondary, .find_related(sid, conn, cfg$train_select.secondary_min))
-    }
+    # Secondary tier: pool the germplasm across ALL primary trials, then find trials
+    # sharing >= secondary_min accessions with that combined set -- one lookup against
+    # the primary pool's germplasm rather than a separate hop from each primary trial.
+    # A candidate is judged on its overlap with the pool as a whole, so a trial that
+    # shares a few accessions with each of several primary trials can now qualify.
+    prim_acc <- unique(unlist(lapply(primary, function(sid)
+                        get_trial_accessions(sid, conn, settings)), use.names = FALSE))
+    secondary <- .find_related(prim_acc, conn, settings, cfg$train_select.secondary_min,
+                               input = "accessions")
     return(union(primary, secondary))
   }
   if (m == "top_k_similar") {
-    cand <- .find_related(focal_id, conn, 1)
+    cand <- .find_related(focal_id, conn, settings, 1)
     if (!length(cand)) return(cand)
     sim <- .trial_similarity(trial, cand, conn, settings, cfg$train_select.similarity)
     return(names(utils::head(sort(sim, decreasing = TRUE), cfg$train_select.k)))
@@ -135,16 +140,79 @@ select_training_trials <- function(cfg, trial, conn, settings) {
   fatal(paste("unknown train_select method", m), "bug_unknown_method")
 }
 
-.find_related <- function(study_id, conn, min_common) {
-  res <- tryCatch(
-    T3BrapiHelpers::find_other_studies_evaluating_same_germplasm(
-      study_id, conn, min_germ_common = max(1L, as.integer(min_common))),
-    error = function(e) NULL)
-  if (is.null(res)) return(character())
-  # find_other_studies_evaluating_same_germplasm returns a janitor tabyl with
-  # columns other_study_db_id, n.
-  ids <- if (is.data.frame(res)) as.character(res$other_study_db_id %||% res[[1]]) else as.character(res)
-  unique(ids)
+# Trials sharing >= min_common germplasm with a query set of accessions. `x` is either
+# a trial id (input = "trial"; the query set is that trial's accessions, and the trial
+# itself is excluded from the result) or an accession vector directly
+# (input = "accessions"; e.g. the pooled germplasm of several trials).
+#
+# Derived from the acc_<sid> cache rather than from
+# T3BrapiHelpers::find_other_studies_evaluating_same_germplasm(), which spends one
+# wizard query PER GERMPLASM (223 queries for trial 10676) to answer for exactly one
+# trial. Here one wizard query returns the candidate trials, and the overlap counts
+# are set intersections of accession lists we already cache -- and those lists are
+# shared across every trial and with .trial_similarity, so the cost decays to nothing
+# as the cache warms.
+#
+# Two differences from the helper, both deliberate: overlap is counted in germplasm
+# NAME space (what acc_<sid> holds, and what every downstream join uses) rather than
+# germplasm_db_id space, and candidates are restricted to the focal-trait catalogue --
+# a trial that never measured the trait is not a training trial, and used to pad
+# run_pipeline's min_train_trials check while contributing no observations.
+.overlap_memo <- new.env(parent = emptyenv())
+
+.find_related <- function(x, conn, settings, min_common, input = c("trial", "accessions")) {
+  input <- match.arg(input)
+  if (input == "trial") {
+    sid <- as.character(x)
+    # `get_trial_accessions` is passed lazily: on a memo hit .germ_overlap never
+    # forces it, so a repeat call costs nothing.
+    n <- .germ_overlap(get_trial_accessions(sid, conn, settings), conn, settings,
+                       exclude = sid, memo_key = sid)
+  } else {
+    acc <- unique(as.character(x))
+    n <- .germ_overlap(acc, conn, settings,
+                       memo_key = paste0("acc_", substr(rlang::hash(sort(acc)), 1, 12)))
+  }
+  if (!length(n)) return(character())
+  names(n)[n >= max(1L, as.integer(min_common))]
+}
+
+# Named integer vector: candidate trial id -> germplasm shared with `accessions`.
+# Memoized per session (in RAM, not on disk -- it is derived data), because the
+# optimizer calls this on the same query set for every config and scheme; `memo_key`
+# is the trial id (trial input) or a hash of the accession set (accession input).
+.germ_overlap <- function(accessions, conn, settings, exclude = character(), memo_key = NULL) {
+  if (!is.null(memo_key)) {
+    hit <- .overlap_memo[[memo_key]]
+    if (!is.null(hit)) return(hit)              # `accessions` promise left unforced
+  }
+
+  n <- tryCatch({
+    acc <- unique(as.character(accessions))
+    if (!length(acc)) stop("no accessions")
+
+    # Candidate trials: any trial sharing >= 1 accession. The breeder wizard unions
+    # over the accessions it is given, so batch them (as projects_for_accessions does)
+    # rather than asking once per germplasm.
+    batches <- split(acc, ceiling(seq_along(acc) / 500L))
+    cand <- unique(unlist(purrr::map(batches, function(b) {
+      w <- conn$wizard("trials", list(accessions = b))
+      as.character(w$data$ids)
+    })))
+    # Keep only trials that measured the focal trait, and drop the excluded trial(s).
+    cand <- setdiff(intersect(cand, as.character(trial_catalog(conn, settings)$study_db_id)),
+                    exclude)
+    if (!length(cand)) stop("no candidates")
+
+    stats::setNames(purrr::map_int(cand, function(sid) {
+      length(intersect(get_trial_accessions(sid, conn, settings), acc))
+    }, .progress = "Germplasm overlap: candidate trials"), cand)
+  }, error = function(e) integer())
+
+  # Memoize only real answers: caching an empty result would let one transient network
+  # failure make a query set permanently neighbourless for the rest of the run.
+  if (!is.null(memo_key) && length(n)) assign(memo_key, n, envir = .overlap_memo)
+  n
 }
 
 # Similarity of candidate trials to the focal trial: genomic = number of shared
@@ -267,68 +335,205 @@ build_targets <- function(cfg, train_obs, trial, conn, settings) {
 # ===========================================================================
 # Subtask C: select genotyping data
 # ===========================================================================
+# Returns one dosage matrix per PROTOCOL GROUP, each holding the group's FULL
+# genotyped population (every sample in the constituent projects), not just the
+# accessions this trial needs. Subtask D estimates marker QC and allele frequencies
+# from that population and only then subsets the GRM -- estimating them from a
+# handful of needed accessions is what made both unstable.
 choose_geno_sources <- function(cfg, train_acc, test_acc, conn, settings) {
   need  <- union(train_acc, test_acc)
   thin  <- as.integer(cfg$geno_select.marker_thin)
   projs <- projects_for_accessions(need, conn, settings)
   if (!length(projs)) return(structure(list(), n_projects = 0L))
 
-  m <- cfg$geno_select.method
-  if (m == "best_single_project") {
-    cover <- vapply(projs, function(pid) {
-      d <- tryCatch(get_project_dosage(pid, need, conn, settings, thin), error = function(e) NULL)
-      if (is.null(d)) 0L else length(intersect(rownames(d), need))
-    }, integer(1))
-    projs <- projs[which.max(cover)]
-  }
-  # focal_plus_onehop and all_projects both load every covering project; the
-  # one-hop bridging is handled in the EM combine (it uses shared accessions).
-  # This is the heaviest loop in the pipeline -- one VCF download + parse per
-  # project on a cold cache -- so it reports progress per project.
+  # Load the WHOLE population of each covering project (keep_samples = NULL). This
+  # is the heaviest loop in the pipeline -- one VCF download + parse per project on
+  # a cold cache -- so it reports progress per project.
   dl <- purrr::map(projs, function(pid) {
-    d <- tryCatch(get_project_dosage(pid, need, conn, settings, thin), error = function(e) NULL)
-    if (!is.null(d) && nrow(d) > 0) d else NULL
+    d <- tryCatch(get_project_dosage(pid, NULL, conn, settings, thin), error = function(e) NULL)
+    if (!is.null(d) && nrow(d) > 0 && length(intersect(rownames(d), need))) d else NULL
   }, .progress = "Load project dosages")
   names(dl) <- as.character(projs)
   dl <- purrr::compact(dl)
+  if (!length(dl)) return(structure(list(), n_projects = length(projs)))
+
+  if (identical(cfg$geno_select.method, "best_single_project")) {
+    cover <- vapply(dl, function(d) length(intersect(rownames(d), need)), integer(1))
+    dl <- dl[which.max(cover)]
+  }
+  # focal_plus_onehop and all_projects both keep every covering project; the one-hop
+  # bridging is handled in the EM combine (it uses shared accessions).
+
+  groups <- .group_by_panel(dl, settings)
+  out <- purrr::map(groups, function(pids) {
+    .merge_markers(.prune_redundant(dl[pids], settings))
+  })
+  names(out) <- vapply(groups, function(pids) paste(pids, collapse = "+"), character(1))
   # Carry how many covering projects we started from, so run_pipeline can tell a
   # genuinely ungenotyped trial (0 projects) from a "found projects but extracted
   # no dosage" bug signature (projects > 0, dosage 0).
-  attr(dl, "n_projects") <- length(projs)
-  dl
+  attr(out, "n_projects") <- length(projs)
+  out
+}
+
+# Group projects into protocols by MARKER OVERLAP, not by protocol id: a "V2"/"v2.1"
+# protocol is the same protocol scored against a different reference genome, so it
+# gets its own id but (near-)identical markers. Two projects join the same group when
+# they share >= settings$merge_containment of the smaller panel; grouping is
+# transitive (single-linkage).
+.group_by_panel <- function(dl, settings) {
+  ids <- names(dl)
+  if (length(ids) <= 1) return(as.list(ids))
+  mk  <- lapply(dl, colnames)
+  thr <- settings$merge_containment %||% 0.95
+
+  grp <- seq_along(ids)                                   # union-find by relabelling
+  for (i in seq_along(ids)) for (j in seq_len(i - 1)) {
+    shared <- length(intersect(mk[[i]], mk[[j]]))
+    if (shared >= thr * min(length(mk[[i]]), length(mk[[j]]))) {
+      grp[grp == grp[i]] <- grp[j]
+    }
+  }
+  unname(split(ids, grp))
+}
+
+# Drop redundant projects WITHIN a protocol group -- the same lines re-called on the
+# same panel. Scoped to a group on purpose: across panels, two projects with the same
+# accessions are complementary (different markers), not redundant, and dropping one
+# would throw away a whole marker set.
+.prune_redundant <- function(dl, settings) {
+  if (length(dl) <= 1) return(dl)
+  thr <- settings$redundant_acc_overlap %||% 0.90
+  repeat {
+    ids <- names(dl)
+    drop <- NULL
+    for (i in seq_along(ids)) {
+      for (j in seq_len(i - 1)) {
+        a <- rownames(dl[[i]]); b <- rownames(dl[[j]])
+        shared <- length(intersect(a, b))
+        if (shared < thr * min(length(a), length(b))) next
+        loser <- if (setequal(a, b)) {
+          # identical lines -> keep the richer marker build (the v1/v2 case)
+          if (ncol(dl[[i]]) >= ncol(dl[[j]])) j else i
+        } else if (length(a) != length(b)) {
+          # near-identical lines -> keep the project with more accessions
+          if (length(a) > length(b)) j else i
+        } else {
+          if (ncol(dl[[i]]) >= ncol(dl[[j]])) j else i
+        }
+        drop <- ids[loser]
+        break
+      }
+      if (!is.null(drop)) break
+    }
+    if (is.null(drop)) return(dl)
+    dl <- dl[setdiff(names(dl), drop)]
+    if (length(dl) <= 1) return(dl)
+  }
 }
 
 # ===========================================================================
 # Subtask D: relationship matrix / kernel
 # ===========================================================================
-build_kernel <- function(cfg, dosage_list) {
+# `dosage_list` holds one FULL-population matrix per protocol group; `need` is the
+# accession set the pipeline actually has to relate (training + focal). Marker QC and
+# allele frequencies come from the population; the GRM is then formed over `need`.
+build_kernel <- function(cfg, dosage_list, need) {
   ridge <- cfg$kernel.ridge
   m <- cfg$kernel.method
 
   if (m == "em_combine" && length(dosage_list) > 1) {
-    grms <- lapply(dosage_list, function(d) rrBLUP::A.mat(.qc_markers(d, cfg)))
-    std  <- lapply(grms, function(g) g / mean(diag(g)))
-    names_all <- unique(unlist(lapply(std, colnames)))
-    idx  <- lapply(std, function(g) match(colnames(g), names_all))
-    res  <- T3BrapiHelpers::covariance_combiner(
-      partial_covs = std, var_indices = idx,
-      degrees_freedom = vapply(dosage_list, nrow, integer(1)))
-    K <- res$psi
-    if (nrow(K) == length(names_all) + 1) K <- K[-1, -1]   # drop phantom var
-    rownames(K) <- colnames(K) <- names_all
+    # Bridge accessions -- genotyped in >1 protocol group -- are the shared rows through
+    # which covariance_combiner stitches the separately-built per-panel GRMs. Keep them in
+    # each GRM alongside the needed accessions (they may not be needed themselves), then
+    # drop them from the combined result. `bridge` is empty when panels are disjoint, in
+    # which case this reduces to the old need-only behaviour.
+    bridge <- .bridge_accessions(dosage_list)
+    keep   <- union(need, bridge)
+    grms <- purrr::compact(lapply(dosage_list, function(d) .vanraden(.qc_markers(d, cfg), keep)))
+    if (!length(grms)) infeasible("no_geno_overlap_in_panels")
+    if (length(grms) == 1) {
+      K <- grms[[1]]
+    } else {
+      std  <- lapply(grms, function(g) g / mean(diag(g)))
+      names_all <- unique(unlist(lapply(std, colnames)))
+      idx  <- lapply(std, function(g) match(colnames(g), names_all))
+      res  <- T3BrapiHelpers::covariance_combiner(
+        partial_covs = std, var_indices = idx,
+        degrees_freedom = vapply(std, nrow, integer(1)))
+      K <- res$psi
+      if (nrow(K) == length(names_all) + 1) K <- K[-1, -1]   # drop phantom var
+      rownames(K) <- colnames(K) <- names_all
+    }
+    # Eliminate the bridge accessions now that stitching is done -- they were scaffolding.
+    final <- intersect(rownames(K), need)
+    if (length(final) < 2) infeasible("no_geno_overlap_in_panels")
+    K <- K[final, final, drop = FALSE]
   } else if (m == "rkhs_gaussian") {
-    X <- .merge_markers(dosage_list)
-    X <- .qc_markers(X, cfg)
-    D2 <- as.matrix(stats::dist(X))^2
-    theta <- cfg$kernel.rkhs_theta / (stats::median(D2[D2 > 0]) + 1e-9)
+    X <- .qc_markers(.best_panel(dosage_list, need), cfg)
+    rows <- intersect(rownames(X), need)
+    if (length(rows) < 2) infeasible("no_geno_overlap_in_panels")
+    D2 <- as.matrix(stats::dist(X[rows, , drop = FALSE]))^2
+    # Bandwidth from the POPULATION's typical distance, so theta means the same thing
+    # regardless of how many accessions this trial happens to need. Subsampled: the
+    # full population distance matrix would be O(n_pop^2).
+    ref  <- rownames(X)
+    if (length(ref) > 300) ref <- sample(ref, 300)
+    Dref <- as.matrix(stats::dist(X[ref, , drop = FALSE]))^2
+    theta <- cfg$kernel.rkhs_theta / (stats::median(Dref[Dref > 0]) + 1e-9)
     K <- exp(-theta * D2)
   } else {
-    # vanRaden_single (also the fallback when em_combine has one project).
-    X <- .merge_markers(dosage_list)
-    K <- rrBLUP::A.mat(.qc_markers(X, cfg))
+    # vanRaden_single (also the fallback when em_combine has one panel).
+    K <- .vanraden(.qc_markers(.best_panel(dosage_list, need), cfg), need)
+    if (is.null(K)) infeasible("no_geno_overlap_in_panels")
   }
   diag(K) <- diag(K) + ridge
   K
+}
+
+# Accessions genotyped in >1 protocol group -- present in the rownames of >=2 of the
+# dosage matrices. These are the shared rows covariance_combiner uses to stitch the
+# per-panel GRMs together (em_combine); they are kept in the GRMs sent to the combiner
+# and dropped from its result. Empty when the panels have disjoint accession sets.
+.bridge_accessions <- function(dosage_list) {
+  counts <- table(unlist(lapply(dosage_list, rownames), use.names = FALSE))
+  names(counts)[counts >= 2L]
+}
+
+# The protocol group covering the most of `need`.
+.best_panel <- function(dosage_list, need) {
+  if (length(dosage_list) == 1) return(dosage_list[[1]])
+  cover <- vapply(dosage_list, function(d) length(intersect(rownames(d), need)), integer(1))
+  dosage_list[[which.max(cover)]]
+}
+
+# VanRaden GRM over `need`, centred and scaled on the allele frequencies of the FULL
+# population in X. Because K_ij depends on the other accessions only through p, this
+# is exactly the [need, need] submatrix of the whole population's GRM -- at
+# O(n_need^2 * m) instead of O(n_pop^2 * m).
+#
+# NOT rrBLUP::A.mat: A.mat documents {-1,0,1} coding and our dosages are {0,1,2}. Its
+# internal freq = (colMeans(X)+1)/2 then equals p + 0.5, so its MAF = pmin(freq, 1-freq)
+# goes NEGATIVE for every marker with alt frequency > ~0.5 and its min.MAF filter drops
+# them silently -- about half the panel, leaving a GRM whose off-diagonals correlate
+# only ~0.7 with the correct one. (Centering happened to survive; the scaling did not.)
+#
+# The {0,1,2} assumption has not gone away -- it has MOVED here, into `p`. So guard it:
+# a negative entry means someone changed the dosage encoding (e.g. "fixed" .vcf_to_dosage
+# to rrBLUP's {-1,0,1}), which would make p meaningless and reproduce the same class of
+# silent bug. Fail loudly instead.
+.vanraden <- function(X, need) {
+  rows <- intersect(rownames(X), need)
+  if (length(rows) < 2) return(NULL)
+  rng <- suppressWarnings(range(X, na.rm = TRUE))
+  if (is.finite(rng[1]) && rng[1] < 0)
+    fatal(sprintf("dosages must be coded {0,1,2}; saw a minimum of %g", rng[1]),
+          "bug_dosage_coding")
+  p <- colMeans(X) / 2                                   # population allele frequency
+  denom <- 2 * sum(p * (1 - p))
+  if (!is.finite(denom) || denom <= 0) return(NULL)
+  W <- sweep(X[rows, , drop = FALSE], 2, 2 * p, "-")
+  tcrossprod(W) / denom
 }
 
 # Merge per-project dosage matrices on shared markers (intersection), stacking
@@ -340,7 +545,10 @@ build_kernel <- function(cfg, dosage_list) {
     # No usable shared marker set: fall back to the largest single project.
     return(dosage_list[[which.max(vapply(dosage_list, nrow, integer(1)))]])
   }
-  mats <- lapply(dosage_list, function(d) d[, common, drop = FALSE])
+  # Richest marker build first, so that when the same accession appears in two
+  # projects the row kept below comes from the better-genotyped one.
+  ord  <- order(vapply(dosage_list, ncol, integer(1)), decreasing = TRUE)
+  mats <- lapply(dosage_list[ord], function(d) d[, common, drop = FALSE])
   X <- do.call(rbind, mats)
   X[!duplicated(rownames(X)), , drop = FALSE]
 }

@@ -39,6 +39,21 @@ optimizer_settings <- function() {
     # Grain yield - kg/ha is 84527 on wheat.triticeaetoolbox.org. Set NULL to
     # disable the filter and sample from all trials (the old, slower behaviour).
     focal_trait_db_id = "84527",
+    # ---- genotype source combining (subtask C) ----------------------------
+    # Two genotyping projects are treated as the SAME protocol -- and so are
+    # combined before marker QC -- when they share at least this fraction of the
+    # smaller project's marker panel. Protocol *ids* cannot be used for this: a
+    # "V2"/"v2.1" protocol is the same protocol scored against a different
+    # reference genome, so it carries a different id but (near-)identical markers.
+    # On the T3 projects seen so far the two classes separate cleanly: same-panel
+    # pairs share 100% of the smaller panel, everything else <= 75%.
+    merge_containment = 0.95,
+    # Within a protocol group, two projects are REDUNDANT when they share at least
+    # this fraction of the smaller accession set (same lines re-called). Keep the
+    # project with more accessions; if the accession sets are identical, keep the
+    # one with more markers.
+    redundant_acc_overlap = 0.90,
+
     min_trial_acc    = 30,       # skip trials with fewer genotyped accessions
     min_train_trials = 3,        # skip focal trials we cannot assemble a training set for
     max_sample_fail  = 25,       # consecutive trial-sampling failures before halting

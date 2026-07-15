@@ -155,15 +155,36 @@ disarm_evaluation()
 ### L2 — `engine` (offline)
 
 Build a tiny store of synthetic evaluations, then watch the decision engine.
+`choose_config()` runs in phases, so seed the store the way the loop itself does —
+otherwise it just hands back the five submissions forever (Phase 1).
 
 ```r
 s   <- modifyList(optimizer_settings(), list(simulate = TRUE))
 con <- open_store(tempfile(fileext = ".sqlite"))
+
+# On a FRESH store, choose_config()'s Phase 1 returns the five submissions one by
+# one and keeps doing so until EACH seed has a row in the store -- so step it once
+# now to see `source = "seed:Prediction1"`, then seed them for real:
+choose_config(con, s)$source                   # -> "seed:Prediction1" (nothing stored yet)
+seeds <- seed_configs()
+for (r in 1:3) {                               # a few trials each -> reps for the incumbent
+  tr <- sample_trial(s)
+  for (nm in names(seeds)) for (sc in s$schemes) {
+    ev <- evaluate_config_on_trial(seeds[[nm]], tr, sc, s)
+    store_eval(con, seeds[[nm]], tr$id, sc, ev$score, ev$n_test,
+               ev$status, ev$reason, ev$detail %||% NA, ev$seconds)
+  }
+}
+choose_config(con, s)$source                   # -> "random_init" (Phase 1 cleared, <n_random_init scored)
+
+# Now fill with random configs until >= n_random_init are scored, so the surrogate
+# can take over (Phase 3):
 for (i in 1:30) { tr <- sample_trial(s); cfg <- sample_config()
   for (sc in s$schemes) { ev <- evaluate_config_on_trial(cfg, tr, sc, s)
     store_eval(con, cfg, tr$id, sc, ev$score, ev$n_test, ev$status, ev$reason, ev$detail %||% NA, ev$seconds) } }
+
 arm_evaluation("engine")
-ch <- choose_config(con, s)                    # step: which phase? seed/random/acquisition
+ch <- choose_config(con, s)                    # now steps INTO the acquisition phase
 disarm_evaluation()
 ```
 
@@ -251,28 +272,126 @@ peek(obs); peek(trial$accessions)
 - *Assumption:* the `obs_<sid>` cache is trait-independent — the focal trait is
   filtered at *read* time, so changing `focal_trait` reuses it.
 
-### L6 — `subtaskA` select training trials (start with FEW trials)
+### L6 — `subtaskA` select training trials
+
+Subtask A has **three** methods and they share almost no code, so each gets its own
+level: **L6a** `accession_overlap`, **L6b** `top_k_similar`, **L6c** `same_program`.
+All three run on the cached trial `10676`, cheapest first. Arm once for all of them:
 
 ```r
-arm_evaluation("subtaskA")
-# HIGH overlap threshold first -> few neighbours -> few downloads later:
-cfgA <- modifyList(seed_configs()$Prediction1,
-                   list(train_select.method = "accession_overlap",
-                        train_select.primary_only = "yes",
-                        train_select.primary_min = 20))
-tr_ids <- select_training_trials(cfgA, trial, conn, s)
-disarm_evaluation()
+arm_evaluation("subtaskA")     # ... disarm_evaluation() after L6c
 ```
 
-- **→ returns** `tr_ids` a character vector of study ids (the focal id removed
-  downstream in `run_pipeline`).
-- **🔍 eyeball** a *high* `primary_min` returns a short list; lowering it (or
-  turning off `primary_only`) lengthens it monotonically. `top_k_similar` returns
-  exactly `k`; `same_program` respects `prog_cap`.
+`.find_related()` derives the neighbour list from the **`acc_<sid>` cache**: one wizard
+query returns the candidate trials, then the germplasm-overlap counts are set
+intersections of accession lists. So the first call on a *cold* trial fetches `acc_` for
+every candidate (watch the "Germplasm overlap: candidate trials" progress bar), and every
+later call — on any trial, at any threshold — reuses those files. The counts are also
+memoized in RAM for the session, so repeats are instant. If a *repeat* is slow, the
+`acc_` cache is not being hit.
+
+#### L6a — `accession_overlap` (start with FEW trials)
+
+```r
+ao <- function(pmin, smin, only) modifyList(seed_configs()$Prediction1,
+        list(train_select.method = "accession_overlap", train_select.primary_min = pmin,
+             train_select.secondary_min = smin, train_select.primary_only = only))
+# HIGH overlap threshold first -> few neighbours -> few downloads later:
+cfgA   <- ao(20, 12, "yes")                                        # carried into L7-L10
+tr_ids <- prim <- select_training_trials(cfgA, trial, conn, s)     # primary tier only
+both <- select_training_trials(ao(20, 12, "no"),  trial, conn, s)  # + secondary tier
+lo   <- select_training_trials(ao(20,  6, "no"),  trial, conn, s)  # looser secondary
+```
+
+- **→ returns** a character vector of study ids (the focal id is removed downstream in
+  `run_pipeline`).
+- **🔍 eyeball** a *high* `primary_min` returns a short list; lowering it lengthens it
+  monotonically. The secondary tier is **additive**: `all(prim %in% both)` is `TRUE`, and
+  loosening `secondary_min` only grows it (`all(both %in% lo)`).
 - **🚩 red flag** an empty list where the trial obviously has neighbours (a
-  `.find_related` / id-space bug), or a list that ignores the threshold.
-- *Assumption:* `.find_related` reads `T3BrapiHelpers`' tabyl columns
-  (`other_study_db_id`, `n`); a shape change there silently empties the result.
+  `.find_related` / id-space bug); a list that ignores the threshold;
+  `setequal(prim, both)` — the secondary tier added *nothing*, i.e. the expansion is
+  silently a no-op.
+- *Assumption:* the secondary tier pools the germplasm across **all** primary trials and
+  makes **one** `.find_related` call against that combined accession set (via
+  `.find_related(pooled_acc, …, input = "accessions")`). A candidate is judged on its
+  overlap with the pool *as a whole*, so a trial sharing a few accessions with each of
+  several primary trials can qualify even though it clears the threshold against no single
+  primary trial — this is deliberately more inclusive than the old per-primary-trial hop
+  (which itself replaced a hidden `head(primary, 10)` cap). `primary_min` sets how large the
+  primary pool is; `secondary_min` is the overlap threshold against the pooled germplasm.
+- *Assumption:* `.find_related` counts overlap in germplasm **name** space (from
+  `acc_<sid>`, the same space every downstream join uses) and returns only trials in
+  `trial_catalog()` — i.e. **only trials that measured the focal trait**. A neighbour that
+  shares germplasm but never measured the trait is correctly absent: it would have counted
+  toward `min_train_trials` while contributing no observations.
+
+#### L6b — `top_k_similar` (the ranking oracle)
+
+```r
+tk <- function(k, sim) modifyList(seed_configs()$Prediction3,
+        list(train_select.method = "top_k_similar", train_select.k = k,
+             train_select.similarity = sim))
+k8  <- select_training_trials(tk(8,  "genomic"), trial, conn, s)
+k16 <- select_training_trials(tk(16, "genomic"), trial, conn, s)
+
+# INDEPENDENT re-derivation of the genomic ranking (does not call .trial_similarity):
+pool <- .find_related(trial$id, conn, s, 1)                       # the candidate pool
+ov   <- purrr::map_int(pool, ~ length(intersect(
+          get_trial_accessions(.x, conn, s), trial$accessions))) |> setNames(pool)
+identical(sort(k8), sort(names(head(sort(ov, decreasing = TRUE), 8))))   # -> TRUE
+```
+
+- **→ returns** at most `k` study ids — `k` is a **cap**, not a guarantee: the pool can be
+  smaller than `k`.
+- **🔍 eyeball** the independent check above: under `similarity = "genomic"` the selected
+  trials are exactly the `k` with the largest shared-accession count. Raising `k` is
+  **nested** (`all(k8 %in% k16)`).
+- **🚩 red flag** `similarity = "environmental"` when `trial$lat` is **not finite** — the
+  whole environmental branch is skipped, every score stays `0`, and `head()` silently
+  returns an **arbitrary** `k` trials that look like a real answer. Check
+  `is.finite(trial$lat)` *before* trusting an environmental or `both` selection.
+  Also: `k` ids returned but the ranking is uncorrelated with `ov` → the similarity is
+  being computed against the wrong accession set.
+- *Assumption:* the candidate pool is `.find_related(focal, …, min_common = 1)` — i.e.
+  **every** focal-trait trial sharing ≥1 germplasm, often hundreds. `.trial_similarity`
+  then calls `get_trial_accessions()` once per candidate — the same `acc_<sid>` files
+  `.find_related` just populated, so the "Similarity: candidate trials" bar should fly.
+  If it crawls, the `acc_` cache is being missed.
+
+#### L6c — `same_program` (the fallback trap)
+
+```r
+sp <- function(cap) modifyList(seed_configs()$Prediction5,
+        list(train_select.method = "same_program", train_select.prog_cap = cap))
+p40 <- select_training_trials(sp(40), trial, conn, s)
+p10 <- select_training_trials(sp(10), trial, conn, s)
+
+# INDEPENDENT check against the catalogue:
+cat  <- trial_catalog(conn, s)
+mine <- cat |> dplyr::filter(program_name == trial$program, study_db_id != trial$id)
+all(p40 %in% as.character(mine$study_db_id)); length(p40) <= 40   # -> TRUE, TRUE
+```
+
+- **→ returns** at most `prog_cap` ids, all from the focal trial's breeding program, focal
+  excluded.
+- **🔍 eyeball** every returned id is in `mine` (same program) and the cap is respected.
+  Note the program's total size, `nrow(mine)`: if it is ≤ `prog_cap`, the cap branch never
+  fires and `p40` is simply the whole program.
+- **🚩 red flag** the `> prog_cap` branch re-filters to trials at the **same location or in
+  the same year**, and if nothing matches it returns **empty** — a big program can collapse
+  to zero training trials, which then reads downstream as an ordinary
+  `too_few_train_trials` infeasibility rather than as this fallback misfiring. If `p10` is
+  empty while `nrow(mine)` is large, that is the trap, not a genuinely unusable trial.
+  Confirm with `dplyr::filter(mine, location_name == trial$location | year == trial$year)`.
+- *Assumption:* `same_program` selects on **metadata only** — nothing guarantees the
+  chosen trials share any germplasm with the focal trial, so this method can hand a
+  perfectly large training set with no genomic connection to subtask C/D. A high trial
+  count here is not evidence of a usable training set.
+
+```r
+disarm_evaluation()
+```
 
 ### L7 — `subtaskB` preprocess phenotypes → targets
 
@@ -303,41 +422,86 @@ disarm_evaluation()
 peek(dl, accessions = c(names(targets), trial$accessions))
 ```
 
-- **→ returns** `dl` a named list of accessions×markers dosage matrices, with an
-  `n_projects` attribute.
+- **→ returns** `dl` a named list with **one matrix per protocol group** (name =
+  the merged project ids, e.g. `"2762+9441"`), each holding that group's **full
+  genotyped population** — every sample in the constituent projects, not just the
+  accessions this trial needs. `nrow()` in the hundreds-to-thousands is correct and
+  expected. An `n_projects` attribute carries how many covering projects we started from.
 - **🔍 eyeball** `peek(dl, accessions=…)` — each matrix's **rowname overlap** with
-  the accession set is > 0.
+  the accession set is > 0 (it will be far smaller than `nrow`, which is the point).
+  `names(dl)` shows which projects got merged: same-panel projects (a protocol and its
+  `V2`/`v2.1` re-registration against another reference genome) should land together.
 - **🚩 red flag** a **non-empty dosage matrix with overlap = 0** — the decisive
   synonym / name-mismatch signature (VCF samples under old preliminary names);
   `n_projects > 0` but `length(dl) == 0` (found projects, extracted nothing → a
-  download/parse bug, flagged `suspect` by `run_pipeline`). Cross-check with
-  `diagnose_trial("10676", s, conn)` which prints "overlap with accessions" from an
-  independent re-derivation.
-- *Assumption:* a genotyping **project** id (not protocol id) is what
-  `vcf_archived()` accepts; the dosage cache is keyed by project + thin + VCF byte
-  size, so a re-downloaded VCF of a different size invalidates a stale dosage.
+  download/parse bug, flagged `suspect` by `run_pipeline`). Also: two obviously
+  different panels merged into one group (check `settings$merge_containment`), or a
+  group whose matrix has far fewer accessions than its projects did (over-eager
+  `.prune_redundant`). Cross-check with `diagnose_trial("10676", s, conn)`.
+- *Assumption:* a genotyping **project** id (not protocol id) is what `vcf_archived()`
+  accepts. Protocol *ids* are **not** used to group projects — a `V2`/`v2.1` protocol is
+  the same protocol scored against a different reference genome and carries a different
+  id, so grouping is done on **marker overlap** (`settings$merge_containment`, 0.95).
 
 ### L9 — `subtaskD` build the kernel
 
 ```r
 arm_evaluation("subtaskD")
-K <- build_kernel(cfgA, dl)
+need <- union(names(targets), trial$accessions)
+K <- build_kernel(cfgA, dl, need)
 disarm_evaluation()
 peek(K)
+
+# Marker QC no longer depends on WHO is needed. Confirm it:
+Q <- .qc_markers(dl[[1]], cfgA)                    # QC on the panel's full population
+ncol(Q)                                            # same number for any `need`
+ncol(.qc_markers(dl[[1]][sample(rownames(dl[[1]]), 10), ], cfgA))   # the OLD way: fewer
 ```
 
-- **→ returns** `K` a square relationship/kernel matrix over the genotyped
-  accessions.
-- **🔍 eyeball** `peek(K)` — **square, symmetric**, diagonal in a sane range
-  (~1 for VanRaden after standardization; exactly 1 on an RKHS diagonal). Clones
-  (identical dosage rows) give identical `K` rows.
-- **🚩 red flag** `symmetric = FALSE`; a diagonal far from expectation; `em_combine`
-  returning a matrix one row/col too big (the phantom-variance row must be
-  dropped); fewer than 50 markers surviving QC (`.qc_markers` should have raised
-  `too_few_markers`).
-- *Assumption:* `ridge` is added to the diagonal *after* the base kernel; markers
-  are the intersection across projects (with a largest-project fallback below 50
-  shared markers).
+- **→ returns** `K` a square relationship matrix over the **needed** accessions only
+  (training ∪ focal, intersected with the genotyped), even though QC and the allele
+  frequencies behind it came from the panel's full population.
+- **🔍 eyeball** `peek(K)` — **square, symmetric**; clones (identical dosage rows) give
+  identical `K` rows. The two `.qc_markers` calls above should differ substantially: on
+  a 3,707-sample panel, QC from 10 needed accessions keeps ~6,900 markers against the
+  population's ~9,000 — a quarter of the marker set decided by *who was needed*. That
+  disagreement is the bug this level exists to keep fixed.
+- **🚩 red flag** `symmetric = FALSE`; `em_combine` returning a matrix one row/col too
+  big (the phantom-variance row must be dropped); fewer than 50 markers surviving QC
+  (`.qc_markers` should have raised `too_few_markers`); a **`NaN` GRM**.
+- *Diagonal expectation — read the method first.* The diagonal only diagnoses anything
+  under `vanRaden_single`:
+
+  | method | expected diagonal | why |
+  |---|---|---|
+  | `vanRaden_single` | **~1.5–2.0** on real T3 data | VanRaden's diagonal is `1 + F` and wheat lines are highly inbred. **~1.0 here is suspicious, not reassuring** — the old miscoded kernel produced exactly that (mean 0.95) because `A.mat`'s scaling denominator was wrong. |
+  | `em_combine` | **~1.0, by construction** | `build_kernel` standardises each partial covariance (`g / mean(diag(g))`) before `covariance_combiner()`. A diagonal near 1 here means nothing. |
+  | `rkhs_gaussian` | **exactly 1.0** | `exp(-theta·0)` on the diagonal, by definition. |
+
+  So do not read a ~1.0 diagonal as the coding bug unless the config is `vanRaden_single`.
+- *Assumption:* `ridge` is added to the diagonal *after* the base kernel; markers are the
+  intersection across projects within a group (largest-project fallback below 50 shared).
+- *Assumption (em_combine):* the per-panel GRMs are built over `need ∪ bridge`, where
+  `bridge = .bridge_accessions(dosage_list)` are accessions genotyped in **>1 protocol
+  group**. Those shared rows are what `covariance_combiner()` stitches the separate GRMs
+  through; the combined GRM is then subset back to `need` (bridges are scaffolding, dropped
+  from the result). Confirm by stepping: `bridge` should be non-empty when panels overlap
+  (real cached panels share 285 such accessions), and `rownames(K)` after the branch is a
+  subset of `need` with no bridge-only accession left. When `bridge` is empty (disjoint
+  panels) this is a no-op and the cross-panel blocks are legitimately 0 — see §6.
+- *Assumption:* **dosages are coded `{0,1,2}`.** That assumption did not disappear when
+  `rrBLUP::A.mat()` was dropped — it moved into `.vanraden()`'s `p <- colMeans(X)/2`, and
+  it is the thing to protect. `.vanraden()` now `fatal()`s on a negative entry
+  (`bug_dosage_coding`), so re-encoding `.vcf_to_dosage` to `{-1,0,1}` fails loudly rather
+  than silently producing a meaningless `p`. The original bug was the mirror image: `A.mat`
+  documents `{-1,0,1}`, so fed `{0,1,2}` it computed `freq = p + 0.5`, its internal
+  `MAF = pmin(freq, 1-freq)` went negative for every alt-major marker, and its `min.MAF`
+  filter dropped them (on an all-alt-major panel: *every* marker, giving an all-`NaN` GRM).
+  Do not "simplify" back to `A.mat` without recoding to `X - 1`.
+- *Assumption:* because `K_ij` depends on other accessions only through the allele
+  frequency `p`, building it over `need` with population `p` gives **exactly** the
+  `[need, need]` submatrix of the whole population's GRM — the reordering is for cost,
+  not an approximation. `tests/test_subtasks.R` asserts that identity.
 
 ### L10 — `subtaskE` + `subtaskF` train and predict
 
@@ -412,7 +576,15 @@ cheap paths clear first:
 - **Few training trials before many.** In subtask A, start with a *high*
   `accession_overlap` `primary_min` (fewest neighbours → fewest downloads); lower
   it only once the high-threshold path is clean. The prompt's rule of thumb —
-  overlap 20 before overlap 3.
+  overlap 20 before overlap 3. Turning `primary_only` off adds a secondary lookup over
+  the pooled primary germplasm, so a low `primary_min` (large pool) plus a low
+  `secondary_min` (loose threshold) is the most expensive corner of the whole search
+  space; go there last.
+- **Neighbour lookups warm the `acc_` cache; dosages are what actually cost.**
+  `.find_related()` fetches `acc_<sid>` for each candidate trial on a cold cache, then
+  reuses them for every later trial and for `.trial_similarity`. What the bigger training
+  sets still cost you is downstream: more training trials → more genotyping projects →
+  more VCFs in subtask C.
 - **Smallest canary before largest.** `calibrate_canary_trials()` /
   `canary_anchor()` print per-trial accession counts; check the smallest trial
   before the largest so a bug surfaces on cheap data.
@@ -436,9 +608,14 @@ noticing something "a little funny" that the code's own checks did not.
 | Signature | What it means | Expose it with |
 |---|---|---|
 | `rep`/`block` (or any column) **all `NA`** | BLUE silently degraded to germplasm means | `peek(train_obs)` NA-per-column |
+| `top_k_similar` returns `k` trials on a trial with **no coordinates** | `similarity = "environmental"`/`"both"` skips its branch when `trial$lat` is not finite → every score 0 → an **arbitrary** `k` | L6b: `is.finite(trial$lat)`; compare the selection to the genomic overlap ranking |
+| `same_program` returns **empty** on a large program | the `> prog_cap` branch re-filters to same location-or-year and keeps nothing; reads downstream as ordinary `too_few_train_trials` | L6c: compare with `nrow(mine)` (program size) before concluding infeasible |
 | **targets all identical / degenerate** | `build_targets` collapsed | `peek(targets)` distinct count |
 | **dosage rowname overlap = 0** on a non-empty matrix | synonym / name mismatch | `peek(dl, accessions=…)`; `diagnose_trial` |
-| **K not symmetric / bad diagonal / clones differ** | kernel construction bug | `peek(K)` |
+| **K not symmetric / clones differ** | kernel construction bug | `peek(K)` |
+| **K diagonal ~1.0 under `vanRaden_single`** on inbred wheat | a dosage-coding bug: alt-major markers dropped and/or the scaling denominator wrong. Correct VanRaden here is `1 + F` ≈ 1.5–2. (Only diagnostic for `vanRaden_single` — `em_combine` standardises its diagonal to 1 and RKHS's is 1 by definition.) | L9 diagonal table; `tests/test_subtasks.R` alt-major oracle |
+| **marker count after QC changes with the size of the needed set** | QC is being estimated from the needed accessions, not the panel population (10 needed → ~6.9k markers; population → ~9.0k) | the two `.qc_markers` calls in L9 |
+| **em_combine cross-panel blocks all ~0** when panels *do* share accessions | bridge accessions (genotyped in >1 protocol) are being dropped before the combine, so `covariance_combiner` has nothing to stitch through — the value of `em_combine` collapses to block-diagonal | step `.bridge_accessions(dosage_list)` (should be non-empty); a cross-panel block should be non-zero when a bridge exists, exactly 0 when it doesn't |
 | **predictions constant → `NA`**, or **score ≈ 1** | model collapse, or leakage | `peek(pred)`; sanity-check the score |
 | **CV0 and CV00 scores identical** | `mask_cv` no-op — the CV00 mask isn't excluding focal accessions | the L4 differential check |
 | **funnel cliff** (many in, ~0 out), tagged `suspect` | data-hiding bug, not genuine infeasibility | the `flow` funnel; `report.md` ⚠ section |
@@ -498,7 +675,7 @@ exits non-zero on failure. `run_all.R` runs each in a fresh process and aggregat
 | Command | Expected |
 |---|---|
 | `tests/test_config_space.R` | ~5 genome invariants across ~400 sampled/recombined configs → `config_space tests: 8007 passed, 0 failed` (8007 = individual assertions) |
-| `tests/test_subtasks.R` | `Tier 1 subtask tests: 45 passed, 0 failed` |
+| `tests/test_subtasks.R` | `Tier 1 subtask tests: 64 passed, 0 failed` |
 | `tests/run_all.R` | `2/2 test files passed` |
 | `tests/test_sim_loop.R` (or `run_all.R --all`) | `PASS: optimizer beats submissions and improves over random search`, exit 0 |
 
@@ -514,6 +691,9 @@ before moving on.
 | `.qc_markers` (`pipeline.R`) | monomorphic dropped (MAF=0); high-missing dropped; remaining NA imputed (mean vs mean_round); errors below 50 markers. |
 | `.merge_markers` (`pipeline.R`) | keeps marker intersection; de-dups repeated accessions; falls back to largest project when <50 shared; single project as-is. |
 | `build_kernel` (`pipeline.R`) | VanRaden K symmetric, clones give identical rows; `ridge` raises the diagonal by exactly `ridge`; RKHS K symmetric, diag 1, off-diag (0,1], clones→1; `em_combine` with one project equals the plain VanRaden GRM. |
+| `.vanraden` (`pipeline.R`) | the GRM over `need` with population frequencies **equals** the `[need, need]` submatrix of the full-population GRM; on an all-alt-major panel it equals hand-computed VanRaden while `rrBLUP::A.mat` returns all-`NaN` (the coding bug); QC on 5 accessions keeps a different marker set than QC on the 200-accession population. |
+| `.group_by_panel` / `.prune_redundant` (`pipeline.R`) | 100%-marker-containment projects group together, 40% do not; identical accession sets → the richer marker build survives; ≥90%-overlapping accession sets → the project with more accessions survives; disjoint accession sets → both kept. |
+| `.bridge_accessions` + em_combine (`pipeline.R`) | bridge = accessions in ≥2 panels (empty when disjoint); a panel with one needed accession is `NULL` under `need` alone but a valid GRM once bridges are kept; `build_kernel("em_combine")` is feasible *because of* the bridges and returns exactly `need × need` (bridges eliminated). |
 | `build_targets` + `.blue_per_trial` (`pipeline.R`) | `raw_mean` = mean of per-trial means; `trial_center` invariant to a constant added to one trial; `blue_lm` recovers group means; outlier removal at `z_thr`; `two_stage_blup` shrinks spread; `per_trial_z` → mean 0 sd 1. |
 | `predict_test` (`pipeline.R`) | conditional expectation with a clone test line → `mu + u[clone-source]`; `blend_obs_w` blends under CV0, no-op under CV00; fallback below `min_overlap` → all predictions `mean(targets)`. |
 | `mask_cv` (`pipeline.R`) | CV0 keeps every row; CV00 drops exactly the focal-accession rows (CV0 set minus CV00 set = the focal rows). |
@@ -568,7 +748,7 @@ trial once, reuse forever.
 | Cache file | Written by | Holds | Max age |
 |---|---|---|---|
 | `trial_catalog.rds` | `trial_catalog()` | focal-trait trials + metadata + lat/long/elev | 7 d |
-| `acc_<studyid>.rds` | `get_trial_accessions()` | accession names of a trial | 30 d |
+| `acc_<studyid>.rds` | `get_trial_accessions()` | accession names of a trial. Also the substrate `.find_related()` and `.trial_similarity()` compute germplasm overlap from — one file per trial serves every pairwise comparison, so there is no separate neighbour cache | 30 d |
 | `obs_<studyid>.rds` | `get_observations()` | all numeric observations of a study | 30 d |
 | `proj_<hash>.rds` | `projects_for_accessions()` | genotyping **project** ids covering an accession set | 30 d |
 | `raw_project_<id>.vcf` | `.ensure_project_vcf()` | the archived VCF (validated complete). **Transient**: deleted once its full dosage is cached | until dosage cached |

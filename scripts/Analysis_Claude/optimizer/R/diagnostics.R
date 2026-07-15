@@ -328,7 +328,8 @@ calibrate_canary_trials <- function(settings, conn, anchor = NULL, deep = FALSE)
                             train_select.primary_min = 2, train_select.secondary_min = 8))
     n_same_prog  <- nt(list(train_select.method = "same_program",
                             train_select.prog_cap = 9999))
-    n_topk_pool  <- length(tryCatch(.find_related(id, conn, 1), error = function(e) character()))
+    n_topk_pool  <- length(tryCatch(.find_related(id, conn, settings, 1),
+                                    error = function(e) character()))
 
     # genotyping projects covering the focal accessions.
     projects <- tryCatch(projects_for_accessions(acc, conn, settings),

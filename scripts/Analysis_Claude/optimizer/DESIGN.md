@@ -208,13 +208,30 @@ param-applies-to-method invariant; `canonical_keys()`, `config_hash()`;
 end to end; dispatchers `select_training_trials()`, `build_targets()`,
 `choose_geno_sources()`, `build_kernel()`, `train_model()`, `predict_test()`;
 `mask_cv()`: CV0/CV00 masking; helpers `.find_related`, `.trial_similarity`,
-`.blue_per_trial`, `.per_acc_blue`, `.merge_markers`, `.qc_markers`,
-`.fit_sommer_GE`.
+`.blue_per_trial`, `.per_acc_blue`, `.group_by_panel` (group projects into protocols
+by marker overlap — protocol *ids* cannot do this, since a `V2`/`v2.1` protocol is the
+same protocol against another reference genome), `.prune_redundant` (drop re-called
+duplicate projects within a group), `.merge_markers`, `.qc_markers`, `.best_panel`,
+`.bridge_accessions` (accessions genotyped in >1 protocol group — the shared rows
+`em_combine` stitches its per-panel GRMs through), `.vanraden` (VanRaden GRM over the
+needed accessions, centred and scaled on the panel population's allele frequencies —
+**not** `rrBLUP::A.mat`, which assumes `{-1,0,1}` coding and silently drops every
+alt-major marker when fed `{0,1,2}` dosages), `.fit_sommer_GE`.
+
+Subtask C returns one **full-population** dosage matrix per protocol group; subtask D
+runs marker QC and estimates allele frequencies on that population and only then forms
+the GRM over the accessions the trial needs. Because `K_ij` depends on other accessions
+only through the allele frequency, this is exactly the `[need, need]` submatrix of the
+population's GRM, at `O(n_need²·m)` rather than `O(n_pop²·m)`. Under `em_combine`, the
+per-panel GRMs additionally retain the **bridge** accessions (genotyped in >1 protocol
+group) so `covariance_combiner()` can stitch the panels through their shared rows; the
+bridges are dropped from the combined GRM, which is subset back to `need`.
 
 **`R/data_access.R`** (BrAPI + caching) — `cached()`: the on-disk memoizer;
 `trial_catalog()`: focal-trait trials + metadata + coords; `sample_real_trial()`,
 `build_trial_descriptor()`, `.trial_descriptor()`: focal trial descriptors;
-`get_observations()`/`.obs_tibble()`: phenotypes; `get_trial_accessions()`;
+`get_observations()`/`.obs_tibble()`: phenotypes; `get_trial_accessions()` (also the
+substrate `.find_related`/`.trial_similarity` compute germplasm overlap from);
 `projects_for_accessions()`: genotyping **project** ids; `get_project_dosage()` +
 `.ensure_project_vcf()`/`.vcf_complete()`/`.vcf_to_dosage()`: VCF → dosage;
 `.focal_trait_parts`/`.matches_trait`/`.apply_target_domain`.

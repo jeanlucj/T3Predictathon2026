@@ -111,7 +111,14 @@ d2 <- mk(c("c", "d", "e", "f"), paste0("m", 11:80))   # shares m11..m60 = 50 mar
 mg <- .merge_markers(list(d1, d2))
 # Oracle: 50 shared markers; accessions a,b,c,d,e,f with duplicates c,d dropped.
 check(ncol(mg) == 50, "merge keeps the 50-marker intersection")
-check(identical(rownames(mg), c("a", "b", "c", "d", "e", "f")), "duplicate accessions dropped")
+check(setequal(rownames(mg), c("a", "b", "c", "d", "e", "f")) && !anyDuplicated(rownames(mg)),
+      "every accession once; duplicates c,d dropped")
+# Oracle: when an accession sits in two projects, its row must come from the project with
+# the RICHER marker build (more markers = the better-genotyped call of the same line).
+rich <- matrix(2, 2, 70, dimnames = list(c("c", "d"), paste0("m", 11:80)))   # 70 markers, all 2s
+poor <- matrix(0, 2, 60, dimnames = list(c("c", "d"), paste0("m", 1:60)))    # 60 markers, all 0s
+check(all(.merge_markers(list(poor = poor, rich = rich))["c", ] == 2),
+      "duplicated accession takes its row from the richer marker build")
 # Oracle: <50 shared markers -> fall back to the project with more accessions.
 small1 <- mk(c("a", "b", "c", "d"), paste0("m", 1:40))
 small2 <- mk(c("a", "b", "c", "d", "e", "f"), paste0("p", 1:40))   # 0 shared markers
@@ -124,24 +131,138 @@ set.seed(2)
 Xc <- matrix(sample(0:2, 6 * 60, replace = TRUE), nrow = 6)
 Xc[2, ] <- Xc[1, ]                                    # id2 is a clone of id1
 rownames(Xc) <- paste0("id", 1:6); colnames(Xc) <- paste0("m", 1:60)
-K <- build_kernel(kcfg("vanRaden_single"), list(Xc))
+all6 <- rownames(Xc)
+K <- build_kernel(kcfg("vanRaden_single"), list(Xc), all6)
 check(isSymmetric(unname(K)), "VanRaden GRM symmetric")
 # Oracle: genetically identical lines have identical relationship vectors.
 check(approx(K["id1", ], K["id2", ], tol = 1e-8), "clone lines -> identical GRM rows")
 # Oracle: adding ridge raises only the diagonal, by exactly ridge.
-K0 <- build_kernel(kcfg("vanRaden_single", ridge = 0), list(Xc))
-K1 <- build_kernel(kcfg("vanRaden_single", ridge = 0.01), list(Xc))
+K0 <- build_kernel(kcfg("vanRaden_single", ridge = 0), list(Xc), all6)
+K1 <- build_kernel(kcfg("vanRaden_single", ridge = 0.01), list(Xc), all6)
 check(approx(diag(K1) - diag(K0), 0.01, 1e-8), "ridge adds exactly 0.01 to diagonal")
 check(approx((K1 - K0)[upper.tri(K1)], 0, 1e-8), "ridge leaves off-diagonals unchanged")
 # Oracle: em_combine with a single project is the plain VanRaden GRM.
-check(approx(build_kernel(kcfg("em_combine"), list(Xc)), K0, 1e-8),
+check(approx(build_kernel(kcfg("em_combine"), list(Xc), all6), K0, 1e-8),
       "em_combine, one project -> VanRaden")
 # RKHS Gaussian kernel.
-Kr <- build_kernel(kcfg("rkhs_gaussian", rkhs_theta = 1, ridge = 0), list(Xc))
+Kr <- build_kernel(kcfg("rkhs_gaussian", rkhs_theta = 1, ridge = 0), list(Xc), all6)
 check(isSymmetric(unname(Kr)), "RKHS kernel symmetric")
 check(approx(diag(Kr), 1, 1e-8), "RKHS diagonal = 1")
 check(all(Kr > 0 & Kr <= 1 + 1e-9), "RKHS entries in (0,1]")
 check(approx(Kr["id1", "id2"], 1, 1e-8), "RKHS clone pair = 1")
+
+# ===========================================================================
+cat(".vanraden (population frequencies; the A.mat coding bug)\n")
+set.seed(7)
+npop <- 200; nmk <- 300
+Xp <- matrix(sample(0:2, npop * nmk, replace = TRUE), nrow = npop,
+             dimnames = list(paste0("g", 1:npop), paste0("m", 1:nmk)))
+need4 <- c("g3", "g17", "g42", "g99")
+# Oracle (the whole point of the change): the GRM built over `need` with population
+# allele frequencies IS the [need, need] submatrix of the whole population's GRM.
+# So "QC + GRM on the population, then subset" and this are the same numbers.
+Kfull <- .vanraden(Xp, rownames(Xp))
+Ksub  <- .vanraden(Xp, need4)
+check(approx(Ksub, Kfull[need4, need4], 1e-10),
+      "GRM on needed rows w/ population freqs == submatrix of the full-population GRM")
+
+# Oracle: hand-computed VanRaden on a panel where EVERY marker is alt-major (p > 0.5).
+# This is the case rrBLUP::A.mat silently destroys: it assumes {-1,0,1}, so on {0,1,2}
+# its internal freq = p + 0.5 > 1, its MAF goes negative, and min.MAF drops the marker.
+set.seed(9)
+pmaj <- runif(nmk, 0.7, 0.95)                        # every marker alt-major
+Xmaj <- sapply(pmaj, function(pk) rbinom(60, 2, pk))
+dimnames(Xmaj) <- list(paste0("g", 1:60), paste0("m", 1:nmk))
+phat  <- colMeans(Xmaj) / 2
+Wman  <- sweep(Xmaj, 2, 2 * phat, "-")
+Kman  <- tcrossprod(Wman) / (2 * sum(phat * (1 - phat)))   # VanRaden, by hand
+check(approx(.vanraden(Xmaj, rownames(Xmaj)), Kman, 1e-10),
+      "alt-major panel: .vanraden matches hand-computed VanRaden")
+# ... and the regression itself: A.mat, fed the same {0,1,2} matrix, does NOT. It reads
+# every alt-major marker as MAF < 0 and drops it, so on this panel it drops ALL of them
+# and returns an entirely NaN GRM. (On real panels it drops ~half and returns a GRM that
+# merely looks plausible -- which is why this went unnoticed.)
+Abad <- suppressWarnings(tryCatch(rrBLUP::A.mat(Xmaj), error = function(e) NULL))
+check(is.null(Abad) || anyNA(Abad) || !isTRUE(approx(Abad, Kman, 1e-6)),
+      "regression: rrBLUP::A.mat on {0,1,2} dosages does not give VanRaden (the bug)")
+check(is.null(Abad) || all(is.na(Abad)),
+      "regression: A.mat drops every alt-major marker -> all-NaN GRM")
+
+# Oracle: the {0,1,2} assumption now lives in .vanraden's `p`, so it must be guarded.
+# Handing it rrBLUP's {-1,0,1} coding must FAIL LOUDLY, not silently return a wrong p.
+check(inherits(try(.vanraden(Xp - 1, rownames(Xp)), silent = TRUE), "try-error"),
+      "guard: {-1,0,1} coding is rejected, not silently mis-centred")
+
+# Oracle: QC decisions depend on the population they are estimated from. QC on a
+# 5-accession subset keeps a different marker set than QC on the population.
+qc_pop <- colnames(.qc_markers(Xp, kcfg("vanRaden_single")))
+qc_sub <- colnames(.qc_markers(Xp[1:5, , drop = FALSE], kcfg("vanRaden_single")))
+check(!identical(qc_pop, qc_sub), "QC on 5 accessions != QC on the 200-accession population")
+
+# ===========================================================================
+cat(".bridge_accessions + em_combine stitching\n")
+set.seed(11)
+mkpanel <- function(rows, mcols) {
+  m <- matrix(sample(0:2, length(rows) * length(mcols), replace = TRUE),
+              nrow = length(rows), dimnames = list(rows, mcols))
+  m
+}
+# Two DIFFERENT protocols (disjoint marker sets). need = {n1, n2}: n1 only in panel A,
+# n2 only in panel B. b1..b3 are genotyped in BOTH -> the bridge.
+bridge3 <- paste0("b", 1:3)
+pA <- mkpanel(c("n1", bridge3, paste0("xa", 1:8)), paste0("mA", 1:120))   # protocol A markers
+pB <- mkpanel(c("n2", bridge3, paste0("xb", 1:8)), paste0("mB", 1:120))   # protocol B markers
+need2 <- c("n1", "n2")
+
+# Oracle: bridge = accessions in >= 2 panels; disjoint panels -> none.
+check(setequal(.bridge_accessions(list(pA, pB)), bridge3),
+      ".bridge_accessions finds accessions in >= 2 panels")
+check(length(.bridge_accessions(list(pA, mkpanel(paste0("z", 1:6), paste0("mC", 1:120))))) == 0,
+      "disjoint panels -> no bridge accessions")
+
+# Oracle (the crux): with need alone, panel A has a single needed row (n1) -> .vanraden NULL,
+# uncombinable. Keeping the bridge accessions makes the panel a valid GRM.
+check(is.null(.vanraden(.qc_markers(pA, kcfg("em_combine")), need2)),
+      "need-only: panel with one needed accession is uncombinable (NULL)")
+check(!is.null(.vanraden(.qc_markers(pA, kcfg("em_combine")), union(need2, bridge3))),
+      "with bridges: the same panel yields a valid GRM")
+
+# Oracle: em_combine end to end -- feasible BECAUSE of the bridges, and the bridges are
+# eliminated so the result is exactly need x need. (Runs the real covariance_combiner.)
+Kem <- build_kernel(kcfg("em_combine", ridge = 0), list(A = pA, B = pB), need2)
+check(setequal(rownames(Kem), need2), "em_combine result is exactly need x need (bridges dropped)")
+check(isSymmetric(unname(Kem)), "em_combine stitched GRM is symmetric")
+check(all(is.finite(Kem)), "em_combine stitched GRM is finite (cross-panel block estimated)")
+
+# ===========================================================================
+cat(".group_by_panel / .prune_redundant\n")
+gset <- optimizer_settings()
+pmk <- function(rows, cols) matrix(1, length(rows), length(cols),
+                                   dimnames = list(rows, cols))
+# Same panel (v1 vs v2 reference build): v2 contains ALL of v1's markers.
+v1 <- pmk(paste0("a", 1:10), paste0("m", 1:100))
+v2 <- pmk(paste0("a", 1:10), paste0("m", 1:140))       # 100/100 = 100% containment
+# A different panel: shares only 40 of the smaller 100 markers.
+other <- pmk(paste0("b", 1:10), c(paste0("m", 1:40), paste0("x", 1:60)))
+g <- .group_by_panel(list(v1 = v1, v2 = v2, other = other), gset)
+check(any(vapply(g, function(x) setequal(x, c("v1", "v2")), logical(1))),
+      "100% marker containment -> same protocol group")
+check(any(vapply(g, function(x) identical(x, "other"), logical(1))),
+      "40% marker containment -> its own group")
+
+# Oracle: identical accession sets -> keep the richer marker build (the v1/v2 case).
+pr <- .prune_redundant(list(v1 = v1, v2 = v2), gset)
+check(identical(names(pr), "v2"), "identical accessions -> project with more markers survives")
+# Oracle: >=90% shared accessions but not identical -> keep the one with MORE accessions,
+# even though it has fewer markers.
+big   <- pmk(paste0("a", 1:100), paste0("m", 1:100))
+small <- pmk(paste0("a", 1:95),  paste0("m", 1:140))   # 95/95 = 100% of the smaller set
+pr2 <- .prune_redundant(list(big = big, small = small), gset)
+check(identical(names(pr2), "big"), "92% shared accessions -> project with more accessions survives")
+# Oracle: distinct accession sets are NOT redundant.
+indep <- pmk(paste0("z", 1:50), paste0("m", 1:100))
+check(length(.prune_redundant(list(big = big, indep = indep), gset)) == 2,
+      "disjoint accessions -> both projects kept")
 
 # ===========================================================================
 cat("build_targets + .blue_per_trial\n")
