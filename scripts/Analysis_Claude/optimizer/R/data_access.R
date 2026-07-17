@@ -292,63 +292,134 @@ get_trial_accessions <- function(study_id, conn, settings) {
 # single request. (get_geno_protocol_from_germ_vec returns protocol ids and must
 # NOT be used here.)
 projects_for_accessions <- function(accessions, conn, settings) {
-  key <- paste0("proj_", substr(rlang::hash(sort(unique(accessions))), 1, 12))
-  cached(settings, key, max_age_days = 30, expr = {
-    acc <- unique(as.character(accessions))
-    batches <- split(acc, ceiling(seq_along(acc) / 500L))
-    ids <- unlist(purrr::map(batches, function(b) {
-      w <- tryCatch(conn$wizard("genotyping_projects", list(accessions = b)),
-                    error = function(e) NULL)
-      if (is.null(w)) character() else as.character(w$data$ids)
-    },
-    .progress = "Genotyping projects for accessions"), use.names = FALSE)
-    unique(stats::na.omit(ids))
-  })
+  acc <- unique(as.character(accessions))
+  key <- paste0("proj_", substr(rlang::hash(sort(acc)), 1, 12))
+  p   <- .cache_path(settings, key)
+  if (file.exists(p) &&
+      as.numeric(difftime(Sys.time(), file.info(p)$mtime, units = "days")) <= 30)
+    return(readRDS(p))
+
+  # Cache ONLY a result assembled from wizard calls that all SUCCEEDED. A transient
+  # server error (HTTP 500 / timeout) used to be swallowed to an empty result and then
+  # cached for 30 days -- permanently hiding a trial's genotype data (its projects read
+  # as zero). Now a failed batch sets `failed`, we still return what we have so the
+  # current run proceeds, but we do NOT persist it, so the next run retries.
+  batches <- split(acc, ceiling(seq_along(acc) / 500L))
+  failed  <- FALSE
+  ids <- unlist(purrr::map(batches, function(b) {
+    w <- tryCatch(conn$wizard("genotyping_projects", list(accessions = b)),
+                  error = function(e) { failed <<- TRUE; NULL })
+    if (is.null(w)) character() else as.character(w$data$ids)
+  }, .progress = "Genotyping projects for accessions"), use.names = FALSE)
+  ids <- unique(stats::na.omit(ids))
+  if (!failed) saveRDS(ids, p)
+  ids
 }
 
 # --- dosage matrix for one genotyping project ------------------------------
 # Return the accessions x markers dosage (0/1/2) for `project_id`, restricted to
-# keep_samples. Extracts the WHOLE project (all samples) once and caches that,
-# keyed by project (+ marker_thin + the raw VCF's byte size); every later call --
-# for any trial / any keep_samples -- reads that one cache and subsets at read
-# time. So a project's VCF is downloaded and parsed exactly once; afterwards the
+# keep_samples. Extracts the WHOLE project (all samples) once and caches that; every
+# later call -- for any trial / any keep_samples -- reads that one cache and subsets at
+# read time. So a project's VCF is downloaded and parsed exactly once; afterwards the
 # large raw VCF is redundant and is DELETED to reclaim space.
 #
+# Cache files per project (all under settings$cache_dir):
+#   * dosage_<pid>[_thin<k>]_sz<bytes>.rds -- the full-project dosage. <k> is the
+#     EFFECTIVE thinning (requested marker_thin, raised if the project is too large to
+#     hold densely -- see .eff_thin); absent when k == 1.
+#   * stat_<pid>.rds -- {n_samples, n_markers}, written on first extraction so a later
+#     run can compute the effective thin (hence the right dosage file name) WITHOUT the
+#     now-deleted VCF.
+#   * unparseable_<pid>.rds -- a negative cache: an archive we found is not a usable VCF
+#     (transposed/non-VCF layout, or no genotypes). Future calls skip it instead of
+#     re-downloading and re-failing every run. Delete it to force a retry.
+#
 # Robustness (a flaky/partial download used to poison the cache permanently):
-#   * .ensure_project_vcf validates the VCF is COMPLETE before extraction; a
-#     truncated file is re-downloaded once, else an error (retried next run);
-#   * the full-dosage cache name carries the VCF byte size, so a later re-download
-#     at a different size (were the VCF still present) would not be shadowed by a
-#     stale dosage. The cache is looked up by pattern (ignoring size) so it works
-#     WITHOUT the VCF -- which is what lets the VCF be deleted.
+#   * .ensure_project_vcf validates the VCF is COMPLETE (not truncated) before use; a
+#     truncated file is re-downloaded once, else an error (retried next run). That is a
+#     TRANSIENT failure -- not negative-cached. A STRUCTURAL failure on a complete file
+#     (.vcf_stat rejects it) is permanent -> negative cache.
+# A very large project (millions of markers) cannot be held as a dense integer matrix
+# (7.5M markers x 683 samples is >20 GB). Auto-thin it -- keep every k-th marker -- until
+# its dense size fits settings$dosage_budget_bytes. Deterministic from (samples, markers).
+.eff_thin <- function(n_samples, n_markers, requested_thin, budget_bytes) {
+  # as.numeric: samples*markers overflows 32-bit integer for big panels (683 * 7.5M).
+  fit <- ceiling(as.numeric(n_samples) * as.numeric(n_markers) * 4 / max(1, budget_bytes))
+  max(as.numeric(requested_thin), 1, fit)
+}
+
+.find_dosage <- function(settings, project_id, thin) {
+  tag  <- if (thin > 1) paste0("_thin", thin) else ""
+  hits <- list.files(settings$cache_dir,
+    pattern = paste0("^dosage_", project_id, tag, "_sz[0-9]+[.]rds$"), full.names = TRUE)
+  if (length(hits)) hits[[which.max(file.info(hits)$mtime)]] else NA_character_
+}
+
 get_project_dosage <- function(project_id, keep_samples, conn, settings,
                                marker_thin = 1L) {
-  thin_tag <- if (marker_thin > 1) paste0("_thin", marker_thin) else ""
-  # Look up the cached FULL-project dosage without needing the raw VCF.
-  pat  <- paste0("^dosage_", project_id, thin_tag, "_sz[0-9]+[.]rds$")
-  hits <- list.files(settings$cache_dir, pattern = pat, full.names = TRUE)
-  full <- if (length(hits)) {
-    readRDS(hits[[which.max(file.info(hits)$mtime)]])          # newest, if several
-  } else {
-    path <- .ensure_project_vcf(project_id, conn, settings)    # download + validate
-    sz   <- file.info(path)$size
-    d    <- .vcf_to_dosage(path, NULL, marker_thin)            # NULL -> ALL samples
-    if (!is.null(d)) {
-      saveRDS(d, .cache_path(settings, paste0("dosage_", project_id, thin_tag, "_sz", sz)))
-      # full-project dosage now cached -> the (large) raw VCF is redundant; delete it.
-      base <- sub("[.]gz$", "", path)
-      unlink(c(base, paste0(base, ".gz")))
-    }
-    d
+  pid <- as.character(project_id)
+  subset <- function(full) {
+    # keep_samples = NULL -> the WHOLE project population. Marker QC and allele
+    # frequencies must be estimated from it (subtask D), not from the handful of
+    # accessions a given trial happens to need.
+    if (is.null(full) || is.null(keep_samples)) return(full)
+    keep <- intersect(rownames(full), as.character(keep_samples))
+    if (!length(keep)) NULL else full[keep, , drop = FALSE]
   }
-  if (is.null(full)) return(NULL)
-  # keep_samples = NULL -> the WHOLE project population. Marker QC and allele
-  # frequencies must be estimated from it (subtask D), not from the handful of
-  # accessions a given trial happens to need.
-  if (is.null(keep_samples)) return(full)
-  keep <- intersect(rownames(full), as.character(keep_samples))
-  if (!length(keep)) return(NULL)
-  full[keep, , drop = FALSE]
+
+  # Permanent negative cache: an archive we have already found unparseable (e.g. a
+  # transposed/non-VCF export). Skip the download+parse loop entirely. Delete
+  # cache/unparseable_<pid>.rds to force a retry (e.g. after the archive is fixed).
+  if (file.exists(.cache_path(settings, paste0("unparseable_", pid)))) return(NULL)
+
+  # 1. Direct lookup by the REQUESTED thin -- covers every existing cache and every
+  #    project small enough that the requested thin is the effective thin.
+  hit <- .find_dosage(settings, pid, marker_thin)
+  if (!is.na(hit)) return(subset(readRDS(hit)))
+
+  # 2. A project measured before may auto-thin coarser than requested; its stat lets us
+  #    find the effective-thin cache without re-downloading the (deleted) VCF.
+  statp <- .cache_path(settings, paste0("stat_", pid))
+  if (file.exists(statp)) {
+    st  <- readRDS(statp)
+    eff <- .eff_thin(st$n_samples, st$n_markers, marker_thin, settings$dosage_budget_bytes)
+    if (eff != marker_thin) {
+      hit <- .find_dosage(settings, pid, eff)
+      if (!is.na(hit)) return(subset(readRDS(hit)))
+    }
+  }
+
+  # 3. Miss -> fetch the VCF, measure it, then parse at the effective thin.
+  path <- .ensure_project_vcf(project_id, conn, settings)      # download + integrity check
+  rm_raw <- function() { base <- sub("[.]gz$", "", path); unlink(c(base, paste0(base, ".gz"))) }
+  st <- tryCatch(.vcf_stat(path), error = function(e) e)
+  if (inherits(st, "error")) {                                 # not a standard VCF
+    saveRDS(list(reason = conditionMessage(st), when = Sys.time()),
+            .cache_path(settings, paste0("unparseable_", pid)))
+    rm_raw(); return(NULL)
+  }
+  saveRDS(list(n_samples = st$n_samples, n_markers = st$n_markers), statp)
+  eff <- .eff_thin(st$n_samples, st$n_markers, marker_thin, settings$dosage_budget_bytes)
+  if (!is.finite(eff) || eff < 1L) {                          # unmeasurable -> treat as unusable
+    saveRDS(list(reason = "could not size the VCF", when = Sys.time()),
+            .cache_path(settings, paste0("unparseable_", pid)))
+    rm_raw(); return(NULL)
+  }
+  if (eff > marker_thin)
+    message(sprintf(
+      "project %s: %d markers x %d samples exceeds the dosage budget; auto-thinning to every %dth marker",
+      pid, st$n_markers, st$n_samples, eff))
+  sz <- file.info(path)$size
+  d  <- .vcf_to_dosage(path, NULL, eff)
+  if (is.null(d)) {                                            # complete VCF, no genotypes
+    saveRDS(list(reason = "no usable genotypes", when = Sys.time()),
+            .cache_path(settings, paste0("unparseable_", pid)))
+    rm_raw(); return(NULL)
+  }
+  tag <- if (eff > 1) paste0("_thin", eff) else ""
+  saveRDS(d, .cache_path(settings, paste0("dosage_", pid, tag, "_sz", sz)))
+  rm_raw()                                                     # full dosage cached; raw redundant
+  subset(d)
 }
 
 # Ensure a complete archived VCF for a project is on disk; return its path
@@ -393,40 +464,77 @@ get_project_dosage <- function(project_id, keep_samples, conn, settings,
   FALSE
 }
 
-# VCF -> dosage (accessions x markers). keep_samples = NULL extracts ALL samples
-# (used to cache the whole project once); a character vector subsets to those
-# samples. Optional genome-wide marker thinning for very large projects.
-# (Condensed from build_grm_for_cv00.R; same encoding and the same transposition fix.)
+# Read up to the #CHROM line from an OPEN connection, validate the standard VCF column
+# layout, and return the split header. Rejects a transposed / non-VCF export (some T3
+# archives store markers as columns -- the "#CHROM" row then holds chromosome labels and
+# the next row starts with POS), which no VCF parser can read.
+.vcf_header <- function(con) {
+  repeat {
+    line <- readLines(con, 1L)
+    if (!length(line)) stop("no #CHROM header line")
+    if (startsWith(line, "#CHROM")) {
+      h <- strsplit(line, "\t", fixed = TRUE)[[1]]
+      if (length(h) < 10L || h[2] != "POS" ||
+          !identical(h[c(3L, 4L, 5L, 9L)], c("ID", "REF", "ALT", "FORMAT")))
+        stop("not a standard VCF header (transposed or malformed): first fields ",
+             paste(utils::head(h, 4L), collapse = ","))
+      return(h)
+    }
+  }
+}
+
+# Validate and measure a VCF in one cheap streaming pass (no genotype parsing): sample
+# names from the header, variant count from the body. Used to pick the marker thinning
+# before the heavier dosage pass, and to reject non-VCF archives early.
+.vcf_stat <- function(path) {
+  con <- file(path, "rt"); on.exit(close(con), add = TRUE)   # file() auto-decompresses gz/BGZF
+  header <- .vcf_header(con)
+  n <- 0L
+  repeat {
+    ls <- readLines(con, 100000L); if (!length(ls)) break
+    ls <- ls[!is.na(ls)]                              # a huge file can yield undecodable lines
+    n <- n + sum(!startsWith(ls, "#"))
+  }
+  list(samples = header[-(1:9)], n_samples = length(header) - 9L, n_markers = n)
+}
+
+# VCF -> dosage (accessions x markers, coded 0/1/2). keep_samples = NULL extracts ALL
+# samples; `thin` keeps every thin-th variant. Streams the file in fixed-size chunks so
+# peak memory is bounded by one chunk plus the (thinned) result, regardless of file size.
+# Robust to the real T3 archives seen: gzip/BGZF is decompressed transparently by file();
+# a malformed variant line (wrong field count) is skipped rather than failing the whole
+# file; a transposed/non-VCF header is rejected. Encoding is byte-identical to the former
+# vcfR-based reader (tests/test_subtasks.R checks this against a hand-built VCF).
 .vcf_to_dosage <- function(path, keep_samples, thin = 1L) {
-  read_samples <- function(p) {
-    con <- if (grepl("[.]gz$", p)) gzfile(p, "rt") else file(p, "rt"); on.exit(close(con))
-    repeat { line <- readLines(con, 1); if (!length(line)) stop("no #CHROM in ", p)
-      if (startsWith(line, "#CHROM")) return(strsplit(line, "\t")[[1]][-(1:9)]) }
+  con <- file(path, "rt"); on.exit(close(con), add = TRUE)
+  header  <- .vcf_header(con)
+  samples <- header[-(1:9)]
+  keep_idx <- if (is.null(keep_samples)) seq_along(samples)
+              else which(samples %in% keep_samples)
+  if (!length(keep_idx)) return(NULL)
+  scol   <- 9L + keep_idx
+  nfield <- length(header)
+  thin   <- max(1L, as.integer(thin))
+  blocks <- list(); ids <- character(); seen <- 0L
+  repeat {
+    lines <- readLines(con, 20000L); if (!length(lines)) break
+    lines <- lines[!is.na(lines)]                     # drop undecodable lines (huge files)
+    lines <- lines[!startsWith(lines, "#")]; if (!length(lines)) next
+    parts <- strsplit(lines, "\t", fixed = TRUE)
+    good  <- lengths(parts) == nfield                 # skip malformed (ragged) variant lines
+    gi    <- seen + cumsum(good); seen <- seen + sum(good)
+    keeprow <- if (thin > 1L) good & ((gi - 1L) %% thin == 0L) else good
+    parts <- parts[keeprow]; if (!length(parts)) next
+    m  <- do.call(rbind, parts)                        # rows all have nfield fields
+    ids <- c(ids, m[, 3L])
+    g  <- sub(":.*", "", m[, scol, drop = FALSE])      # GT is the first ':'-subfield
+    g  <- gsub("|", "/", g, fixed = TRUE)              # phased | -> unphased /
+    num <- matrix(NA_integer_, nrow(g), ncol(g))       # anything but 0/0,0/1,1/0,1/1 -> NA
+    num[g == "0/0"] <- 0L; num[g == "0/1" | g == "1/0"] <- 1L; num[g == "1/1"] <- 2L
+    blocks[[length(blocks) + 1L]] <- num               # markers(chunk) x samples
   }
-  samples  <- read_samples(path)
-  keep_cols <- if (is.null(keep_samples)) 9 + seq_along(samples)
-               else 9 + which(samples %in% keep_samples)
-  if (!length(keep_cols)) return(NULL)
-  read_path <- path
-  if (thin > 1) {
-    tmp <- tempfile(fileext = ".vcf"); on.exit(unlink(tmp), add = TRUE)
-    ci <- if (grepl("[.]gz$", path)) gzfile(path, "rt") else file(path, "rt"); co <- file(tmp, "wt")
-    seen <- 0L
-    repeat { ls <- readLines(ci, 50000L); if (!length(ls)) break
-      hdr <- startsWith(ls, "#"); gi <- seen + cumsum(!hdr)
-      writeLines(ls[hdr | (!hdr & ((gi - 1L) %% thin == 0L))], co); seen <- seen + sum(!hdr) }
-    close(ci); close(co); read_path <- tmp
-  }
-  vcf <- vcfR::read.vcfR(read_path, cols = c(1:9, keep_cols), verbose = FALSE)
-  if (is.null(vcf@gt) || ncol(vcf@gt) < 2) return(NULL)
-  gt <- vcf@gt[, -1, drop = FALSE]          # drop=FALSE: keep a matrix even for 1 sample
-  gt_dim <- dim(gt)
-  if (any(grepl(":", gt))) gt <- sub(":.*", "", gt)
-  gt <- gsub("\\|", "/", gt)
-  dim(gt) <- gt_dim                          # restore dims that the string ops may strip
-  num <- matrix(NA_integer_, nrow = nrow(gt), ncol = ncol(gt))
-  num[gt %in% "0/0"] <- 0L; num[gt %in% c("0/1", "1/0")] <- 1L; num[gt %in% "1/1"] <- 2L
-  mat <- t(num)                                    # transpose AFTER filling (the bugfix)
-  colnames(mat) <- vcf@fix[, "ID"]; rownames(mat) <- colnames(vcf@gt)[-1]
+  if (!length(blocks)) return(NULL)
+  mat <- t(do.call(rbind, blocks))                     # -> samples x markers
+  rownames(mat) <- samples[keep_idx]; colnames(mat) <- ids
   mat
 }

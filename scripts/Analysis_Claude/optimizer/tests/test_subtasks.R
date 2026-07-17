@@ -80,6 +80,37 @@ check(nrow(d1) == 1 && approx(d1["S2", ], c(2, 0, 1)), "single-sample subset")
 dt <- suppressWarnings(.vcf_to_dosage(vpath, c("S1", "S2"), thin = 2))
 check(identical(colnames(dt), c("m1", "m3")), "marker thinning keeps every 2nd")
 
+# Oracle: a malformed variant line (wrong field count) is SKIPPED, not fatal -- the good
+# markers still come through. (This is the real 8114 failure: one 3-field variant record.)
+bad_lines <- c(vcf_lines[1:5],
+               paste("1", "250", "BAD", sep = "\t"),            # 3 fields, not 11
+               vcf_lines[6])
+bpath <- tempfile(fileext = ".vcf"); writeLines(bad_lines, bpath)
+db <- .vcf_to_dosage(bpath, c("S1", "S2"), thin = 1)
+check(identical(colnames(db), c("m1", "m2", "m3")), "malformed variant line skipped, good markers kept")
+
+# Oracle: a transposed / non-VCF header (markers as columns) is REJECTED, not misread.
+# (The real 14511: the "#CHROM" row holds chromosome labels; field 2 is not POS.)
+tr_lines <- c("##fileformat=VCFv4.2",
+              paste("#CHROM", "1A", "1A", "1B", "2A", sep = "\t"),
+              paste("POS", "100", "200", "300", "400", sep = "\t"))
+tpath <- tempfile(fileext = ".vcf"); writeLines(tr_lines, tpath)
+check(inherits(try(.vcf_to_dosage(tpath, NULL, 1L), silent = TRUE), "try-error"),
+      "transposed / non-VCF header rejected")
+
+# Oracle: .vcf_stat validates + counts in one pass.
+st <- .vcf_stat(vpath)
+check(st$n_samples == 2 && st$n_markers == 3 && identical(st$samples, c("S1", "S2")),
+      ".vcf_stat: 2 samples, 3 markers")
+check(inherits(try(.vcf_stat(tpath), silent = TRUE), "try-error"), ".vcf_stat rejects non-VCF")
+
+# Oracle: .eff_thin -- fits under budget -> requested thin; over budget -> raised to fit.
+# Integer inputs on purpose: n_samples*n_markers must not overflow 32-bit int (683L*7.47ML).
+check(.eff_thin(100L, 1000L, 1L, 2e9) == 1, ".eff_thin: small project keeps requested thin")
+check(.eff_thin(100L, 1000L, 4L, 2e9) == 4, ".eff_thin: never below the requested thin")
+# 683 x 7.47M x 4 = 20.4 GB; /2 GB budget -> ceil 10.2 -> 11.
+check(.eff_thin(683L, 7467224L, 1L, 2e9) == 11, ".eff_thin: oversized project auto-thinned (no int overflow)")
+
 # ===========================================================================
 cat(".qc_markers\n")
 set.seed(1)

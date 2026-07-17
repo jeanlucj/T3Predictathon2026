@@ -54,6 +54,12 @@ optimizer_settings <- function() {
     # one with more markers.
     redundant_acc_overlap = 0.90,
 
+    # Memory budget for a single project's dense dosage matrix. A project whose
+    # samples x markers x 4 bytes would exceed this is auto-thinned (every k-th marker)
+    # until it fits -- a 7.5M-marker GBS panel cannot be held densely and does not need
+    # every marker for a GRM. The effective thinning is recorded in the dosage cache name.
+    dosage_budget_bytes = 2e9,
+
     min_trial_acc    = 30,       # skip trials with fewer genotyped accessions
     min_train_trials = 3,        # skip focal trials we cannot assemble a training set for
     max_sample_fail  = 25,       # consecutive trial-sampling failures before halting

@@ -233,7 +233,12 @@ bridges are dropped from the combined GRM, which is subset back to `need`.
 `get_observations()`/`.obs_tibble()`: phenotypes; `get_trial_accessions()` (also the
 substrate `.find_related`/`.trial_similarity` compute germplasm overlap from);
 `projects_for_accessions()`: genotyping **project** ids; `get_project_dosage()` +
-`.ensure_project_vcf()`/`.vcf_complete()`/`.vcf_to_dosage()`: VCF → dosage;
+`.ensure_project_vcf()`/`.vcf_complete()`/`.vcf_header()`/`.vcf_stat()`/`.vcf_to_dosage()`:
+VCF → dosage — a base-R **streaming, chunked** reader (bounded memory; skips malformed
+variant lines; rejects transposed/non-VCF archives; gzip/BGZF transparent), with
+`.eff_thin()`/`.find_dosage()` for auto-thinning oversized projects to
+`settings$dosage_budget_bytes` and a `stat_<id>` / `unparseable_<id>` cache so an
+unparseable archive is skipped rather than re-downloaded every run;
 `.focal_trait_parts`/`.matches_trait`/`.apply_target_domain`.
 
 **`R/evaluate.R`** — `sample_trial()`: real or synthetic trial; `score_predictions()`:
@@ -268,7 +273,7 @@ funnel + raw re-derivation; `canary_config()`/`.canary_filler()`: permissive con
 
 | Directory | Written by | Contents |
 |---|---|---|
-| `cache/` | `cached()` in `data_access.R` | `trial_catalog.rds`; `acc_<id>.rds`; `obs_<sid>.rds`; `proj_<hash>.rds`; `raw_project_<id>.vcf`; `dosage_<id>[_thin<N>]_sz<size>_<keephash>.rds`. Regenerable; the only expensive thing here is the download/extraction, paid once. |
+| `cache/` | `cached()` in `data_access.R` | `trial_catalog.rds`; `acc_<id>.rds`; `obs_<sid>.rds`; `proj_<hash>.rds`; `raw_project_<id>.vcf`; `dosage_<id>[_thin<k>]_sz<size>.rds`; `stat_<id>.rds`; `unparseable_<id>.rds`. Regenerable; the only expensive thing here is the download/extraction, paid once. |
 | `state/` | `store.R`, `report.R` | `evals.sqlite` (the single source of truth), `report.md` (rewritten each checkpoint), `STOP` (touch to halt). |
 | `logs/` | `run_optimizer.R` (via the launch redirect) | `run.out` — per-iteration heartbeat, the startup canary line, `CANARY ALARM` / `FATAL` / `step error` messages. |
 

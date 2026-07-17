@@ -57,10 +57,10 @@ EVAL_GROUPS <- list(
   subtaskB    = c("mask_cv", "build_targets", ".blue_per_trial", ".per_acc_blue"),
   subtaskC    = c("choose_geno_sources", "projects_for_accessions",
                   "get_project_dosage",".ensure_project_vcf", ".vcf_to_dosage",
-                  ".group_by_panel", ".prune_redundant"),
+                  ".vcf_stat", ".group_by_panel", ".prune_redundant"),
   subtaskD    = c("build_kernel", ".merge_markers", ".qc_markers", ".vanraden",
                   ".best_panel", ".bridge_accessions"),
-  subtaskE    = c("train_model", ".fit_sommer_GE"),
+  subtaskE    = c("train_model", ".fit_sommer_GE", "score_predictions"),
   subtaskF    = c("predict_test"),
 
   # ---- orchestration / flow glue (its OWN group -> no double-break) -----

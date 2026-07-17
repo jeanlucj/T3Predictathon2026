@@ -25,8 +25,9 @@ database rather than toward the nine Predictathon trials specifically.
 
 ```r
 # Required (most already present in this repo's environment):
-#   tidyverse, here, DBI, RSQLite, jsonlite, rpart, rrBLUP, vcfR, MASS
+#   tidyverse, here, DBI, RSQLite, jsonlite, rpart, rrBLUP, MASS
 #   BrAPI (github TriticeaeToolbox/BrAPI.R), T3BrapiHelpers
+#   (VCF parsing is base-R streaming now -- vcfR is no longer needed.)
 # Recommended for the G+E / RKHS model variants and shrinkage BLUEs:
 install.packages(c("sommer", "lme4"))
 ```
@@ -114,7 +115,7 @@ preserved.
    ```r
    # one-time, in an R session on the server
    install.packages(c("tidyverse","DBI","RSQLite","jsonlite","rpart",
-                       "rrBLUP","vcfR","MASS","sommer","lme4","remotes"))
+                       "rrBLUP","MASS","sommer","lme4","remotes"))
    remotes::install_github("TriticeaeToolbox/BrAPI.R")   # BrAPI
    # T3BrapiHelpers (snake_case fns) from github jeanlucj/T3_brapi_helpers
    ```

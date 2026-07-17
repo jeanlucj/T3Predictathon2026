@@ -675,7 +675,7 @@ exits non-zero on failure. `run_all.R` runs each in a fresh process and aggregat
 | Command | Expected |
 |---|---|
 | `tests/test_config_space.R` | ~5 genome invariants across ~400 sampled/recombined configs → `config_space tests: 8007 passed, 0 failed` (8007 = individual assertions) |
-| `tests/test_subtasks.R` | `Tier 1 subtask tests: 64 passed, 0 failed` |
+| `tests/test_subtasks.R` | `Tier 1 subtask tests: 71 passed, 0 failed` |
 | `tests/run_all.R` | `2/2 test files passed` |
 | `tests/test_sim_loop.R` (or `run_all.R --all`) | `PASS: optimizer beats submissions and improves over random search`, exit 0 |
 
@@ -751,8 +751,10 @@ trial once, reuse forever.
 | `acc_<studyid>.rds` | `get_trial_accessions()` | accession names of a trial. Also the substrate `.find_related()` and `.trial_similarity()` compute germplasm overlap from — one file per trial serves every pairwise comparison, so there is no separate neighbour cache | 30 d |
 | `obs_<studyid>.rds` | `get_observations()` | all numeric observations of a study | 30 d |
 | `proj_<hash>.rds` | `projects_for_accessions()` | genotyping **project** ids covering an accession set | 30 d |
-| `raw_project_<id>.vcf` | `.ensure_project_vcf()` | the archived VCF (validated complete). **Transient**: deleted once its full dosage is cached | until dosage cached |
-| `dosage_<id>[_thin<N>]_sz<size>.rds` | `get_project_dosage()` | the **whole project's** accessions×markers dosage (subset at read). Looked up by pattern (ignoring `sz`); the VCF byte size invalidates a stale dosage if re-downloaded at a different size | ∞ |
+| `raw_project_<id>.vcf` | `.ensure_project_vcf()` | the archived VCF (validated complete). **Transient**: deleted once its dosage is cached OR the archive is found unparseable | until dosage/unparseable cached |
+| `dosage_<id>[_thin<k>]_sz<size>.rds` | `get_project_dosage()` | the **whole project's** accessions×markers dosage (subset at read). `<k>` is the **effective** marker thinning: the requested `marker_thin`, raised automatically if the project is too large to hold densely (see `stat_`). Looked up by pattern (ignoring `sz`) | ∞ |
+| `stat_<id>.rds` | `get_project_dosage()` | `{n_samples, n_markers}` of a project, written on first extraction so a later run can compute the effective thin — and hence the right `dosage_` name — without the (deleted) VCF | ∞ |
+| `unparseable_<id>.rds` | `get_project_dosage()` | **negative cache**: this archive is not a usable VCF (transposed / header-vs-data sample-count mismatch / no genotypes). Future calls skip it instead of re-downloading and re-failing every run. `{reason, when}`. **Delete to force a retry** (e.g. after the archive is fixed upstream) | ∞ |
 | `calibration_lightweight.rds` | (diagnostics, when you save it) | the last calibration table | — |
 
 **`state/`** — the single source of truth.
@@ -854,6 +856,17 @@ the decisive synonym/name-mismatch signal. Reach for it whenever `subtaskC`
   genotype counts ever look low, clear `cache/dosage_*` (regenerable).
 - **Interactive prompt.** `conn$vcf_archived()` can prompt to pick a file and hang a
   non-interactive run — always launch real-mode scripts with `</dev/null`.
+- **The VCF parser is streaming, and some archives are broken.** `.vcf_to_dosage()`
+  streams the VCF in chunks (base R, no `vcfR`) so memory is bounded by one chunk plus the
+  thinned result — a 7.5M-marker panel no longer OOMs. It (a) decompresses gzip/BGZF
+  transparently, (b) **skips a malformed variant line** rather than failing the whole file
+  (a real archive had one 3-field record), and (c) **rejects** a transposed / non-VCF
+  layout. Real T3 archives seen that are genuinely unusable — a transposed export, and one
+  whose `#CHROM` header declares more samples than the data rows carry — are recorded in
+  `cache/unparseable_<id>.rds` and skipped forever after (delete that file to retry). A
+  project too large to hold densely is **auto-thinned** to `settings$dosage_budget_bytes`,
+  the effective thin recorded in the `dosage_` filename. If a project you expect silently
+  yields no genotypes, look for its `unparseable_` marker and read the reason.
 
 ---
 
