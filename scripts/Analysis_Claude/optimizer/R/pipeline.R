@@ -196,7 +196,8 @@ select_training_trials <- function(cfg, trial, conn, settings) {
     # rather than asking once per germplasm.
     batches <- split(acc, ceiling(seq_along(acc) / 500L))
     cand <- unique(unlist(purrr::map(batches, function(b) {
-      w <- conn$wizard("trials", list(accessions = b))
+      w <- .brapi_try(function() conn$wizard("trials", list(accessions = b)),
+                      tries = settings$brapi_tries %||% 4L, what = "trials wizard")
       as.character(w$data$ids)
     })))
     # Keep only trials that measured the focal trait, and drop the excluded trial(s).
@@ -585,7 +586,11 @@ train_model <- function(cfg, y_train, K, train_in, test_in, trial, train_obs) {
   # mixed.solve estimates the variance ratio by REML, i.e. the optimal ridge).
   Ktt <- K[train_in, train_in, drop = FALSE]
   sol <- rrBLUP::mixed.solve(y = as.numeric(y_train[train_in]), K = Ktt)
-  list(kind = "gblup", u = stats::setNames(sol$u, train_in), mu = sol$beta)
+  # mixed.solve returns u as an n x 1 matrix and beta as a 1 x 1 matrix; coerce to plain
+  # numerics so downstream `mu + u_test` is scalar + vector, not array + vector (which R
+  # rejects as "non-conformable arrays").
+  list(kind = "gblup", u = stats::setNames(as.numeric(sol$u), train_in),
+       mu = as.numeric(sol$beta))
 }
 
 .fit_sommer_GE <- function(y_train, K, train_in, train_obs) {
@@ -610,7 +615,7 @@ train_model <- function(cfg, y_train, K, train_in, test_in, trial, train_obs) {
 # Subtask F: predict on the focal trial + post-process
 # ===========================================================================
 predict_test <- function(cfg, fit, K, train_in, test_in, targets, scheme, settings) {
-  mu <- fit$mu
+  mu <- as.numeric(fit$mu)                          # never a 1x1 matrix (see train_model)
   if (length(train_in) < cfg$predict_post.min_overlap) {
     # Fallback: too little genotyped overlap to trust the genomic model.
     return(stats::setNames(rep(mean(targets), length(test_in)), test_in))

@@ -60,6 +60,11 @@ optimizer_settings <- function() {
     # every marker for a GRM. The effective thinning is recorded in the dosage cache name.
     dosage_budget_bytes = 2e9,
 
+    # How many times to attempt a BrAPI network call before giving up. A flaky T3
+    # server (intermittent HTTP 500 / timeout) is ridden out by retrying with backoff, so
+    # a transient error does not surface as a spurious infeasible/error. 1 disables retry.
+    brapi_tries      = 4,
+
     min_trial_acc    = 30,       # skip trials with fewer genotyped accessions
     min_train_trials = 3,        # skip focal trials we cannot assemble a training set for
     max_sample_fail  = 25,       # consecutive trial-sampling failures before halting

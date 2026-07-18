@@ -36,6 +36,20 @@ prcfg <- function(method, ...) modifyList(list(
 no_trial <- list(lat = NA_real_, long = NA_real_, year = NA_integer_)
 
 # ===========================================================================
+cat(".brapi_try (retry through a flaky server)\n")
+# Oracle: retries a transient error and returns the eventual success; a persistent error
+# raises after exactly `tries` attempts; tries=1 disables retry. base_delay=0 keeps it fast.
+n <- 0L; th <- function() { n <<- n + 1L; if (n < 3L) stop("boom"); "ok" }
+check(identical(suppressMessages(.brapi_try(th, tries = 4, base_delay = 0)), "ok") && n == 3L,
+      "retries a transient error, then succeeds (3rd attempt)")
+n2 <- 0L; th2 <- function() { n2 <<- n2 + 1L; stop("always") }
+check(inherits(suppressMessages(try(.brapi_try(th2, tries = 3, base_delay = 0), silent = TRUE)),
+               "try-error") && n2 == 3L, "persistent error raises after exactly `tries` attempts")
+n3 <- 0L; th3 <- function() { n3 <<- n3 + 1L; stop("x") }
+suppressMessages(try(.brapi_try(th3, tries = 1, base_delay = 0), silent = TRUE))
+check(n3 == 1L, "tries=1 disables retry (single attempt)")
+
+# ===========================================================================
 cat("score_predictions\n")
 # Oracle: correlation of a vector with a positive affine transform of itself is 1.
 obs <- setNames(c(1, 2, 3, 4, 5, 6), letters[1:6])

@@ -675,7 +675,7 @@ exits non-zero on failure. `run_all.R` runs each in a fresh process and aggregat
 | Command | Expected |
 |---|---|
 | `tests/test_config_space.R` | ~5 genome invariants across ~400 sampled/recombined configs → `config_space tests: 8007 passed, 0 failed` (8007 = individual assertions) |
-| `tests/test_subtasks.R` | `Tier 1 subtask tests: 71 passed, 0 failed` |
+| `tests/test_subtasks.R` | `Tier 1 subtask tests: 74 passed, 0 failed` |
 | `tests/run_all.R` | `2/2 test files passed` |
 | `tests/test_sim_loop.R` (or `run_all.R --all`) | `PASS: optimizer beats submissions and improves over random search`, exit 0 |
 

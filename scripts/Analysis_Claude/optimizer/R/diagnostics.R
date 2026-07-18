@@ -338,7 +338,8 @@ calibrate_canary_trials <- function(settings, conn, anchor = NULL, deep = FALSE)
     # names, exercises project selection WITHOUT downloading any VCF. This is the
     # default our_n_geno_focal we compare to the anchor.
     members <- if (length(projects)) unique(unlist(lapply(projects, function(pid) {
-        w <- tryCatch(conn$wizard("accessions", list(genotyping_projects = pid)),
+        w <- tryCatch(.brapi_try(function() conn$wizard("accessions", list(genotyping_projects = pid)),
+                                 tries = settings$brapi_tries %||% 4L, what = "project members wizard"),
                       error = function(e) NULL)
         if (is.null(w)) character() else as.character(w$data$names)
       }), use.names = FALSE)) else character()

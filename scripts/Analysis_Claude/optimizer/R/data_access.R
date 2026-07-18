@@ -22,15 +22,42 @@ library(tidyverse)
 # --- tiny on-disk memorizer -------------------------------------------------
 .cache_path <- function(settings, name) file.path(settings$cache_dir, paste0(name, ".rds"))
 
-cached <- function(settings, name, expr, max_age_days = Inf) {
+# Retry a BrAPI network call through a flaky server. `thunk` is a zero-arg function (so it
+# is re-evaluated each attempt); on error we back off (exponential + jitter) and retry up
+# to `tries`, then re-raise the LAST error. A transient 500/timeout is ridden out; a
+# persistent failure still surfaces exactly as before (so callers that treat an error as
+# NULL/infeasible are unchanged in the persistent case). Set tries via
+# settings$brapi_tries (default 4); tries = 1 disables retry.
+.brapi_try <- function(thunk, tries = 4L, base_delay = 2, what = "BrAPI call") {
+  tries <- max(1L, as.integer(tries)); last <- NULL
+  for (i in seq_len(tries)) {
+    r <- tryCatch(thunk(), error = function(e) { last <<- e; e })
+    if (!inherits(r, "error")) return(r)
+    if (i < tries) {
+      message(sprintf("%s failed (%d/%d): %s -- retrying", what, i, tries, conditionMessage(r)))
+      Sys.sleep(base_delay * 2^(i - 1L) + stats::runif(1))
+    }
+  }
+  stop(last)
+}
+
+# On-disk memoizer. `valid(val)` gates the WRITE: only a result that passes it is
+# persisted, so a soft failure (a 200-with-empty response, or a degraded result missing
+# data a sub-fetch failed to supply) is returned for the current call but NOT cached --
+# the next call retries instead of serving the bad answer for `max_age_days`. A hard error
+# in `expr` propagates before the write is reached, so it is never cached either. (The
+# default accepts everything, preserving old behaviour.)
+cached <- function(settings, name, expr, max_age_days = Inf, valid = function(v) TRUE) {
   p <- .cache_path(settings, name)
   if (file.exists(p)) {
     age <- as.numeric(difftime(Sys.time(), file.info(p)$mtime, units = "days"))
     if (age <= max_age_days) return(readRDS(p))
   }
   val <- force(expr)
-  dir.create(dirname(p), showWarnings = FALSE, recursive = TRUE)
-  saveRDS(val, p)
+  if (isTRUE(valid(val))) {
+    dir.create(dirname(p), showWarnings = FALSE, recursive = TRUE)
+    saveRDS(val, p)
+  }
   val
 }
 
@@ -38,7 +65,12 @@ cached <- function(settings, name, expr, max_age_days = Inf) {
 # All trials in the crop, with the metadata we use to sample and to select
 # training trials. Refreshed weekly.
 trial_catalog <- function(conn, settings) {
-  cached(settings, "trial_catalog", max_age_days = 7, expr = {
+  # Cache only a NON-EMPTY catalogue that, if it has locations, also has coordinates --
+  # so a truncated/empty studies search or a failed lat/long fetch is retried, not stored
+  # coordinate-less for 7 days (which would silently zero out environmental similarity).
+  cat_valid <- function(m) is.data.frame(m) && nrow(m) > 0 &&
+    (!("location_name" %in% names(m)) || "latitude" %in% names(m))
+  cached(settings, "trial_catalog", max_age_days = 7, valid = cat_valid, expr = {
     # We want only trials that measured the focal trait. get_all_trial_meta_data
     # has no trait filter (it just does conn$search("studies", commonCropNames=)),
     # so when focal_trait_db_id is set we run that same studies search ourselves
@@ -53,14 +85,17 @@ trial_catalog <- function(conn, settings) {
     # latitude / longitude column, so we derive year from start_date (POSIXct)
     # and join lat/long/elev by location (see below).
     id <- settings$focal_trait_db_id
+    tries <- settings$brapi_tries %||% 4L
     meta <- if (!is.null(id) && nzchar(id)) {
       make_row <- getFromNamespace("make_row_from_trial_result", "T3BrapiHelpers")
-      search <- conn$search("studies", body = list(
+      search <- .brapi_try(function() conn$search("studies", body = list(
         commonCropNames        = settings$crop_name,
-        observationVariableDbIds = list(as.character(id))))
+        observationVariableDbIds = list(as.character(id)))),
+        tries = tries, what = "studies search")
       janitor::clean_names(dplyr::bind_rows(lapply(search$combined_data, make_row)))
     } else {
-      T3BrapiHelpers::get_all_trial_meta_data(conn, settings$crop_name)
+      .brapi_try(function() T3BrapiHelpers::get_all_trial_meta_data(conn, settings$crop_name),
+                 tries = tries, what = "trial metadata")
     }
     meta <- tibble::as_tibble(meta)
     if ("start_date" %in% names(meta) && !("year" %in% names(meta))) {
@@ -73,7 +108,8 @@ trial_catalog <- function(conn, settings) {
     if ("location_name" %in% names(meta)) {
       locs <- unique(stats::na.omit(meta$location_name))
       coords <- if (length(locs)) tryCatch(
-        T3BrapiHelpers::get_lat_long_elev_from_location_vec(as.list(locs), conn, id_or_name = "name"),
+        .brapi_try(function() T3BrapiHelpers::get_lat_long_elev_from_location_vec(
+          as.list(locs), conn, id_or_name = "name"), tries = tries, what = "location coords"),
         error = function(e) NULL) else NULL
       if (!is.null(coords) && nrow(coords)) {
         coords <- coords |>
@@ -202,15 +238,26 @@ get_observations <- function(study_ids, conn, settings) {
   parts <- .focal_trait_parts(settings$focal_trait)
   study_ids <- unique(as.character(study_ids))
   purrr::map_dfr(study_ids, function(sid) {
-    all_obs <- cached(settings, paste0("obs_", sid), max_age_days = 30, expr = {
-      o_resp <- tryCatch(
-        conn$search("/observations", body = list(studyDbIds = list(sid), pageSize = 100000L)),
-        error = function(e) NULL)
-      u_resp <- tryCatch(
-        conn$search("/observationunits", body = list(studyDbIds = list(sid), pageSize = 100000L)),
-        error = function(e) NULL)
-      dplyr::left_join(.obs_tibble(o_resp, sid), .obsunits_tibble(u_resp), by = "unit_id")
-    })
+    p <- .cache_path(settings, paste0("obs_", sid))
+    all_obs <- if (file.exists(p) &&
+                   as.numeric(difftime(Sys.time(), file.info(p)$mtime, units = "days")) <= 30) {
+      readRDS(p)
+    } else {
+      tries <- settings$brapi_tries %||% 4L
+      o_resp <- tryCatch(.brapi_try(function() conn$search(
+        "/observations", body = list(studyDbIds = list(sid), pageSize = 100000L)),
+        tries = tries, what = "observations search"), error = function(e) NULL)
+      u_resp <- tryCatch(.brapi_try(function() conn$search(
+        "/observationunits", body = list(studyDbIds = list(sid), pageSize = 100000L)),
+        tries = tries, what = "observationunits search"), error = function(e) NULL)
+      tb <- dplyr::left_join(.obs_tibble(o_resp, sid), .obsunits_tibble(u_resp), by = "unit_id")
+      # Cache ONLY when BOTH fetches SUCCEEDED. A transient error returns NULL, which
+      # .obs_tibble/.obsunits_tibble turn into an empty tibble -- caching that would store
+      # "this trial has no phenotypes" for 30 days (the no_focal_obs / all-NA rep/block
+      # signatures). A genuinely empty but SUCCESSFUL response is a real answer and is cached.
+      if (!is.null(o_resp) && !is.null(u_resp)) saveRDS(tb, p)
+      tb
+    }
     all_obs |>
       dplyr::filter(.matches_trait(trait, parts)) |>
       dplyr::select(-trait)
@@ -277,8 +324,13 @@ get_observations <- function(study_ids, conn, settings) {
 
 # --- accessions for a trial ------------------------------------------------
 get_trial_accessions <- function(study_id, conn, settings) {
-  cached(settings, paste0("acc_", study_id), max_age_days = 30, expr = {
-    w <- conn$wizard("accessions", list(trials = list(as.character(study_id))))
+  # A real trial always has accessions; an empty result means a soft failure (200 with
+  # empty data). Don't cache it -- retry next call. (A hard wizard error propagates and is
+  # not cached either.)
+  cached(settings, paste0("acc_", study_id), max_age_days = 30,
+         valid = function(a) length(a) > 0, expr = {
+    w <- .brapi_try(function() conn$wizard("accessions", list(trials = list(as.character(study_id)))),
+                    tries = settings$brapi_tries %||% 4L, what = "accessions wizard")
     unique(as.character(w$data$names))
   })
 }
@@ -306,8 +358,10 @@ projects_for_accessions <- function(accessions, conn, settings) {
   # current run proceeds, but we do NOT persist it, so the next run retries.
   batches <- split(acc, ceiling(seq_along(acc) / 500L))
   failed  <- FALSE
+  tries <- settings$brapi_tries %||% 4L
   ids <- unlist(purrr::map(batches, function(b) {
-    w <- tryCatch(conn$wizard("genotyping_projects", list(accessions = b)),
+    w <- tryCatch(.brapi_try(function() conn$wizard("genotyping_projects", list(accessions = b)),
+                             tries = tries, what = "genotyping_projects wizard"),
                   error = function(e) { failed <<- TRUE; NULL })
     if (is.null(w)) character() else as.character(w$data$ids)
   }, .progress = "Genotyping projects for accessions"), use.names = FALSE)
@@ -430,9 +484,10 @@ get_project_dosage <- function(project_id, keep_samples, conn, settings,
   found <- function() { p <- c(base, paste0(base, ".gz")); p[file.exists(p)][1] }
   p <- found()
   if (!is.na(p) && .vcf_complete(p)) return(p)
-  # missing or incomplete -> (re)download once
+  # missing or incomplete -> (re)download, retrying a transient network failure
   for (q in c(base, paste0(base, ".gz"))) if (file.exists(q)) unlink(q)
-  conn$vcf_archived(output = base, genotyping_project_id = project_id)
+  .brapi_try(function() conn$vcf_archived(output = base, genotyping_project_id = project_id),
+             tries = settings$brapi_tries %||% 4L, what = paste("VCF download", project_id))
   p <- found()
   if (is.na(p) || !.vcf_complete(p)) {
     for (q in c(base, paste0(base, ".gz"))) if (file.exists(q)) unlink(q)
