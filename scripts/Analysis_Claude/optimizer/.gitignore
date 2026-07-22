@@ -8,3 +8,5 @@ logs/*
 !cache/.gitkeep
 !logs/.gitkeep
 T3BrapiHelpers_extraction_proposal.md
+.Renviron
+.Rprofile

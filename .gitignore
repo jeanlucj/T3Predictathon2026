@@ -3,6 +3,8 @@
 .RData
 .Ruserdata
 .DS_Store
+.Renviron
+.Rprofile
 
 # Unmodified real participant submissions (not anonymous) -- keep local only.
 T3_predictathon_scripts/

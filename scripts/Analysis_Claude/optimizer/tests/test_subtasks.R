@@ -50,6 +50,54 @@ suppressMessages(try(.brapi_try(th3, tries = 1, base_delay = 0), silent = TRUE))
 check(n3 == 1L, "tries=1 disables retry (single attempt)")
 
 # ===========================================================================
+cat("cached() / category-partitioned cache paths\n")
+# Oracle: a cache entry lives at cache/<category>/<category>_<identifier>.rds; reads fall
+# back to the pre-migration FLAT path so an un-migrated cache still hits; writes go nested;
+# valid= gates the write. Uses a throwaway cache dir so the real cache is untouched.
+.ctmp <- tempfile("cache_test_"); dir.create(.ctmp)
+cs <- modifyList(optimizer_settings(), list(cache_dir = .ctmp))
+
+# path construction: nested, with the singleton (no identifier) special case.
+check(.cache_path(cs, "acc", "10676") == file.path(.ctmp, "acc", "acc_10676.rds"),
+      "nested path is cache/<category>/<category>_<identifier>.rds")
+check(.cache_path(cs, "trial_catalog") == file.path(.ctmp, "trial_catalog", "trial_catalog.rds"),
+      "singleton path (no identifier) is cache/<category>/<category>.rds")
+check(.cache_path(cs, "raw_project", "8130", ext = "vcf") ==
+        file.path(.ctmp, "raw_project", "raw_project_8130.vcf"),
+      "ext= controls the extension (raw VCF)")
+
+# write + read round-trip through cached().
+v <- cached(cs, "acc", "A1", expr = c("x", "y"))
+check(file.exists(file.path(.ctmp, "acc", "acc_A1.rds")), "cached() writes the nested file")
+check(identical(cached(cs, "acc", "A1", expr = stop("must not evaluate on a hit")), c("x", "y")),
+      "cached() re-read hits the nested file (expr not evaluated)")
+
+# flat fallback: a legacy flat file is found even though nothing is nested.
+saveRDS("legacy", file.path(.ctmp, "acc_L1.rds"))
+check(identical(cached(cs, "acc", "L1", expr = stop("must not evaluate on a hit")), "legacy"),
+      "flat fallback: cached() reads a pre-migration flat file")
+check(!is.na(.cache_existing(cs, "acc", "L1")) &&
+        is.na(.cache_existing(cs, "acc", "NOPE")),
+      ".cache_existing finds a present key (flat) and NA for an absent one")
+
+# nested is preferred over flat when both exist.
+saveRDS("flat", file.path(.ctmp, "obs_B1.rds")); .cache_save(cs, "obs", "B1", "nested")
+check(identical(readRDS(.cache_existing(cs, "obs", "B1")), "nested"),
+      "nested wins when both nested and flat exist")
+
+# valid= gates the write: an invalid (empty) result is returned but NOT cached.
+cached(cs, "acc", "E1", valid = function(a) length(a) > 0, expr = character())
+check(is.na(.cache_existing(cs, "acc", "E1")), "valid= gates: an invalid result is not cached")
+
+# .find_dosage globs BOTH the nested dosage folder and the legacy flat cache.
+.cache_save(cs, "dosage", "700_sz123", matrix(0L, 1, 1))
+saveRDS(matrix(0L, 1, 1), file.path(.ctmp, "dosage_701_sz9.rds"))   # legacy flat
+check(!is.na(.find_dosage(cs, "700", 1)), ".find_dosage finds a nested dosage")
+check(!is.na(.find_dosage(cs, "701", 1)), ".find_dosage finds a legacy-flat dosage")
+check(is.na(.find_dosage(cs, "702", 1)), ".find_dosage returns NA when absent")
+unlink(.ctmp, recursive = TRUE)
+
+# ===========================================================================
 cat("score_predictions\n")
 # Oracle: correlation of a vector with a positive affine transform of itself is 1.
 obs <- setNames(c(1, 2, 3, 4, 5, 6), letters[1:6])

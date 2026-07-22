@@ -20,7 +20,37 @@
 library(tidyverse)
 
 # --- tiny on-disk memorizer -------------------------------------------------
-.cache_path <- function(settings, name) file.path(settings$cache_dir, paste0(name, ".rds"))
+# --- category-partitioned cache paths --------------------------------------
+# A cache entry lives at   cache/<category>/<category>[_<identifier>].<ext>
+# so the (large, flat) cache is navigable by kind. `identifier = NULL` is a singleton
+# category (e.g. "trial_catalog") whose file is just cache/<category>/<category>.<ext>.
+# READS fall back to the pre-migration FLAT path (cache/<category>[_<identifier>].<ext>) so
+# an un-migrated or half-migrated cache still hits; WRITES always use the nested path.
+# (Run migrate_cache_layout.R to relocate the existing flat files once.)
+.cache_stem <- function(category, identifier = NULL)
+  if (is.null(identifier)) category else paste0(category, "_", identifier)
+
+.cache_path <- function(settings, category, identifier = NULL, ext = "rds")   # nested (write)
+  file.path(settings$cache_dir, category, paste0(.cache_stem(category, identifier), ".", ext))
+
+.cache_legacy_path <- function(settings, category, identifier = NULL, ext = "rds")  # flat
+  file.path(settings$cache_dir, paste0(.cache_stem(category, identifier), ".", ext))
+
+# Path of an existing cache file for this key: nested if present, else legacy flat, else NA.
+.cache_existing <- function(settings, category, identifier = NULL, ext = "rds") {
+  np <- .cache_path(settings, category, identifier, ext)
+  if (file.exists(np)) return(np)
+  lp <- .cache_legacy_path(settings, category, identifier, ext)
+  if (file.exists(lp)) return(lp)
+  NA_character_
+}
+
+# Write `value` to the nested cache path, creating the category subfolder. Returns the path.
+.cache_save <- function(settings, category, identifier = NULL, value, ext = "rds") {
+  p <- .cache_path(settings, category, identifier, ext)
+  dir.create(dirname(p), showWarnings = FALSE, recursive = TRUE)
+  saveRDS(value, p); invisible(p)
+}
 
 # Retry a BrAPI network call through a flaky server. `thunk` is a zero-arg function (so it
 # is re-evaluated each attempt); on error we back off (exponential + jitter) and retry up
@@ -47,17 +77,15 @@ library(tidyverse)
 # the next call retries instead of serving the bad answer for `max_age_days`. A hard error
 # in `expr` propagates before the write is reached, so it is never cached either. (The
 # default accepts everything, preserving old behaviour.)
-cached <- function(settings, name, expr, max_age_days = Inf, valid = function(v) TRUE) {
-  p <- .cache_path(settings, name)
-  if (file.exists(p)) {
-    age <- as.numeric(difftime(Sys.time(), file.info(p)$mtime, units = "days"))
-    if (age <= max_age_days) return(readRDS(p))
+cached <- function(settings, category, identifier = NULL, expr, max_age_days = Inf,
+                   valid = function(v) TRUE) {
+  hit <- .cache_existing(settings, category, identifier)
+  if (!is.na(hit)) {
+    age <- as.numeric(difftime(Sys.time(), file.info(hit)$mtime, units = "days"))
+    if (age <= max_age_days) return(readRDS(hit))
   }
   val <- force(expr)
-  if (isTRUE(valid(val))) {
-    dir.create(dirname(p), showWarnings = FALSE, recursive = TRUE)
-    saveRDS(val, p)
-  }
+  if (isTRUE(valid(val))) .cache_save(settings, category, identifier, val)
   val
 }
 
@@ -70,7 +98,7 @@ trial_catalog <- function(conn, settings) {
   # coordinate-less for 7 days (which would silently zero out environmental similarity).
   cat_valid <- function(m) is.data.frame(m) && nrow(m) > 0 &&
     (!("location_name" %in% names(m)) || "latitude" %in% names(m))
-  cached(settings, "trial_catalog", max_age_days = 7, valid = cat_valid, expr = {
+  cached(settings, "trial_catalog", max_age_days = 7, valid = cat_valid, expr = {   # singleton (no identifier)
     # We want only trials that measured the focal trait. get_all_trial_meta_data
     # has no trait filter (it just does conn$search("studies", commonCropNames=)),
     # so when focal_trait_db_id is set we run that same studies search ourselves
@@ -238,10 +266,10 @@ get_observations <- function(study_ids, conn, settings) {
   parts <- .focal_trait_parts(settings$focal_trait)
   study_ids <- unique(as.character(study_ids))
   purrr::map_dfr(study_ids, function(sid) {
-    p <- .cache_path(settings, paste0("obs_", sid))
-    all_obs <- if (file.exists(p) &&
-                   as.numeric(difftime(Sys.time(), file.info(p)$mtime, units = "days")) <= 30) {
-      readRDS(p)
+    hit <- .cache_existing(settings, "obs", sid)
+    all_obs <- if (!is.na(hit) &&
+                   as.numeric(difftime(Sys.time(), file.info(hit)$mtime, units = "days")) <= 30) {
+      readRDS(hit)
     } else {
       tries <- settings$brapi_tries %||% 4L
       o_resp <- tryCatch(.brapi_try(function() conn$search(
@@ -255,7 +283,7 @@ get_observations <- function(study_ids, conn, settings) {
       # .obs_tibble/.obsunits_tibble turn into an empty tibble -- caching that would store
       # "this trial has no phenotypes" for 30 days (the no_focal_obs / all-NA rep/block
       # signatures). A genuinely empty but SUCCESSFUL response is a real answer and is cached.
-      if (!is.null(o_resp) && !is.null(u_resp)) saveRDS(tb, p)
+      if (!is.null(o_resp) && !is.null(u_resp)) .cache_save(settings, "obs", sid, tb)
       tb
     }
     all_obs |>
@@ -327,7 +355,7 @@ get_trial_accessions <- function(study_id, conn, settings) {
   # A real trial always has accessions; an empty result means a soft failure (200 with
   # empty data). Don't cache it -- retry next call. (A hard wizard error propagates and is
   # not cached either.)
-  cached(settings, paste0("acc_", study_id), max_age_days = 30,
+  cached(settings, "acc", as.character(study_id), max_age_days = 30,
          valid = function(a) length(a) > 0, expr = {
     w <- .brapi_try(function() conn$wizard("accessions", list(trials = list(as.character(study_id)))),
                     tries = settings$brapi_tries %||% 4L, what = "accessions wizard")
@@ -345,11 +373,11 @@ get_trial_accessions <- function(study_id, conn, settings) {
 # NOT be used here.)
 projects_for_accessions <- function(accessions, conn, settings) {
   acc <- unique(as.character(accessions))
-  key <- paste0("proj_", substr(rlang::hash(sort(acc)), 1, 12))
-  p   <- .cache_path(settings, key)
-  if (file.exists(p) &&
-      as.numeric(difftime(Sys.time(), file.info(p)$mtime, units = "days")) <= 30)
-    return(readRDS(p))
+  key <- substr(rlang::hash(sort(acc)), 1, 12)       # identifier: hash of the accession set
+  hit <- .cache_existing(settings, "proj", key)
+  if (!is.na(hit) &&
+      as.numeric(difftime(Sys.time(), file.info(hit)$mtime, units = "days")) <= 30)
+    return(readRDS(hit))
 
   # Cache ONLY a result assembled from wizard calls that all SUCCEEDED. A transient
   # server error (HTTP 500 / timeout) used to be swallowed to an empty result and then
@@ -366,7 +394,7 @@ projects_for_accessions <- function(accessions, conn, settings) {
     if (is.null(w)) character() else as.character(w$data$ids)
   }, .progress = "Genotyping projects for accessions"), use.names = FALSE)
   ids <- unique(stats::na.omit(ids))
-  if (!failed) saveRDS(ids, p)
+  if (!failed) .cache_save(settings, "proj", key, ids)
   ids
 }
 
@@ -402,10 +430,14 @@ projects_for_accessions <- function(accessions, conn, settings) {
   max(as.numeric(requested_thin), 1, fit)
 }
 
+# Dosage files are pattern-keyed (dosage_<pid>[_thin<k>]_sz<size>.rds) rather than exactly
+# named, so they are found by glob. Search the nested cache/dosage/ folder AND the legacy
+# flat cache/ (so an un-migrated cache still hits); newest match wins.
 .find_dosage <- function(settings, project_id, thin) {
   tag  <- if (thin > 1) paste0("_thin", thin) else ""
-  hits <- list.files(settings$cache_dir,
-    pattern = paste0("^dosage_", project_id, tag, "_sz[0-9]+[.]rds$"), full.names = TRUE)
+  pat  <- paste0("^dosage_", project_id, tag, "_sz[0-9]+[.]rds$")
+  dirs <- c(file.path(settings$cache_dir, "dosage"), settings$cache_dir)
+  hits <- unlist(lapply(dirs, function(d) list.files(d, pattern = pat, full.names = TRUE)))
   if (length(hits)) hits[[which.max(file.info(hits)$mtime)]] else NA_character_
 }
 
@@ -423,8 +455,8 @@ get_project_dosage <- function(project_id, keep_samples, conn, settings,
 
   # Permanent negative cache: an archive we have already found unparseable (e.g. a
   # transposed/non-VCF export). Skip the download+parse loop entirely. Delete
-  # cache/unparseable_<pid>.rds to force a retry (e.g. after the archive is fixed).
-  if (file.exists(.cache_path(settings, paste0("unparseable_", pid)))) return(NULL)
+  # cache/unparseable/unparseable_<pid>.rds to force a retry (e.g. after the archive is fixed).
+  if (!is.na(.cache_existing(settings, "unparseable", pid))) return(NULL)
 
   # 1. Direct lookup by the REQUESTED thin -- covers every existing cache and every
   #    project small enough that the requested thin is the effective thin.
@@ -433,9 +465,9 @@ get_project_dosage <- function(project_id, keep_samples, conn, settings,
 
   # 2. A project measured before may auto-thin coarser than requested; its stat lets us
   #    find the effective-thin cache without re-downloading the (deleted) VCF.
-  statp <- .cache_path(settings, paste0("stat_", pid))
-  if (file.exists(statp)) {
-    st  <- readRDS(statp)
+  stat_hit <- .cache_existing(settings, "stat", pid)
+  if (!is.na(stat_hit)) {
+    st  <- readRDS(stat_hit)
     eff <- .eff_thin(st$n_samples, st$n_markers, marker_thin, settings$dosage_budget_bytes)
     if (eff != marker_thin) {
       hit <- .find_dosage(settings, pid, eff)
@@ -448,15 +480,13 @@ get_project_dosage <- function(project_id, keep_samples, conn, settings,
   rm_raw <- function() { base <- sub("[.]gz$", "", path); unlink(c(base, paste0(base, ".gz"))) }
   st <- tryCatch(.vcf_stat(path), error = function(e) e)
   if (inherits(st, "error")) {                                 # not a standard VCF
-    saveRDS(list(reason = conditionMessage(st), when = Sys.time()),
-            .cache_path(settings, paste0("unparseable_", pid)))
+    .cache_save(settings, "unparseable", pid, list(reason = conditionMessage(st), when = Sys.time()))
     rm_raw(); return(NULL)
   }
-  saveRDS(list(n_samples = st$n_samples, n_markers = st$n_markers), statp)
+  .cache_save(settings, "stat", pid, list(n_samples = st$n_samples, n_markers = st$n_markers))
   eff <- .eff_thin(st$n_samples, st$n_markers, marker_thin, settings$dosage_budget_bytes)
   if (!is.finite(eff) || eff < 1L) {                          # unmeasurable -> treat as unusable
-    saveRDS(list(reason = "could not size the VCF", when = Sys.time()),
-            .cache_path(settings, paste0("unparseable_", pid)))
+    .cache_save(settings, "unparseable", pid, list(reason = "could not size the VCF", when = Sys.time()))
     rm_raw(); return(NULL)
   }
   if (eff > marker_thin)
@@ -466,12 +496,11 @@ get_project_dosage <- function(project_id, keep_samples, conn, settings,
   sz <- file.info(path)$size
   d  <- .vcf_to_dosage(path, NULL, eff)
   if (is.null(d)) {                                            # complete VCF, no genotypes
-    saveRDS(list(reason = "no usable genotypes", when = Sys.time()),
-            .cache_path(settings, paste0("unparseable_", pid)))
+    .cache_save(settings, "unparseable", pid, list(reason = "no usable genotypes", when = Sys.time()))
     rm_raw(); return(NULL)
   }
   tag <- if (eff > 1) paste0("_thin", eff) else ""
-  saveRDS(d, .cache_path(settings, paste0("dosage_", pid, tag, "_sz", sz)))
+  .cache_save(settings, "dosage", paste0(pid, tag, "_sz", sz), d)
   rm_raw()                                                     # full dosage cached; raw redundant
   subset(d)
 }
@@ -480,17 +509,21 @@ get_project_dosage <- function(project_id, keep_samples, conn, settings,
 # (.vcf or .vcf.gz). Re-downloads a missing or incomplete file once; errors if it
 # still will not validate, so a transient failure is retried rather than cached.
 .ensure_project_vcf <- function(project_id, conn, settings) {
-  base  <- file.path(settings$cache_dir, paste0("raw_project_", project_id, ".vcf"))
-  found <- function() { p <- c(base, paste0(base, ".gz")); p[file.exists(p)][1] }
-  p <- found()
+  base    <- .cache_path(settings, "raw_project", project_id, ext = "vcf")        # nested target
+  legacy  <- .cache_legacy_path(settings, "raw_project", project_id, ext = "vcf") # pre-migration flat
+  nested  <- c(base, paste0(base, ".gz"))
+  all_loc <- c(nested, legacy, paste0(legacy, ".gz"))
+  # already on disk (nested or legacy) and complete?
+  p <- all_loc[file.exists(all_loc)][1]
   if (!is.na(p) && .vcf_complete(p)) return(p)
-  # missing or incomplete -> (re)download, retrying a transient network failure
-  for (q in c(base, paste0(base, ".gz"))) if (file.exists(q)) unlink(q)
+  # missing or incomplete -> clear any stale copy and (re)download, retrying a transient failure
+  for (q in all_loc) if (file.exists(q)) unlink(q)
+  dir.create(dirname(base), showWarnings = FALSE, recursive = TRUE)
   .brapi_try(function() conn$vcf_archived(output = base, genotyping_project_id = project_id),
              tries = settings$brapi_tries %||% 4L, what = paste("VCF download", project_id))
-  p <- found()
+  p <- nested[file.exists(nested)][1]
   if (is.na(p) || !.vcf_complete(p)) {
-    for (q in c(base, paste0(base, ".gz"))) if (file.exists(q)) unlink(q)
+    for (q in nested) if (file.exists(q)) unlink(q)
     stop("incomplete VCF download for project ", project_id,
          " (removed; will retry next run)")
   }
