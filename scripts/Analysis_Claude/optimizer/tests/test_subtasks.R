@@ -61,13 +61,23 @@ check(.is_auth_warning("Unauthorized (HTTP 401).") &&
       .is_auth_warning("You must login and have permission to access this BrAPI call.") &&
       !.is_auth_warning("Internal Server Error (HTTP 500)."),
       ".is_auth_warning matches 401 wording, not 500")
-auth_resp <- list(status = list(page0 = list(category = "Client error",
+# search shape: $status is a per-page LIST of http_status lists.
+auth_search <- list(status = list(page0 = list(category = "Client error",
               reason = "Unauthorized", message = "Client error: (401) Unauthorized")),
               combined_data = list())
-check(.response_auth_failed(auth_resp) &&
+# wizard shape: $status is a FLAT http_status list (category/reason/message atomic). This is
+# the shape that crashed the first implementation ("$ operator is invalid for atomic vectors").
+auth_wizard <- list(status = list(category = "Client error", reason = "Unauthorized",
+              message = "Client error: (401) Unauthorized"), data = list(ids = character()))
+ok_wizard   <- list(status = list(category = "Success", reason = "OK",
+              message = "Success: (200) OK"), data = list(ids = c("1", "2")))
+check(.response_auth_failed(auth_search) && .response_auth_failed(auth_wizard),
+      ".response_auth_failed detects 401 in both search (nested) and wizard (flat) $status")
+check(!.response_auth_failed(ok_wizard) &&
       !.response_auth_failed(list(status = list(page0 = list(reason = "OK")))) &&
-      !.response_auth_failed("not a response"),
-      ".response_auth_failed detects the 401 status structure")
+      !.response_auth_failed("not a response") &&
+      !.response_auth_failed(list(data = 1)),
+      ".response_auth_failed is FALSE (no crash) on success/other shapes")
 
 # Oracle: on a 401 (emitted as a warning), .brapi_try re-logs in via conn/settings ONCE and
 # retries, returning the eventual success. Uses a fake conn + throwaway env credentials.
@@ -93,6 +103,41 @@ check(inherits(try(t3_login(fake_conn), silent = TRUE), "try-error"),
       "t3_login errors when T3_USERNAME/T3_PASSWORD are unset")
 if (nzchar(old_u)) Sys.setenv(T3_USERNAME = old_u)
 if (nzchar(old_p)) Sys.setenv(T3_PASSWORD = old_p)
+
+# ===========================================================================
+cat("VCF-download retry budget (.vcf_download_plan + .ensure_project_vcf give-up)\n")
+# Oracle: effort decreases with each prior failure and stops at the cap.
+rm(list = ls(envir = .vcf_download_fails), envir = .vcf_download_fails)   # clean slate
+bs <- list(brapi_tries = 4, vcf_max_download_attempts = 3)
+p0 <- .vcf_download_plan("P", bs)
+check(!p0$skip && p0$tries == 4L, "no prior failures: full effort (tries = brapi_tries)")
+.note_vcf_download_fail("P"); p1 <- .vcf_download_plan("P", bs)
+check(!p1$skip && p1$tries == 3L && p1$base_delay < p0$base_delay,
+      "one prior failure: fewer tries and shorter backoff")
+.note_vcf_download_fail("P"); check(.vcf_download_plan("P", bs)$tries == 2L, "two prior failures: tries = 2")
+.note_vcf_download_fail("P"); check(.vcf_download_plan("P", bs)$skip, "at the cap (3 failures): skip")
+check(.vcf_download_plan("Q", bs)$tries == 4L, "the budget is per-project (Q unaffected)")
+.clear_vcf_download_fail("P"); check(!.vcf_download_plan("P", bs)$skip, "clearing (a success) resets the project")
+
+# Integration: a conn whose vcf_archived always errors (simulated timeout). .ensure_project_vcf
+# must stop invoking it once the cap is reached, and never storm indefinitely.
+etmp <- tempfile("cache_vcf_"); dir.create(etmp)
+es <- modifyList(optimizer_settings(),
+                 list(cache_dir = etmp, brapi_tries = 2, vcf_max_download_attempts = 3))
+rm(list = ls(envir = .vcf_download_fails), envir = .vcf_download_fails)
+calls <- 0L
+bad_conn <- list(vcf_archived = function(output, genotyping_project_id) {
+  calls <<- calls + 1L; stop("Timeout was reached") })
+for (i in 1:6)
+  suppressMessages(try(.ensure_project_vcf("8217", bad_conn, es), silent = TRUE))
+# 3 failing attempts, each doing (decreasing) in-call retries, then attempts 4-6 skip with 0 calls.
+check(calls > 0L && .vcf_download_fails[["8217"]] == 3L,
+      "download failures are recorded and capped at vcf_max_download_attempts")
+calls_at_cap <- calls
+suppressMessages(try(.ensure_project_vcf("8217", bad_conn, es), silent = TRUE))
+check(calls == calls_at_cap, "once capped, .ensure_project_vcf skips WITHOUT calling vcf_archived")
+unlink(etmp, recursive = TRUE)
+rm(list = ls(envir = .vcf_download_fails), envir = .vcf_download_fails)
 
 # ===========================================================================
 cat("cached() / category-partitioned cache paths\n")
@@ -134,12 +179,16 @@ check(identical(readRDS(.cache_existing(cs, "obs", "B1")), "nested"),
 cached(cs, "acc", "E1", valid = function(a) length(a) > 0, expr = character())
 check(is.na(.cache_existing(cs, "acc", "E1")), "valid= gates: an invalid result is not cached")
 
-# .find_dosage globs BOTH the nested dosage folder and the legacy flat cache.
-.cache_save(cs, "dosage", "700_sz123", matrix(0L, 1, 1))
-saveRDS(matrix(0L, 1, 1), file.path(.ctmp, "dosage_701_sz9.rds"))   # legacy flat
-check(!is.na(.find_dosage(cs, "700", 1)), ".find_dosage finds a nested dosage")
-check(!is.na(.find_dosage(cs, "701", 1)), ".find_dosage finds a legacy-flat dosage")
-check(is.na(.find_dosage(cs, "702", 1)), ".find_dosage returns NA when absent")
+# .find_densest_dosage globs BOTH the nested dosage folder and the legacy flat cache, and
+# returns the DENSEST (smallest-thin) file when several linger.
+.cache_save(cs, "dosage", "700_sz123", matrix(0L, 1, 1))                 # thin 1, nested
+saveRDS(matrix(0L, 1, 1), file.path(.ctmp, "dosage_701_sz9.rds"))        # legacy flat
+.cache_save(cs, "dosage", "702_thin5_sz1", matrix(0L, 1, 5))            # thin 5
+.cache_save(cs, "dosage", "702_thin2_sz1", matrix(0L, 1, 5))            # thin 2 (denser)
+check(!is.null(.find_densest_dosage(cs, "700")), ".find_densest_dosage finds a nested dosage")
+check(!is.null(.find_densest_dosage(cs, "701")), ".find_densest_dosage finds a legacy-flat dosage")
+check(is.null(.find_densest_dosage(cs, "999")), ".find_densest_dosage returns NULL when absent")
+check(.find_densest_dosage(cs, "702")$thin == 2L, ".find_densest_dosage picks the densest (thin 2 over 5)")
 unlink(.ctmp, recursive = TRUE)
 
 # ===========================================================================
@@ -211,12 +260,50 @@ check(st$n_samples == 2 && st$n_markers == 3 && identical(st$samples, c("S1", "S
       ".vcf_stat: 2 samples, 3 markers")
 check(inherits(try(.vcf_stat(tpath), silent = TRUE), "try-error"), ".vcf_stat rejects non-VCF")
 
-# Oracle: .eff_thin -- fits under budget -> requested thin; over budget -> raised to fit.
+# Oracle: .cache_thin -- the densest thin that fits the budget; depends only on size, NOT on
+# any requested thin. A project that fits caches at thin 1 (full markers).
 # Integer inputs on purpose: n_samples*n_markers must not overflow 32-bit int (683L*7.47ML).
-check(.eff_thin(100L, 1000L, 1L, 2e9) == 1, ".eff_thin: small project keeps requested thin")
-check(.eff_thin(100L, 1000L, 4L, 2e9) == 4, ".eff_thin: never below the requested thin")
+check(.cache_thin(100L, 1000L, 2e9) == 1, ".cache_thin: a project that fits caches at thin 1")
 # 683 x 7.47M x 4 = 20.4 GB; /2 GB budget -> ceil 10.2 -> 11.
-check(.eff_thin(683L, 7467224L, 1L, 2e9) == 11, ".eff_thin: oversized project auto-thinned (no int overflow)")
+check(.cache_thin(683L, 7467224L, 2e9) == 11, ".cache_thin: oversized project thinned to fit (no int overflow)")
+check(.cache_thin(683L, 7467224L, 4e9) == 6, ".cache_thin: a bigger budget caches denser")
+
+# ===========================================================================
+cat("get_project_dosage: derive requested thin by column-subset (no re-parse)\n")
+# Oracle: a project is cached ONCE at its densest thin; a requested marker_thin is served by
+# keeping every k = max(1, floor(marker_thin / e))-th marker of that cache. Uses a throwaway
+# cache + conn = NULL (never reached -- always a cache hit), so it is fully offline.
+.dtmp <- tempfile("cache_dose_"); dir.create(.dtmp)
+ds <- modifyList(optimizer_settings(), list(cache_dir = .dtmp))
+Xfull <- matrix(as.integer(1:120), nrow = 4,
+                dimnames = list(paste0("s", 1:4), paste0("m", 1:30)))   # 4 samples x 30 markers
+.cache_save(ds, "dosage", "P1_sz100", Xfull)                            # cached at thin 1 (full)
+
+d1  <- get_project_dosage("P1", NULL, NULL, ds, marker_thin = 1L)
+d3  <- get_project_dosage("P1", NULL, NULL, ds, marker_thin = 3L)
+d10 <- get_project_dosage("P1", NULL, NULL, ds, marker_thin = 10L)
+check(identical(d1, Xfull), "thin 1 from a full cache returns the whole matrix")
+check(identical(d3, Xfull[, seq(1L, 30L, by = 3L), drop = FALSE]),
+      "thin 3 from a full cache == every 3rd marker")
+check(identical(d10, Xfull[, seq(1L, 30L, by = 10L), drop = FALSE]),
+      "thin 10 from a full cache == every 10th marker")
+
+# Oracle: from a cache already at thin e=2, request r=5 -> k=floor(5/2)=2 -> every 2nd marker
+# of the (already-thinned) cache; and request r=2 < e -> k=1 -> the cache as-is (densest we have).
+Xe2 <- matrix(as.integer(1:40), nrow = 4,
+              dimnames = list(paste0("s", 1:4), paste0("m", 1:10)))     # a thin=2 cache
+.cache_save(ds, "dosage", "P2_thin2_sz100", Xe2)
+check(identical(get_project_dosage("P2", NULL, NULL, ds, marker_thin = 5L),
+                Xe2[, seq(1L, 10L, by = 2L), drop = FALSE]),
+      "e=2, r=5 -> k=2 (denser-multiple derivation)")
+check(identical(get_project_dosage("P2", NULL, NULL, ds, marker_thin = 2L), Xe2),
+      "e=2, r<e -> k=1 -> serve the densest cache as-is")
+
+# Oracle: sample subsetting still applies after the column subset.
+check(identical(get_project_dosage("P1", c("s1", "s3"), NULL, ds, marker_thin = 3L),
+                Xfull[c("s1", "s3"), seq(1L, 30L, by = 3L), drop = FALSE]),
+      "keep_samples subsets rows after the thin subsets columns")
+unlink(.dtmp, recursive = TRUE)
 
 # ===========================================================================
 cat(".qc_markers\n")

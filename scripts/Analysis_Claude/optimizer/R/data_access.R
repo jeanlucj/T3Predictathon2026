@@ -86,9 +86,11 @@ t3_connect <- function(settings) {
 
 .response_auth_failed <- function(r) {
   if (!is.list(r) || is.null(r$status)) return(FALSE)
-  st   <- r$status
-  msgs <- if (is.list(st)) unlist(lapply(st, function(s) paste(s$reason, s$message)))
-          else as.character(st)
+  # $status varies by call type: a flat httr::http_status list (category/reason/message,
+  # e.g. from conn$wizard) or a per-page LIST of those (from a paginated conn$search).
+  # Flatten either shape to its character values and scan -- no structural assumptions.
+  msgs <- tryCatch(as.character(unlist(r$status, use.names = FALSE)),
+                   error = function(e) character())
   any(grepl("unauthor|\\b401\\b", msgs, ignore.case = TRUE))
 }
 
@@ -135,6 +137,29 @@ t3_connect <- function(settings) {
   if (!is.null(last)) stop(last)
   stop(sprintf("%s failed: unauthorized and login did not resolve it", what))
 }
+
+# --- per-session VCF-download retry budget ---------------------------------
+# A VCF download that keeps timing out (T3 choking on a big archive) must not be re-stormed
+# on every trial that covers it. This tracks failed download attempts per project IN RAM
+# (like .overlap_memo): each subsequent attempt tries less hard, and after
+# settings$vcf_max_download_attempts the project is skipped for the rest of the run. The
+# counter resets on a new run, so a transiently-unavailable project is retried fresh.
+.vcf_download_fails <- new.env(parent = emptyenv())
+
+# Given the prior failure count for a project, how hard to try THIS time.
+.vcf_download_plan <- function(pid, settings) {
+  n       <- .vcf_download_fails[[pid]] %||% 0L
+  max_att <- as.integer(settings$vcf_max_download_attempts %||% 3L)
+  base    <- .brapi_tries(settings)
+  list(n = n,
+       skip       = n >= max_att,           # give up for this session
+       tries      = max(1L, base - n),      # fewer in-call retries each prior failure
+       base_delay = max(0.5, 2 / (n + 1)))  # shorter backoff each prior failure
+}
+.note_vcf_download_fail <- function(pid)
+  assign(pid, (.vcf_download_fails[[pid]] %||% 0L) + 1L, envir = .vcf_download_fails)
+.clear_vcf_download_fail <- function(pid)
+  if (!is.null(.vcf_download_fails[[pid]])) rm(list = pid, envir = .vcf_download_fails)
 
 # On-disk memoizer. `valid(val)` gates the WRITE: only a result that passes it is
 # persisted, so a soft failure (a 200-with-empty response, or a degraded result missing
@@ -469,12 +494,12 @@ projects_for_accessions <- function(accessions, conn, settings) {
 # large raw VCF is redundant and is DELETED to reclaim space.
 #
 # Cache files per project (all under settings$cache_dir):
-#   * dosage_<pid>[_thin<k>]_sz<bytes>.rds -- the full-project dosage. <k> is the
-#     EFFECTIVE thinning (requested marker_thin, raised if the project is too large to
-#     hold densely -- see .eff_thin); absent when k == 1.
-#   * stat_<pid>.rds -- {n_samples, n_markers}, written on first extraction so a later
-#     run can compute the effective thin (hence the right dosage file name) WITHOUT the
-#     now-deleted VCF.
+#   * dosage_<pid>[_thin<e>]_sz<bytes>.rds -- the project's dosage, parsed ONCE at the
+#     densest thin `e` the memory budget allows (see .cache_thin). A config's requested
+#     marker_thin is NOT baked in here; it is applied at read time by column-subsetting
+#     this cache, so a project is never re-downloaded for a different thin. `_thin<e>` is
+#     absent when e == 1 (full markers -- the case for every project that fits the budget).
+#   * stat_<pid>.rds -- {n_samples, n_markers}, written on first extraction.
 #   * unparseable_<pid>.rds -- a negative cache: an archive we found is not a usable VCF
 #     (transposed/non-VCF layout, or no genotypes). Future calls skip it instead of
 #     re-downloading and re-failing every run. Delete it to force a retry.
@@ -484,61 +509,74 @@ projects_for_accessions <- function(accessions, conn, settings) {
 #     truncated file is re-downloaded once, else an error (retried next run). That is a
 #     TRANSIENT failure -- not negative-cached. A STRUCTURAL failure on a complete file
 #     (.vcf_stat rejects it) is permanent -> negative cache.
-# A very large project (millions of markers) cannot be held as a dense integer matrix
-# (7.5M markers x 683 samples is >20 GB). Auto-thin it -- keep every k-th marker -- until
-# its dense size fits settings$dosage_budget_bytes. Deterministic from (samples, markers).
-.eff_thin <- function(n_samples, n_markers, requested_thin, budget_bytes) {
-  # as.numeric: samples*markers overflows 32-bit integer for big panels (683 * 7.5M).
-  fit <- ceiling(as.numeric(n_samples) * as.numeric(n_markers) * 4 / max(1, budget_bytes))
-  max(as.numeric(requested_thin), 1, fit)
+
+# The densest thin a project can be cached at while its dense integer matrix
+# (n_samples x n_markers x 4 bytes) fits settings$dosage_budget_bytes. A project is parsed
+# ONCE at this thin; any coarser requested thin is derived by column-subsetting the cache
+# (see get_project_dosage), so the budget is the SOLE control on cached marker density --
+# set it deliberately. A normal project fits at thin 1 (full markers); only a very large
+# panel (e.g. 7.5M markers x 683 samples = >20 GB) is thinned to fit.
+.cache_thin <- function(n_samples, n_markers, budget_bytes) {
+  # as.numeric: n_samples * n_markers overflows 32-bit integer for big panels.
+  fit <- ceiling(as.numeric(n_samples) * as.numeric(n_markers) * 4 / max(1, budget_bytes %||% 2e9))
+  max(1, fit)
 }
 
-# Dosage files are pattern-keyed (dosage_<pid>[_thin<k>]_sz<size>.rds) rather than exactly
-# named, so they are found by glob. Search the nested cache/dosage/ folder AND the legacy
-# flat cache/ (so an un-migrated cache still hits); newest match wins.
-.find_dosage <- function(settings, project_id, thin) {
-  tag  <- if (thin > 1) paste0("_thin", thin) else ""
-  pat  <- paste0("^dosage_", project_id, tag, "_sz[0-9]+[.]rds$")
+# The thin level encoded in a dosage cache filename (1 when there is no _thin tag).
+.dosage_thin_from_name <- function(paths) {
+  vapply(basename(paths), function(nm) {
+    m <- regmatches(nm, regexpr("_thin[0-9]+", nm))
+    if (length(m)) as.integer(sub("_thin", "", m)) else 1L
+  }, integer(1), USE.NAMES = FALSE)
+}
+
+# The DENSEST cached dosage for a project (smallest thin), across the nested cache/dosage/
+# folder and the legacy flat cache/. Returns list(path, thin) or NULL. Normally there is
+# exactly one dosage per project; if several thin levels linger from pre-change caches, the
+# densest is chosen and the rest are redundant (prune_dosage_cache.R removes them).
+.find_densest_dosage <- function(settings, project_id) {
+  pat  <- paste0("^dosage_", project_id, "(_thin[0-9]+)?_sz[0-9]+[.]rds$")
   dirs <- c(file.path(settings$cache_dir, "dosage"), settings$cache_dir)
   hits <- unlist(lapply(dirs, function(d) list.files(d, pattern = pat, full.names = TRUE)))
-  if (length(hits)) hits[[which.max(file.info(hits)$mtime)]] else NA_character_
+  if (!length(hits)) return(NULL)
+  thins <- .dosage_thin_from_name(hits)
+  i <- which.min(thins)
+  list(path = hits[[i]], thin = thins[[i]])
 }
 
 get_project_dosage <- function(project_id, keep_samples, conn, settings,
                                marker_thin = 1L) {
   pid <- as.character(project_id)
-  subset <- function(full) {
-    # keep_samples = NULL -> the WHOLE project population. Marker QC and allele
-    # frequencies must be estimated from it (subtask D), not from the handful of
-    # accessions a given trial happens to need.
+  marker_thin <- max(1L, as.integer(marker_thin))
+
+  subset_samples <- function(full) {
+    # keep_samples = NULL -> the WHOLE project population (marker QC + allele freqs need it).
     if (is.null(full) || is.null(keep_samples)) return(full)
     keep <- intersect(rownames(full), as.character(keep_samples))
     if (!length(keep)) NULL else full[keep, , drop = FALSE]
   }
-
-  # Permanent negative cache: an archive we have already found unparseable (e.g. a
-  # transposed/non-VCF export). Skip the download+parse loop entirely. Delete
-  # cache/unparseable/unparseable_<pid>.rds to force a retry (e.g. after the archive is fixed).
-  if (!is.na(.cache_existing(settings, "unparseable", pid))) return(NULL)
-
-  # 1. Direct lookup by the REQUESTED thin -- covers every existing cache and every
-  #    project small enough that the requested thin is the effective thin.
-  hit <- .find_dosage(settings, pid, marker_thin)
-  if (!is.na(hit)) return(subset(readRDS(hit)))
-
-  # 2. A project measured before may auto-thin coarser than requested; its stat lets us
-  #    find the effective-thin cache without re-downloading the (deleted) VCF.
-  stat_hit <- .cache_existing(settings, "stat", pid)
-  if (!is.na(stat_hit)) {
-    st  <- readRDS(stat_hit)
-    eff <- .eff_thin(st$n_samples, st$n_markers, marker_thin, settings$dosage_budget_bytes)
-    if (eff != marker_thin) {
-      hit <- .find_dosage(settings, pid, eff)
-      if (!is.na(hit)) return(subset(readRDS(hit)))
-    }
+  # Serve the requested thin from a cache at thin `e` by keeping every k-th marker, where
+  # k = max(1, floor(marker_thin / e)) -- the largest multiple of e not exceeding the
+  # request (so the served matrix is as dense as, or denser than, requested). When
+  # marker_thin < e (a denser matrix than the budget allowed for the cache), k = 1 and the
+  # cache is served as-is: it is already the densest available.
+  serve <- function(full, e) {
+    if (is.null(full)) return(NULL)
+    k <- max(1L, as.integer(floor(marker_thin / e)))
+    if (k > 1L) full <- full[, seq(1L, ncol(full), by = k), drop = FALSE]
+    subset_samples(full)
   }
 
-  # 3. Miss -> fetch the VCF, measure it, then parse at the effective thin.
+  # Permanent negative cache: an archive already found unparseable. Delete
+  # cache/unparseable/unparseable_<pid>.rds to force a retry.
+  if (!is.na(.cache_existing(settings, "unparseable", pid))) return(NULL)
+
+  # A single cached dosage (the densest one) serves every requested thin by column-subset --
+  # no re-download when a different config asks for a different thin.
+  cd <- .find_densest_dosage(settings, pid)
+  if (!is.null(cd)) return(serve(readRDS(cd$path), cd$thin))
+
+  # Miss -> fetch, measure, and parse ONCE at the densest thin the budget allows.
   path <- .ensure_project_vcf(project_id, conn, settings)      # download + integrity check
   rm_raw <- function() { base <- sub("[.]gz$", "", path); unlink(c(base, paste0(base, ".gz"))) }
   st <- tryCatch(.vcf_stat(path), error = function(e) e)
@@ -547,25 +585,26 @@ get_project_dosage <- function(project_id, keep_samples, conn, settings,
     rm_raw(); return(NULL)
   }
   .cache_save(settings, "stat", pid, list(n_samples = st$n_samples, n_markers = st$n_markers))
-  eff <- .eff_thin(st$n_samples, st$n_markers, marker_thin, settings$dosage_budget_bytes)
-  if (!is.finite(eff) || eff < 1L) {                          # unmeasurable -> treat as unusable
+  e <- .cache_thin(st$n_samples, st$n_markers, settings$dosage_budget_bytes)
+  if (!is.finite(e) || e < 1) {                                # unmeasurable -> treat as unusable
     .cache_save(settings, "unparseable", pid, list(reason = "could not size the VCF", when = Sys.time()))
     rm_raw(); return(NULL)
   }
-  if (eff > marker_thin)
+  e <- as.integer(e)
+  if (e > 1L)
     message(sprintf(
-      "project %s: %d markers x %d samples exceeds the dosage budget; auto-thinning to every %dth marker",
-      pid, st$n_markers, st$n_samples, eff))
+      "project %s: %d markers x %d samples exceeds the %.1f GB dosage budget; caching at every %dth marker",
+      pid, st$n_markers, st$n_samples, (settings$dosage_budget_bytes %||% 2e9) / 1e9, e))
   sz <- file.info(path)$size
-  d  <- .vcf_to_dosage(path, NULL, eff)
+  d  <- .vcf_to_dosage(path, NULL, e)
   if (is.null(d)) {                                            # complete VCF, no genotypes
     .cache_save(settings, "unparseable", pid, list(reason = "no usable genotypes", when = Sys.time()))
     rm_raw(); return(NULL)
   }
-  tag <- if (eff > 1) paste0("_thin", eff) else ""
+  tag <- if (e > 1L) paste0("_thin", e) else ""
   .cache_save(settings, "dosage", paste0(pid, tag, "_sz", sz), d)
-  rm_raw()                                                     # full dosage cached; raw redundant
-  subset(d)
+  rm_raw()                                                     # cache written; raw redundant
+  serve(d, e)
 }
 
 # Ensure a complete archived VCF for a project is on disk; return its path
@@ -579,17 +618,32 @@ get_project_dosage <- function(project_id, keep_samples, conn, settings,
   # already on disk (nested or legacy) and complete?
   p <- all_loc[file.exists(all_loc)][1]
   if (!is.na(p) && .vcf_complete(p)) return(p)
+
+  # Per-session download budget: a project that has already failed to download this run tries
+  # less hard, and past the cap is skipped outright (T3 is likely down for that archive).
+  pid  <- as.character(project_id)
+  plan <- .vcf_download_plan(pid, settings)
+  if (plan$skip)
+    stop(sprintf("VCF download %s: skipped (failed %d times this session; T3 may be down)",
+                 pid, plan$n))
+
   # missing or incomplete -> clear any stale copy and (re)download, retrying a transient failure
   for (q in all_loc) if (file.exists(q)) unlink(q)
   dir.create(dirname(base), showWarnings = FALSE, recursive = TRUE)
-  .brapi_try(function() conn$vcf_archived(output = base, genotyping_project_id = project_id),
-             conn = conn, settings = settings, what = paste("VCF download", project_id))
+  ok <- tryCatch({
+    .brapi_try(function() conn$vcf_archived(output = base, genotyping_project_id = project_id),
+               conn = conn, settings = settings, tries = plan$tries, base_delay = plan$base_delay,
+               what = sprintf("VCF download %s (attempt %d)", pid, plan$n + 1L))
+    TRUE
+  }, error = function(e) FALSE)
   p <- nested[file.exists(nested)][1]
-  if (is.na(p) || !.vcf_complete(p)) {
+  if (!ok || is.na(p) || !.vcf_complete(p)) {
     for (q in nested) if (file.exists(q)) unlink(q)
+    .note_vcf_download_fail(pid)                # remember -> less effort next time, then skip
     stop("incomplete VCF download for project ", project_id,
          " (removed; will retry next run)")
   }
+  .clear_vcf_download_fail(pid)                 # success -> forget prior failures
   p
 }
 

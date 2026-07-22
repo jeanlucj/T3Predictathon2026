@@ -235,10 +235,15 @@ substrate `.find_related`/`.trial_similarity` compute germplasm overlap from);
 `projects_for_accessions()`: genotyping **project** ids; `get_project_dosage()` +
 `.ensure_project_vcf()`/`.vcf_complete()`/`.vcf_header()`/`.vcf_stat()`/`.vcf_to_dosage()`:
 VCF → dosage — a base-R **streaming, chunked** reader (bounded memory; skips malformed
-variant lines; rejects transposed/non-VCF archives; gzip/BGZF transparent), with
-`.eff_thin()`/`.find_dosage()` for auto-thinning oversized projects to
-`settings$dosage_budget_bytes` and a `stat_<id>` / `unparseable_<id>` cache so an
-unparseable archive is skipped rather than re-downloaded every run;
+variant lines; rejects transposed/non-VCF archives; gzip/BGZF transparent). Each project is
+parsed **once**, at the densest thin its dense size fits `settings$dosage_budget_bytes`
+(`.cache_thin()`); a config's `marker_thin` is then derived by column-subsetting that single
+cache (`.find_densest_dosage()` + read-time subsample), so a project is never re-downloaded
+for a different thin. A `stat_<id>` / `unparseable_<id>` cache lets a coarse-sizing decision
+and an unparseable-archive verdict persist without the (deleted) VCF. A transient VCF-download
+failure is tracked **per session** (`.vcf_download_plan`, in RAM): effort decreases per prior
+failure and the project is skipped after `settings$vcf_max_download_attempts`, so a timing-out
+archive is not re-stormed on every covering trial (resets next run).
 `.focal_trait_parts`/`.matches_trait`/`.apply_target_domain`.
 
 **`R/evaluate.R`** — `sample_trial()`: real or synthetic trial; `score_predictions()`:

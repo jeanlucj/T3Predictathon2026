@@ -54,16 +54,27 @@ optimizer_settings <- function() {
     # one with more markers.
     redundant_acc_overlap = 0.90,
 
-    # Memory budget for a single project's dense dosage matrix. A project whose
-    # samples x markers x 4 bytes would exceed this is auto-thinned (every k-th marker)
-    # until it fits -- a 7.5M-marker GBS panel cannot be held densely and does not need
-    # every marker for a GRM. The effective thinning is recorded in the dosage cache name.
+    # Memory budget for a single project's dense dosage matrix (samples x markers x 4 B).
+    # This is the SOLE control on cached marker density: each project is downloaded and
+    # parsed ONCE, at the densest thinning that fits this budget (thin 1 = full markers for
+    # anything that fits; a 7.5M-marker GBS panel is thinned to fit). A config's requested
+    # marker_thin is then derived by column-subsetting that one cache -- never re-parsed --
+    # so set this deliberately: a bigger budget caches denser (better GRMs, more disk/RAM
+    # per project), smaller thins large panels harder. Keep it well under total RAM, since
+    # choose_geno_sources loads all covering projects and the GRM needs headroom too.
     dosage_budget_bytes = 2e9,
 
     # How many times to attempt a BrAPI network call before giving up. A flaky T3
     # server (intermittent HTTP 500 / timeout) is ridden out by retrying with backoff, so
     # a transient error does not surface as a spurious infeasible/error. 1 disables retry.
     brapi_tries      = 4,
+
+    # Per-SESSION cap on failed VCF-download attempts for one project before it is skipped
+    # for the rest of the run (T3 is likely down for that archive). Effort also decreases on
+    # each retry: the in-call retry count drops (brapi_tries, then -1 per prior failure) and
+    # the backoff shortens. Resets on a new run, so a transiently-unavailable project is
+    # retried fresh. Prevents a timing-out project from being re-stormed on every trial.
+    vcf_max_download_attempts = 3,
 
     min_trial_acc    = 30,       # skip trials with fewer genotyped accessions
     min_train_trials = 3,        # skip focal trials we cannot assemble a training set for

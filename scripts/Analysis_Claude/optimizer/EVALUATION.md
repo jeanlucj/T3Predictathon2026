@@ -452,7 +452,7 @@ Each file is self-contained: it sources the subsystem, runs hand-rolled `check()
 | Command | Expected |
 |----|----|
 | `tests/test_config_space.R` | \~5 genome invariants across \~400 sampled/recombined configs → `config_space tests: 8007 passed, 0 failed` (8007 = individual assertions) |
-| `tests/test_subtasks.R` | `Tier 1 subtask tests: 92 passed, 0 failed` |
+| `tests/test_subtasks.R` | `Tier 1 subtask tests: 108 passed, 0 failed` |
 | `tests/run_all.R` | `2/2 test files passed` |
 | `tests/test_sim_loop.R` (or `run_all.R --all`) | `PASS: optimizer beats submissions and improves over random search`, exit 0 |
 
@@ -503,7 +503,7 @@ Specified for later; not yet implemented. Oracles already worked out:
 | `obs_<studyid>.rds` | `get_observations()` | all numeric observations of a study | 30 d |
 | `proj_<hash>.rds` | `projects_for_accessions()` | genotyping **project** ids covering an accession set | 30 d |
 | `raw_project_<id>.vcf` | `.ensure_project_vcf()` | the archived VCF (validated complete). **Transient**: deleted once its dosage is cached OR the archive is found unparseable | until dosage/unparseable cached |
-| `dosage_<id>[_thin<k>]_sz<size>.rds` | `get_project_dosage()` | the **whole project's** accessions×markers dosage (subset at read). `<k>` is the **effective** marker thinning: the requested `marker_thin`, raised automatically if the project is too large to hold densely (see `stat_`). Looked up by pattern (ignoring `sz`) | ∞ |
+| `dosage_<id>[_thin<e>]_sz<size>.rds` | `get_project_dosage()` | the **whole project's** accessions×markers dosage, parsed **once** at the densest thin `e` the `dosage_budget_bytes` budget allows (thin 1 = full markers for anything that fits). A config's requested `marker_thin` is **derived at read** by keeping every `max(1, floor(marker_thin/e))`-th marker — so a project is never re-downloaded for a different thin. One dosage file per project (older per-thin files are redundant; `prune_dosage_cache.R` removes them). | ∞ |
 | `stat_<id>.rds` | `get_project_dosage()` | `{n_samples, n_markers}` of a project, written on first extraction so a later run can compute the effective thin — and hence the right `dosage_` name — without the (deleted) VCF | ∞ |
 | `unparseable_<id>.rds` | `get_project_dosage()` | **negative cache**: this archive is not a usable VCF (transposed / header-vs-data sample-count mismatch / no genotypes). Future calls skip it instead of re-downloading and re-failing every run. `{reason, when}`. **Delete to force a retry** (e.g. after the archive is fixed upstream) | ∞ |
 | `calibration_lightweight.rds` | (diagnostics, when you save it) | the last calibration table | — |
@@ -553,15 +553,50 @@ check_canaries(s, conn)            -> run each trial under its config, every sch
 
 **Why this breaks the catch-22:** the oracle shares the suspect code, so it cannot *first-time-validate* it alone. The independent anchor does that: calibration runs the suspect functions **and compares each count to the anchor**; a bug rarely corrupts two independent derivations identically, so agreement is positive evidence and a divergence localizes the bug. Freeze configs only once calibration agrees (human-reviewed). After that, the frozen oracle's job is *regression* detection, which it does fine despite sharing code.
 
+#### Reading a `check_canaries` result — bug vs data vs stale oracle
+
+`check_canaries` is **not** a permutation sweep. It runs **one frozen config per trial**, under **both** CV schemes — 9 trials × 1 config × 2 schemes = 18 rows. The configs *differ across trials by design* (coverage): the four data-rich strong trials carry the demanding branches, the rest a light filler.
+
+| Trial | Config it is tested under |
+|---|---|
+| 10673 Aurora | `em_combine` + `gblup_sommer_GE` (G×E) + `focal_plus_onehop` |
+| 10675 Big6 | `top_k_similar` + `rkhs_gaussian` + `rkhs` |
+| 10676 CornellMaster | `same_program` + `all_projects`(thin5) + `gblup_loo_ridge` |
+| 10677 YT_Urb | `accession_overlap` + `vanRaden_single` + `gblup_rrblup` |
+| 10679, 10680, + weak 10674 / 10678 / 10681 | `.canary_filler`: `best_single_project` + `vanRaden_single` + `gblup_rrblup` |
+
+So a failing row is **config-specific**: "10673 failed" means the em_combine + sommer_GE branch didn't work *on Aurora's data*, not that the pipeline is broken. That is what makes the oracle a coverage tool — but it also means a failure can be a property of the **method × that trial's data**, not a bug.
+
+The `status` field already encodes the bug-vs-data distinction:
+
+| status | Meaning | Category |
+|---|---|---|
+| **`error`** | an *uncaught R exception* (a crash) | **code bug** |
+| **`suspect`** | an infeasibility whose data funnel *cliffed* (much data in, ~0 out) | **probable data-hiding bug** |
+| **`infeasible`** | the pipeline *deliberately* raised `infeasible(code)` — a data precondition (`too_few_markers`, `insufficient_geno_overlap`, `no_focal_obs`, `too_few_train_trials`, …) was not met | **data-adequacy verdict** (by design) |
+| **`constant`** | predictions were produced but had *no variance* (`sd(pred)==0`) → correlation undefined → `NA` | **method × data degeneracy**, not a crash |
+
+The `constant` case is usually a *method* limitation, not missing data: `gblup`/`direct_blup` under **CV00** masks the test accessions out of training, so `fit$u` has no entry for them and every prediction collapses to `mu` → constant. A cluster of `constant` rows that are all **CV00** is that limitation, not a bug.
+
+Triage rule:
+- `error` → **code bug** (fix it). `suspect` → **probable data-hiding bug** (localize with `diagnose_trial`).
+- `infeasible` (no `suspect`) → the data *as the pipeline currently sees it* does not support that config. Could be genuine inadequacy (the T3 platform-mismatch reality), a demanding method (`em_combine` needs multi-panel data with bridge accessions a trial may lack), or an artifact of a bug that is *hiding* data (which is what the poisoning fixes addressed).
+- `constant` (esp. CV00) → **method degeneracy**, expected for some method × scheme pairs.
+
+**Two caveats that make a stale result the third category, beyond bug vs data:**
+1. **The oracle is frozen.** Its promise ("these configs work on these trials") was set at calibration time. If the T3 data changed — or was *hidden* by a since-fixed bug (poisoned caches, 401s) — the frozen configs can report `infeasible`/`constant` with **no code bug and no true data change**: the freeze has simply drifted. Re-calibrate (`calibrate_canary_trials` → review → re-freeze `canary_configs`) after any change that alters what data the pipeline sees.
+2. **A result taken before a data-layer fix cannot be trusted as a data verdict.** E.g. a `check_canaries` run predating the cache-poisoning / auth-retry fixes may show `infeasible`/`constant` for trials whose data was being hidden — re-run on the fixed code before concluding "the data is inadequate."
+
 ### `diagnose_trial(id, settings, conn)` (`R/diagnostics.R`)
 
 Replays one trial and prints the data funnel stage by stage **next to an independent re-derivation of the raw counts from T3** — including, per genotyping project, whether the dosage matrix rownames actually intersect the trial's accession names. A line like `overlap with accessions = 0` on a non-empty VCF is the decisive synonym/name-mismatch signal. Reach for it whenever `subtaskC` (§L8) or the `flow` funnel (§L11) looks wrong.
 
 ### Lessons baked in (don't re-learn the hard way)
 
-- **Cache poisoning + big VCFs.** A partial/raced VCF download once cached a tiny dosage matrix *forever* (`get_project_dosage` used `max_age_days = Inf`). Now `.ensure_project_vcf()` validates completeness (`.vcf_complete`) and re-downloads truncated files. `get_project_dosage()` extracts and caches the **whole project's** dosage once (keyed by project+thin+VCF-size), reused across trials by subsetting at read, and **deletes the raw VCF once its full dosage is cached**. If genotype counts ever look low, clear `cache/dosage_*` (regenerable).
+- **Cache poisoning + big VCFs.** A partial/raced VCF download once cached a tiny dosage matrix *forever* (`get_project_dosage` used `max_age_days = Inf`). Now `.ensure_project_vcf()` validates completeness (`.vcf_complete`) and re-downloads truncated files. `get_project_dosage()` downloads and parses each project **exactly once**, at the densest thin the budget allows, and reuses that one cache for every trial and every requested `marker_thin` by subsetting rows (samples) and columns (markers) at read; it **deletes the raw VCF once the dosage is cached**. If genotype counts ever look low, clear `cache/dosage/` (regenerable).
 - **Interactive prompt.** `conn$vcf_archived()` can prompt to pick a file and hang a non-interactive run — always launch real-mode scripts with `</dev/null`.
-- **The VCF parser is streaming, and some archives are broken.** `.vcf_to_dosage()` streams the VCF in chunks (base R, no `vcfR`) so memory is bounded by one chunk plus the thinned result — a 7.5M-marker panel no longer OOMs. It (a) decompresses gzip/BGZF transparently, (b) **skips a malformed variant line** rather than failing the whole file (a real archive had one 3-field record), and (c) **rejects** a transposed / non-VCF layout. Real T3 archives seen that are genuinely unusable — a transposed export, and one whose `#CHROM` header declares more samples than the data rows carry — are recorded in `cache/unparseable_<id>.rds` and skipped forever after (delete that file to retry). A project too large to hold densely is **auto-thinned** to `settings$dosage_budget_bytes`, the effective thin recorded in the `dosage_` filename. If a project you expect silently yields no genotypes, look for its `unparseable_` marker and read the reason.
+- **The VCF parser is streaming, and some archives are broken.** `.vcf_to_dosage()` streams the VCF in chunks (base R, no `vcfR`) so memory is bounded by one chunk plus the thinned result — a 7.5M-marker panel no longer OOMs. It (a) decompresses gzip/BGZF transparently, (b) **skips a malformed variant line** rather than failing the whole file (a real archive had one 3-field record), and (c) **rejects** a transposed / non-VCF layout. Real T3 archives seen that are genuinely unusable — a transposed export, and one whose `#CHROM` header declares more samples than the data rows carry — are recorded in `cache/unparseable/unparseable_<id>.rds` and skipped forever after (delete that file to retry). A project too large to hold densely is thinned to fit `settings$dosage_budget_bytes` at parse time, the thin `e` recorded in the `dosage_` filename; that budget is the sole control on cached marker density. If a project you expect silently yields no genotypes, look for its `unparseable_` marker and read the reason.
+- **A timing-out download is not re-stormed.** A transient VCF-download failure (T3 choking on a big archive, e.g. project 8217) is tracked **per session** in RAM by project id: each subsequent attempt tries less hard (fewer in-call retries, shorter backoff) and after `settings$vcf_max_download_attempts` (default 3) the project is **skipped for the rest of the run** instead of re-downloading on every covering trial × scheme. This is *not* an `unparseable_` (structural) verdict — it is session-only and resets on a new run, so a project that was merely down is retried fresh next time. A successful download clears the counter. If a project you expect is being skipped, it hit its download-attempt cap this session — start a new session (or raise `vcf_max_download_attempts`) once T3 is healthy.
 
 ------------------------------------------------------------------------
 
