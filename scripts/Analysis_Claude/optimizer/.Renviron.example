@@ -1,0 +1,11 @@
+# T3 / Triticeae Toolbox BrAPI login credentials.
+#
+# Copy this file to `.Renviron` (same folder) and fill in your real credentials.
+# `.Renviron` is gitignored -- never commit it. R reads `.Renviron` once at startup, so
+# after editing it you must restart R for the change to take effect.
+#
+# t3_login() / t3_connect() (R/data_access.R) read these; .brapi_try() re-reads them to
+# re-authenticate when the server returns HTTP 401 (e.g. after the token expires).
+
+T3_USERNAME=your_t3_username
+T3_PASSWORD=your_t3_password

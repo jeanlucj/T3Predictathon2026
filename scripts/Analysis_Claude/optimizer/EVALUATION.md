@@ -67,12 +67,20 @@ s <- optimizer_settings()
 eval_groups()                                 # confirm the tooling loaded
 ```
 
-For the **online** levels (L5 on) also open the live connection once and reuse it:
+For the **online** levels (L5 on) also open the live connection once and reuse it. The T3
+server now requires login, so `t3_connect()` constructs the connection **and logs it in**
+from the `T3_USERNAME` / `T3_PASSWORD` environment credentials (copy `.Renviron.example` to
+`.Renviron`, fill it in, restart R):
 
 ``` r
 s    <- modifyList(optimizer_settings(), list(simulate = FALSE))
-conn <- BrAPI::createBrAPIConnection(s$brapi_host, is_breedbase = TRUE)
+conn <- t3_connect(s)          # createBrAPIConnection + t3_login from .Renviron creds
 ```
+
+> **Auth.** If a call comes back `Unauthorized (HTTP 401)` (e.g. the token expired mid-run),
+> `.brapi_try()` re-logs in once from the same credentials and retries -- no action needed.
+> If `t3_connect()` errors with "T3 login needs T3_USERNAME and T3_PASSWORD", your `.Renviron`
+> is missing or unread (it is loaded only at R startup).
 
 > **Caveat.** `conn$vcf_archived()` can prompt interactively to pick a file and will hang a non-interactive run. When you script a real-mode probe with `Rscript`, redirect stdin: `Rscript probe.R </dev/null`. Interactively in RStudio you will simply see the prompt.
 
@@ -444,7 +452,7 @@ Each file is self-contained: it sources the subsystem, runs hand-rolled `check()
 | Command | Expected |
 |----|----|
 | `tests/test_config_space.R` | \~5 genome invariants across \~400 sampled/recombined configs → `config_space tests: 8007 passed, 0 failed` (8007 = individual assertions) |
-| `tests/test_subtasks.R` | `Tier 1 subtask tests: 86 passed, 0 failed` |
+| `tests/test_subtasks.R` | `Tier 1 subtask tests: 92 passed, 0 failed` |
 | `tests/run_all.R` | `2/2 test files passed` |
 | `tests/test_sim_loop.R` (or `run_all.R --all`) | `PASS: optimizer beats submissions and improves over random search`, exit 0 |
 

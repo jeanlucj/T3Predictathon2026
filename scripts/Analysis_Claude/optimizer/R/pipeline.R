@@ -197,7 +197,7 @@ select_training_trials <- function(cfg, trial, conn, settings) {
     batches <- split(acc, ceiling(seq_along(acc) / 500L))
     cand <- unique(unlist(purrr::map(batches, function(b) {
       w <- .brapi_try(function() conn$wizard("trials", list(accessions = b)),
-                      tries = settings$brapi_tries %||% 4L, what = "trials wizard")
+                      conn = conn, settings = settings, what = "trials wizard")
       as.character(w$data$ids)
     })))
     # Keep only trials that measured the focal trait, and drop the excluded trial(s).

@@ -45,8 +45,8 @@ EVAL_GROUPS <- list(
                   ".sim_true", ".sim_evaluate", "mask_cv"),
 
   # ---- online (live BrAPI); slow ---------------------------------------
-  data        = c("cached", "trial_catalog", "sample_real_trial",
-                  "build_trial_descriptor", "get_trial_accessions",
+  data        = c("cached", "t3_connect", "t3_login", ".brapi_try", "trial_catalog",
+                  "sample_real_trial", "build_trial_descriptor", "get_trial_accessions",
                   "get_observations", ".obs_tibble", ".obsunits_tibble",
                   "projects_for_accessions", "get_project_dosage",
                   ".ensure_project_vcf", ".vcf_complete", ".vcf_to_dosage"),

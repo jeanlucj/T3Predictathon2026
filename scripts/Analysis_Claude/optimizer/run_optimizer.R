@@ -60,10 +60,10 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
   dir.create(settings$log_dir, showWarnings = FALSE, recursive = TRUE)
   dir.create(settings$cache_dir, showWarnings = FALSE, recursive = TRUE)
 
-  # Real mode needs a live BrAPI connection (made once, reused). Simulate mode
-  # never touches the network.
+  # Real mode needs a live BrAPI connection (made once, reused), logged in from the
+  # T3_USERNAME/T3_PASSWORD environment credentials. Simulate mode never touches the network.
   if (!settings$simulate && is.null(conn)) {
-    conn <- BrAPI::createBrAPIConnection(settings$brapi_host, is_breedbase = TRUE)
+    conn <- t3_connect(settings)
   }
 
   # Bug oracle: before spending hours, confirm the pipeline can still predict

@@ -52,23 +52,88 @@ library(tidyverse)
   saveRDS(value, p); invisible(p)
 }
 
-# Retry a BrAPI network call through a flaky server. `thunk` is a zero-arg function (so it
-# is re-evaluated each attempt); on error we back off (exponential + jitter) and retry up
-# to `tries`, then re-raise the LAST error. A transient 500/timeout is ridden out; a
-# persistent failure still surfaces exactly as before (so callers that treat an error as
-# NULL/infeasible are unchanged in the persistent case). Set tries via
-# settings$brapi_tries (default 4); tries = 1 disables retry.
-.brapi_try <- function(thunk, tries = 4L, base_delay = 2, what = "BrAPI call") {
-  tries <- max(1L, as.integer(tries)); last <- NULL
-  for (i in seq_len(tries)) {
-    r <- tryCatch(thunk(), error = function(e) { last <<- e; e })
-    if (!inherits(r, "error")) return(r)
-    if (i < tries) {
-      message(sprintf("%s failed (%d/%d): %s -- retrying", what, i, tries, conditionMessage(r)))
-      Sys.sleep(base_delay * 2^(i - 1L) + stats::runif(1))
+# --- BrAPI auth + retry ----------------------------------------------------
+# How many attempts a flaky BrAPI call gets. Single source of the default (was duplicated
+# as `settings$brapi_tries %||% 4L` at every call site).
+.brapi_tries <- function(settings = NULL) as.integer((settings$brapi_tries %||% 4L))
+
+# Log a connection in from environment credentials (T3_USERNAME / T3_PASSWORD, e.g. from
+# .Renviron -- see .Renviron.example). Never prompts interactively (which would hang a
+# background run); errors clearly if the credentials are absent. conn$login() mutates the
+# connection in place, storing the bearer token on it.
+t3_login <- function(conn, settings = NULL) {
+  user <- Sys.getenv("T3_USERNAME"); pass <- Sys.getenv("T3_PASSWORD")
+  if (!nzchar(user) || !nzchar(pass))
+    stop("T3 login needs T3_USERNAME and T3_PASSWORD in the environment ",
+         "(copy .Renviron.example to .Renviron, fill it in, restart R).")
+  conn$login(username = user, password = pass)
+  invisible(conn)
+}
+
+# Construct a connection AND log it in -- the single place a connection is made.
+t3_connect <- function(settings) {
+  conn <- BrAPI::createBrAPIConnection(settings$brapi_host, is_breedbase = TRUE)
+  t3_login(conn, settings)
+  conn
+}
+
+# The T3 server surfaces an unauthenticated call NOT as an R error but as a WARNING
+# ("Unauthorized (HTTP 401)." / "You must login ...") plus a returned response whose
+# $status reason is "Unauthorized" and whose data is empty. So auth failure is detected two
+# ways (either suffices): the warning text, and the response status.
+.is_auth_warning <- function(msg)
+  grepl("unauthor|must login|permission to access|\\b401\\b", msg, ignore.case = TRUE)
+
+.response_auth_failed <- function(r) {
+  if (!is.list(r) || is.null(r$status)) return(FALSE)
+  st   <- r$status
+  msgs <- if (is.list(st)) unlist(lapply(st, function(s) paste(s$reason, s$message)))
+          else as.character(st)
+  any(grepl("unauthor|\\b401\\b", msgs, ignore.case = TRUE))
+}
+
+# Retry a BrAPI network call through a flaky server, and re-authenticate on a 401.
+# `thunk` is zero-arg (re-evaluated each attempt). Transport errors (timeout/refused) are
+# caught and retried with exponential backoff + jitter, up to `tries`, then re-raised.
+# An UNAUTHORIZED result triggers one re-login (t3_login) via `conn`/`settings` and an
+# immediate free retry (it does not consume a transient attempt); if login does not resolve
+# it, it is treated like a transient failure and finally raised. Pass conn = settings = NULL
+# (the default) to skip re-auth -- then behaviour is the pure retry loop as before.
+.brapi_try <- function(thunk, conn = NULL, settings = NULL, tries = NULL,
+                       base_delay = 2, what = "BrAPI call") {
+  if (is.null(tries)) tries <- .brapi_tries(settings)
+  tries <- max(1L, as.integer(tries))
+  last <- NULL; relogins <- 0L; attempt <- 0L
+  while (attempt < tries) {
+    attempt <- attempt + 1L
+    auth_fail <- FALSE
+    r <- withCallingHandlers(
+      tryCatch(thunk(), error = function(e) { last <<- e; e }),
+      warning = function(w) {
+        if (.is_auth_warning(conditionMessage(w))) {          # swallow only auth warnings
+          auth_fail <<- TRUE; invokeRestart("muffleWarning")  # (others propagate normally)
+        }
+      })
+    is_err   <- inherits(r, "error")
+    auth_fail <- auth_fail || (!is_err && .response_auth_failed(r))
+    if (!is_err && !auth_fail) return(r)                      # success
+
+    # 401 -> one free re-login, then retry the same thunk with the refreshed token.
+    if (auth_fail && !is.null(conn) && !is.null(settings) && relogins < 1L) {
+      relogins <- relogins + 1L
+      if (tryCatch({ t3_login(conn, settings); TRUE }, error = function(e) { last <<- e; FALSE })) {
+        message(sprintf("%s: was unauthorized -- logged in, retrying", what))
+        attempt <- attempt - 1L; next
+      }
+    }
+    if (attempt < tries) {
+      msg <- if (is_err) conditionMessage(r) else "unauthorized"
+      message(sprintf("%s failed (%d/%d): %s -- retrying", what, attempt, tries, msg))
+      Sys.sleep(base_delay * 2^(attempt - 1L) + stats::runif(1))
     }
   }
-  stop(last)
+  if (!is.null(last)) stop(last)
+  stop(sprintf("%s failed: unauthorized and login did not resolve it", what))
 }
 
 # On-disk memoizer. `valid(val)` gates the WRITE: only a result that passes it is
@@ -113,17 +178,16 @@ trial_catalog <- function(conn, settings) {
     # latitude / longitude column, so we derive year from start_date (POSIXct)
     # and join lat/long/elev by location (see below).
     id <- settings$focal_trait_db_id
-    tries <- settings$brapi_tries %||% 4L
     meta <- if (!is.null(id) && nzchar(id)) {
       make_row <- getFromNamespace("make_row_from_trial_result", "T3BrapiHelpers")
       search <- .brapi_try(function() conn$search("studies", body = list(
         commonCropNames        = settings$crop_name,
         observationVariableDbIds = list(as.character(id)))),
-        tries = tries, what = "studies search")
+        conn = conn, settings = settings, what = "studies search")
       janitor::clean_names(dplyr::bind_rows(lapply(search$combined_data, make_row)))
     } else {
       .brapi_try(function() T3BrapiHelpers::get_all_trial_meta_data(conn, settings$crop_name),
-                 tries = tries, what = "trial metadata")
+                 conn = conn, settings = settings, what = "trial metadata")
     }
     meta <- tibble::as_tibble(meta)
     if ("start_date" %in% names(meta) && !("year" %in% names(meta))) {
@@ -137,7 +201,8 @@ trial_catalog <- function(conn, settings) {
       locs <- unique(stats::na.omit(meta$location_name))
       coords <- if (length(locs)) tryCatch(
         .brapi_try(function() T3BrapiHelpers::get_lat_long_elev_from_location_vec(
-          as.list(locs), conn, id_or_name = "name"), tries = tries, what = "location coords"),
+          as.list(locs), conn, id_or_name = "name"),
+          conn = conn, settings = settings, what = "location coords"),
         error = function(e) NULL) else NULL
       if (!is.null(coords) && nrow(coords)) {
         coords <- coords |>
@@ -271,13 +336,12 @@ get_observations <- function(study_ids, conn, settings) {
                    as.numeric(difftime(Sys.time(), file.info(hit)$mtime, units = "days")) <= 30) {
       readRDS(hit)
     } else {
-      tries <- settings$brapi_tries %||% 4L
       o_resp <- tryCatch(.brapi_try(function() conn$search(
         "/observations", body = list(studyDbIds = list(sid), pageSize = 100000L)),
-        tries = tries, what = "observations search"), error = function(e) NULL)
+        conn = conn, settings = settings, what = "observations search"), error = function(e) NULL)
       u_resp <- tryCatch(.brapi_try(function() conn$search(
         "/observationunits", body = list(studyDbIds = list(sid), pageSize = 100000L)),
-        tries = tries, what = "observationunits search"), error = function(e) NULL)
+        conn = conn, settings = settings, what = "observationunits search"), error = function(e) NULL)
       tb <- dplyr::left_join(.obs_tibble(o_resp, sid), .obsunits_tibble(u_resp), by = "unit_id")
       # Cache ONLY when BOTH fetches SUCCEEDED. A transient error returns NULL, which
       # .obs_tibble/.obsunits_tibble turn into an empty tibble -- caching that would store
@@ -358,7 +422,7 @@ get_trial_accessions <- function(study_id, conn, settings) {
   cached(settings, "acc", as.character(study_id), max_age_days = 30,
          valid = function(a) length(a) > 0, expr = {
     w <- .brapi_try(function() conn$wizard("accessions", list(trials = list(as.character(study_id)))),
-                    tries = settings$brapi_tries %||% 4L, what = "accessions wizard")
+                    conn = conn, settings = settings, what = "accessions wizard")
     unique(as.character(w$data$names))
   })
 }
@@ -386,10 +450,9 @@ projects_for_accessions <- function(accessions, conn, settings) {
   # current run proceeds, but we do NOT persist it, so the next run retries.
   batches <- split(acc, ceiling(seq_along(acc) / 500L))
   failed  <- FALSE
-  tries <- settings$brapi_tries %||% 4L
   ids <- unlist(purrr::map(batches, function(b) {
     w <- tryCatch(.brapi_try(function() conn$wizard("genotyping_projects", list(accessions = b)),
-                             tries = tries, what = "genotyping_projects wizard"),
+                             conn = conn, settings = settings, what = "genotyping_projects wizard"),
                   error = function(e) { failed <<- TRUE; NULL })
     if (is.null(w)) character() else as.character(w$data$ids)
   }, .progress = "Genotyping projects for accessions"), use.names = FALSE)
@@ -520,7 +583,7 @@ get_project_dosage <- function(project_id, keep_samples, conn, settings,
   for (q in all_loc) if (file.exists(q)) unlink(q)
   dir.create(dirname(base), showWarnings = FALSE, recursive = TRUE)
   .brapi_try(function() conn$vcf_archived(output = base, genotyping_project_id = project_id),
-             tries = settings$brapi_tries %||% 4L, what = paste("VCF download", project_id))
+             conn = conn, settings = settings, what = paste("VCF download", project_id))
   p <- nested[file.exists(nested)][1]
   if (is.na(p) || !.vcf_complete(p)) {
     for (q in nested) if (file.exists(q)) unlink(q)

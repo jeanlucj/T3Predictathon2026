@@ -50,6 +50,51 @@ suppressMessages(try(.brapi_try(th3, tries = 1, base_delay = 0), silent = TRUE))
 check(n3 == 1L, "tries=1 disables retry (single attempt)")
 
 # ===========================================================================
+cat(".brapi_tries accessor + auth detection + re-login\n")
+# Oracle: the tries default is single-sourced; NULL/absent settings falls back to 4.
+check(.brapi_tries(list(brapi_tries = 7)) == 7L, ".brapi_tries reads settings$brapi_tries")
+check(.brapi_tries(NULL) == 4L && .brapi_tries(list()) == 4L, ".brapi_tries default is 4")
+
+# Oracle: an unauthorized 401 surfaces as a WARNING and as a response $status reason, and
+# both are recognized (exact strings observed live from wheat.triticeaetoolbox.org).
+check(.is_auth_warning("Unauthorized (HTTP 401).") &&
+      .is_auth_warning("You must login and have permission to access this BrAPI call.") &&
+      !.is_auth_warning("Internal Server Error (HTTP 500)."),
+      ".is_auth_warning matches 401 wording, not 500")
+auth_resp <- list(status = list(page0 = list(category = "Client error",
+              reason = "Unauthorized", message = "Client error: (401) Unauthorized")),
+              combined_data = list())
+check(.response_auth_failed(auth_resp) &&
+      !.response_auth_failed(list(status = list(page0 = list(reason = "OK")))) &&
+      !.response_auth_failed("not a response"),
+      ".response_auth_failed detects the 401 status structure")
+
+# Oracle: on a 401 (emitted as a warning), .brapi_try re-logs in via conn/settings ONCE and
+# retries, returning the eventual success. Uses a fake conn + throwaway env credentials.
+old_u <- Sys.getenv("T3_USERNAME"); old_p <- Sys.getenv("T3_PASSWORD")
+Sys.setenv(T3_USERNAME = "u", T3_PASSWORD = "p")
+logged_in <- FALSE
+fake_conn <- list(login = function(username, password) { logged_in <<- TRUE; invisible(NULL) })
+tries_seen <- 0L
+th_auth <- function() {
+  tries_seen <<- tries_seen + 1L
+  if (!logged_in) { warning("Unauthorized (HTTP 401)."); return(list(status = list(
+    page0 = list(reason = "Unauthorized")), combined_data = list())) }
+  "DATA"
+}
+res <- suppressMessages(.brapi_try(th_auth, conn = fake_conn, settings = list(brapi_tries = 3),
+                                   base_delay = 0))
+check(identical(res, "DATA") && logged_in && tries_seen == 2L,
+      "401 -> t3_login() once -> retry succeeds")
+
+# Oracle: t3_login errors clearly (no interactive prompt) when credentials are absent.
+Sys.unsetenv("T3_USERNAME"); Sys.unsetenv("T3_PASSWORD")
+check(inherits(try(t3_login(fake_conn), silent = TRUE), "try-error"),
+      "t3_login errors when T3_USERNAME/T3_PASSWORD are unset")
+if (nzchar(old_u)) Sys.setenv(T3_USERNAME = old_u)
+if (nzchar(old_p)) Sys.setenv(T3_PASSWORD = old_p)
+
+# ===========================================================================
 cat("cached() / category-partitioned cache paths\n")
 # Oracle: a cache entry lives at cache/<category>/<category>_<identifier>.rds; reads fall
 # back to the pre-migration FLAT path so an un-migrated cache still hits; writes go nested;
