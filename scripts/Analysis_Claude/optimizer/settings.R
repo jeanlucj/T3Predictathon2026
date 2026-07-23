@@ -137,25 +137,16 @@ optimizer_settings <- function() {
       years     = NULL,          # integer vector of years, or NULL
       locations = NULL,          # character vector of locationName values, or NULL
       # character vector of studyName (trial) values, or NULL
-      trials    = c("CornellMaster_2007_McGowan", "CornellMaster_2008_Helfer",
-                    "CornellMaster_2008_Ketola", "CornellMaster_2008_Snyder",
-                    "CornellMaster_2009_Helfer", "CornellMaster_2009_Ketola",
-                    "CornellMaster_2009_McGowan", "CornellMaster_2010_Helfer",
-                    "CornellMaster_2010_Ketola", "CornellMaster_2010_Snyder",
-                    "CornellMaster_2011_Helfer", "CornellMaster_2011_Ketola",
-                    "CornellMaster_2011_McGowan", "CornellMaster_2012_Helfer",
-                    "CornellMaster_2012_Ketola", "CornellMaster_2012_Snyder",
-                    "CornellMaster_2013_Helfer", "CornellMaster_2013_Ketola",
-                    "CornellMaster_2013_McGowan", "CornellMaster_2014_Helfer",
-                    "CornellMaster_2014_Ketola", "CornellMaster_2014_Snyder",
-                    "CornellMaster_2015_Helfer", "CornellMaster_2015_Ketola",
-                    "CornellMaster_2015_McGowan", "CornellMaster_2016_Helfer",
-                    "CornellMaster_2016_Ketola", "CornellMaster_2016_Snyder",
-                    "CornellMaster_2017_Ketola", "CornellMaster_2017_Snyder",
-                    "CornellMaster_2018_Helfer", "CornellMaster_2018_Ketola",
-                    "CornellMaster_2019_Ketola", "CornellMaster_2020_Helfer",
-                    "CornellMaster_2021_Snyder", "CornellMaster_2022_Helfer",
-                    "CornellMaster_2023_McGowan")
+      trials    = c("23_Big6_MAS", "23_Big6_SVREC", "24_Big6_FHB_FHB",
+                    "24_Big6_MASMI", "24_Big6_SVREC", "24_Jhon_FHB_CRD_FHB",
+                    "25_Big6_Core_FHB_FHB", "25_Big6_MASON_MASMI", "25_Big6_SVREC_SVREC",
+                    "25_MSU_AYT_MI_ALLMI", "25_MSU_AYT_MI_CENMI", "25_MSU_AYT_MI_FHB",
+                    "25_MSU_AYT_MI_HURMI", "25_MSU_AYT_MI_MONMI", "25_MSU_AYT_MI_SANMI",
+                    "25_MSU_PYT_FHB", "25_MSU_PYT_MASMI", "25_MSU_PYT_SVREC",
+                    "Big6_Fra_23", "Big6_Fre_23", "Big6_Laf_23", "Big6_Mas_23",
+                    "Big6_Prn_23", "Big6_Scb_23", "Big6_Urb_23", "Big6_Woo_23",
+                    "IL_Scb_23", "SI_Urb_22", "YT_Addie_23", "YT_Neo_23", "YT_Stp_23",
+                    "YT_Urb_23", "YT_Urb_25")
     ),
 
     # ---- paths ------------------------------------------------------------
