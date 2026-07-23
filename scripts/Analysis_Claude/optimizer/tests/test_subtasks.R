@@ -175,10 +175,17 @@ cat("remote_server path resolution + cache backup/restore\n")
 # Oracle: local mode puts state under the project dir and disables cache backup; remote mode
 # puts state under OPTIMIZER_PATH and points the backup there; remote with OPTIMIZER_PATH unset
 # fails LOUDLY (not silently at the filesystem root). `remote_server` is the settings.R global.
+# HERMETIC: this block forces both `remote_server` and OPTIMIZER_PATH to known values and
+# restores BOTH afterward, so it does not depend on -- or clobber -- the user's real settings
+# (a run with remote_server = TRUE and OPTIMIZER_PATH set from .Renviron must be left intact).
 old_rs <- remote_server
+old_op <- Sys.getenv("OPTIMIZER_PATH", unset = NA_character_)
+
+remote_server <<- FALSE
 sl <- optimizer_settings()
 check(sl$db_path == file.path(here::here(), "state", "evals.sqlite") && is.null(sl$cache_backup_dir),
       "local mode: state under project dir, cache backup disabled")
+
 remote_server <<- TRUE
 Sys.setenv(OPTIMIZER_PATH = "/tmp/opt_perm_test")
 sr <- optimizer_settings()
@@ -190,7 +197,9 @@ check(sr$cache_dir == here::here("cache"), "remote mode: cache still on the work
 Sys.unsetenv("OPTIMIZER_PATH")
 check(inherits(try(optimizer_settings(), silent = TRUE), "try-error"),
       "remote_server = TRUE with OPTIMIZER_PATH unset -> loud error (not root paths)")
-remote_server <<- old_rs   # restore the global
+
+remote_server <<- old_rs                                          # restore BOTH globals/env
+if (is.na(old_op)) Sys.unsetenv("OPTIMIZER_PATH") else Sys.setenv(OPTIMIZER_PATH = old_op)
 
 # Oracle: cache backup is additive, excludes raw_project/, and restore only warms an empty
 # work cache. (rsync-dependent; skipped cleanly if rsync is absent.)

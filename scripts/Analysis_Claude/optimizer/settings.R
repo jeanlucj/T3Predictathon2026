@@ -139,7 +139,7 @@ optimizer_settings <- function() {
       # character vector of studyName (trial) values, or NULL
       trials    = c("23_Big6_MAS", "23_Big6_SVREC", "24_Big6_FHB_FHB",
                     "24_Big6_MASMI", "24_Big6_SVREC", "24_Jhon_FHB_CRD_FHB",
-                    "25_Big6_Core_FHB_FHB", "25_Big6_MASON_MASMI", "25_Big6_SVREC_SVREC",
+                    "25_Big6_Core_FHB_FHB", "25_Big6_MASON_MASMI",
                     "25_MSU_AYT_MI_ALLMI", "25_MSU_AYT_MI_CENMI", "25_MSU_AYT_MI_FHB",
                     "25_MSU_AYT_MI_HURMI", "25_MSU_AYT_MI_MONMI", "25_MSU_AYT_MI_SANMI",
                     "25_MSU_PYT_FHB", "25_MSU_PYT_MASMI", "25_MSU_PYT_SVREC",
