@@ -201,13 +201,15 @@ check(inherits(try(optimizer_settings(), silent = TRUE), "try-error"),
 remote_server <<- old_rs                                          # restore BOTH globals/env
 if (is.na(old_op)) Sys.unsetenv("OPTIMIZER_PATH") else Sys.setenv(OPTIMIZER_PATH = old_op)
 
-# Oracle: cache backup is additive, excludes raw_project/, and restore only warms an empty
-# work cache. (rsync-dependent; skipped cleanly if rsync is absent.)
+# Oracle: cache backup is additive and excludes raw_project/; restore ADDITIVELY reconciles
+# the work cache from the backup -- filling gaps in a PARTIALLY-populated cache (the case that
+# regressed) without deleting work-only files. (rsync-dependent; skipped cleanly if absent.)
 if (nzchar(Sys.which("rsync"))) {
   work <- tempfile("work_"); bak <- tempfile("bak_"); dir.create(work)
   dir.create(file.path(work, "dosage"), recursive = TRUE)
   dir.create(file.path(work, "raw_project"), recursive = TRUE)
   saveRDS(1L, file.path(work, "dosage", "dosage_1_sz1.rds"))
+  saveRDS(2L, file.path(work, "dosage", "dosage_2_sz1.rds"))
   writeLines("x", file.path(work, "raw_project", "raw_project_1.vcf"))
   bset <- list(cache_dir = work, cache_backup_dir = bak)
   sync_cache_to_backup(bset)
@@ -215,15 +217,22 @@ if (nzchar(Sys.which("rsync"))) {
         "cache backup copies dosage files to the backup dir")
   check(!file.exists(file.path(bak, "raw_project", "raw_project_1.vcf")),
         "cache backup EXCLUDES the transient raw_project/ VCFs")
-  # restore only warms an EMPTY work cache
-  work2 <- tempfile("work2_"); dir.create(work2)
-  check(restore_cache_from_backup(list(cache_dir = work2, cache_backup_dir = bak)) &&
-        file.exists(file.path(work2, "dosage", "dosage_1_sz1.rds")),
+  # restore into an EMPTY work cache -> full warm-up.
+  empty <- tempfile("empty_"); dir.create(empty)
+  restore_cache_from_backup(list(cache_dir = empty, cache_backup_dir = bak))
+  check(file.exists(file.path(empty, "dosage", "dosage_2_sz1.rds")),
         "restore warms an empty work cache from the backup")
-  saveRDS(9L, file.path(work2, "already.rds"))
-  check(isFALSE(restore_cache_from_backup(list(cache_dir = work2, cache_backup_dir = bak))),
-        "restore is a no-op when the work cache is non-empty")
-  unlink(c(work, work2, bak), recursive = TRUE)
+  # restore into a PARTIAL work cache -> fills the MISSING file, keeps a work-only file (the
+  # regression: the old empty-guard skipped this entirely).
+  part <- tempfile("part_"); dir.create(file.path(part, "dosage"), recursive = TRUE)
+  saveRDS(1L, file.path(part, "dosage", "dosage_1_sz1.rds"))   # has #1, missing #2
+  saveRDS(9L, file.path(part, "work_only.rds"))                # not in the backup
+  restore_cache_from_backup(list(cache_dir = part, cache_backup_dir = bak))
+  check(file.exists(file.path(part, "dosage", "dosage_2_sz1.rds")),
+        "restore fills a MISSING file in a partially-populated work cache")
+  check(file.exists(file.path(part, "work_only.rds")),
+        "restore is additive: a work-only file is not deleted")
+  unlink(c(work, empty, part, bak), recursive = TRUE)
 } else message("  (rsync not found -- skipping cache backup/restore integration checks)")
 
 # ===========================================================================

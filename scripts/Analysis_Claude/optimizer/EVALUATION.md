@@ -90,6 +90,18 @@ conn <- t3_connect(s)          # createBrAPIConnection + t3_login from .Renviron
 
 Durable state lives in two dirs and is regenerable: `state/` (the SQLite store + `report.md`; `touch state/STOP` halts a run) and `cache/` (downloaded data). See §8.
 
+> **Cache backup (remote server).** With `remote_server = TRUE` the cache stays on the work
+> disk and is backed up to `$OPTIMIZER_PATH/cache`. `run_optimizer()` reconciles and backs it
+> up automatically, but you can also drive it by hand outside the loop -- e.g. before a
+> `check_canaries()` / `calibrate_canary_trials()` session that isn't launched through
+> `run_optimizer()`:
+> ``` r
+> restore_cache_from_backup(s)   # warm the WORK cache from the backup (additive: fills gaps,
+>                                # never deletes; run it whenever, empty cache or not)
+> sync_cache_to_backup(s)        # back the work cache up to durable storage now
+> ```
+> Both are no-ops when `cache_backup_dir` is unset (local mode) or `rsync` is missing.
+
 ------------------------------------------------------------------------
 
 ## 4. Level-by-level walkthrough
@@ -456,7 +468,7 @@ Each file is self-contained: it sources the subsystem, runs hand-rolled `check()
 | Command | Expected |
 |----|----|
 | `tests/test_config_space.R` | \~5 genome invariants across \~400 sampled/recombined configs → `config_space tests: 8007 passed, 0 failed` (8007 = individual assertions) |
-| `tests/test_subtasks.R` | `Tier 1 subtask tests: 120 passed, 0 failed` |
+| `tests/test_subtasks.R` | `Tier 1 subtask tests: 121 passed, 0 failed` |
 | `tests/run_all.R` | `2/2 test files passed` |
 | `tests/test_sim_loop.R` (or `run_all.R --all`) | `PASS: optimizer beats submissions and improves over random search`, exit 0 |
 

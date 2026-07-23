@@ -196,19 +196,24 @@ sync_cache_to_backup <- function(settings, quiet = TRUE) {
   invisible(code == 0)
 }
 
-# Restore the cache from its durable backup (backup -> work), but ONLY when the work cache is
-# empty -- i.e. a fresh node after a scratch purge. Never overwrites an existing work cache.
+# Reconcile the work cache from its durable backup (backup -> work), ADDITIVELY. rsync copies
+# only files the work cache is MISSING -- immutable cache files with the same size+mtime are
+# skipped, and without --delete nothing already in the work cache is removed. So this fills
+# gaps whether the work cache is empty (fresh node) OR only partially populated (a scratch
+# purge, a fresh checkout, a partial migration) -- it is not gated on the cache being empty.
+# Safe to call manually any time. No-op if there is no backup dir or rsync.
 restore_cache_from_backup <- function(settings) {
   bak <- settings$cache_backup_dir
   if (is.null(bak) || !nzchar(bak) || !dir.exists(bak)) return(invisible(FALSE))
   src <- settings$cache_dir
-  if (length(list.files(src, recursive = TRUE))) return(invisible(FALSE))   # work cache non-empty
   rsync <- Sys.which("rsync")
   if (!nzchar(rsync)) return(invisible(FALSE))
   dir.create(src, showWarnings = FALSE, recursive = TRUE)
-  message("restoring cache from backup ", bak, " ...")
+  before <- length(list.files(src, recursive = TRUE))
   suppressWarnings(system2(rsync, c("-a", paste0(bak, "/"), paste0(src, "/")),
                            stdout = FALSE, stderr = FALSE))
+  added <- length(list.files(src, recursive = TRUE)) - before
+  if (added > 0L) message(sprintf("cache restore: +%d file(s) from backup %s", added, bak))
   invisible(TRUE)
 }
 

@@ -49,7 +49,8 @@ EVAL_GROUPS <- list(
                   "sample_real_trial", "build_trial_descriptor", "get_trial_accessions",
                   "get_observations", ".obs_tibble", ".obsunits_tibble",
                   "projects_for_accessions", "get_project_dosage",
-                  ".ensure_project_vcf", ".vcf_complete", ".vcf_to_dosage"),
+                  ".ensure_project_vcf", ".vcf_complete", ".vcf_to_dosage",
+                  "restore_cache_from_backup", "sync_cache_to_backup"),
 
   # ---- the six subtasks (arm ONE at a time) ----------------------------
   subtaskA    = c("select_training_trials", ".find_related", ".germ_overlap",
