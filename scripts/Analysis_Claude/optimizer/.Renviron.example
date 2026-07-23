@@ -9,3 +9,7 @@
 
 T3_USERNAME=your_t3_username
 T3_PASSWORD=your_t3_password
+
+# Put permanent files in the home rather than the work directory if you
+# are running analysis on a remote server
+OPTIMIZER_PATH=/home/directory/t3_optimizer

@@ -150,12 +150,33 @@ preserved.
 
 - **Must save:** `state/evals.sqlite` (or wherever you pointed `db_path`). This
   single file *is* the optimizer's state -- the incumbent, the surrogate's
-  training data, and what to try next are all recomputed from it on startup.
+  training data, and what to try next are all recomputed from it on startup. Put
+  it on durable storage: set `remote_server = TRUE` (top of `settings.R`) and
+  `OPTIMIZER_PATH=/home/<user>/t3_optimizer` in `.Renviron`, which sends
+  `state/` and `logs/` to `$OPTIMIZER_PATH` while the cache stays on the work disk.
 - **Worth saving:** `cache/` -- large but regenerable; keeping it lets a resumed
   run skip re-downloading the trials it already touched. `state/report.md`/`logs/`
   are convenience only.
 
-Copy them off the machine before your time is up:
+**Automatic cache backup.** When `remote_server = TRUE`, `run_optimizer()` backs the
+cache up to `$OPTIMIZER_PATH/cache` on its own: it restores from there at startup if
+the work cache is empty (fresh node), rsyncs additively every `cache_sync_minutes`
+(default 30) during the run, and flushes once more on a clean stop or an R-level error.
+So a graceful stop, an error, or a hit budget loses nothing.
+
+**Surviving an abrupt kill.** An in-process backup cannot run if R itself is
+`SIGKILL`ed (OOM-killer, node reboot, `scancel`). For that, run an external rsync
+loop in a separate `tmux`/`nohup` shell so at most one interval is ever at risk:
+```bash
+while true; do
+  rsync -a --exclude 'raw_project/' /workdir/<user>/.../cache/ "$OPTIMIZER_PATH/cache/"
+  sleep 1800
+done
+```
+Note this only protects the *cache*; `evals.sqlite` is already on durable `$OPTIMIZER_PATH`
+storage, so optimizer **progress** is never lost to a kill -- only some re-downloadable cache.
+
+Manual copy off the machine before your time is up (belt-and-suspenders):
 ```bash
 rsync -av /workdir/<user>/optimizer_cache/  $HOME/optimizer_cache/      # optional, large
 cp /workdir/<user>/.../state/evals.sqlite    $HOME/optimizer_state/      # essential

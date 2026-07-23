@@ -3,7 +3,21 @@
 # Every knob in one place. The driver and the optimizer read from here, so you
 # tune the run by editing this file (or overriding fields after sourcing it).
 
+# Put permanent files in the home rather than the work directory if you
+# are running analysis on a remote server
+remote_server <- FALSE
+
 optimizer_settings <- function() {
+  # Permanent, resumable state (sqlite store, report, logs, STOP flag) goes under `perm_dir`:
+  # durable HOME storage on a remote server (remote_server = TRUE + OPTIMIZER_PATH), else the
+  # work dir. Fail loudly if remote_server is on but OPTIMIZER_PATH is unset -- otherwise the
+  # paths would silently resolve to the filesystem root ("/state/...").
+  if (remote_server && !nzchar(Sys.getenv("OPTIMIZER_PATH")))
+    stop("remote_server = TRUE but OPTIMIZER_PATH is not set in the environment. Add it to ",
+         ".Renviron and RESTART R (.Renviron is read only at startup), or set ",
+         "remote_server = FALSE. Check with Sys.getenv(\"OPTIMIZER_PATH\").")
+  perm_dir <- if (remote_server) Sys.getenv("OPTIMIZER_PATH") else here::here()
+
   list(
     # ---- mode -------------------------------------------------------------
     # TRUE  = synthetic offline world (fast; for verifying the machinery).
@@ -145,10 +159,25 @@ optimizer_settings <- function() {
     ),
 
     # ---- paths ------------------------------------------------------------
-    db_path     = here::here("state", "evals.sqlite"),
-    stop_file   = here::here("state", "STOP"),
-    report_path = here::here("state", "report.md"),
-    log_dir     = here::here("logs"),
-    cache_dir   = here::here("cache")
+    # Durable, resumable state -> perm_dir (home on a remote server; see above).
+    db_path     = file.path(perm_dir, "state", "evals.sqlite"),
+    stop_file   = file.path(perm_dir, "state", "STOP"),
+    report_path = file.path(perm_dir, "state", "report.md"),
+    log_dir     = file.path(perm_dir, "logs"),
+    # The large, regenerable cache stays on the WORK disk (fast, expendable) even in remote
+    # mode -- it is backed up to durable storage periodically instead (cache_backup_dir).
+    cache_dir   = here::here("cache"),
+
+    # ---- cache backup -----------------------------------------------------
+    # Periodically rsync the (regenerable) cache to durable storage so an abrupt kill on a
+    # scratch/work disk does not force re-downloading. The sync is ADDITIVE (cache files are
+    # write-once) and excludes the transient raw_project/ VCFs. On a remote server it defaults
+    # to <OPTIMIZER_PATH>/cache; NULL disables it. Restored back to cache_dir at startup if the
+    # work cache is empty (e.g. a fresh node after a scratch purge). An in-process sync cannot
+    # survive a SIGKILL of R -- see the README for an external cron/systemd safety net.
+    cache_backup_dir   = if (remote_server) file.path(Sys.getenv("OPTIMIZER_PATH"), "cache") else NULL,
+    # Minimum minutes between in-process cache backups (0 disables). Throttled on wall time,
+    # not iterations, so checkpoint_every = 1 doesn't rsync every step.
+    cache_sync_minutes = 120
   )
 }

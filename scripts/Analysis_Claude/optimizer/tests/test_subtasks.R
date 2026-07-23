@@ -97,10 +97,41 @@ res <- suppressMessages(.brapi_try(th_auth, conn = fake_conn, settings = list(br
 check(identical(res, "DATA") && logged_in && tries_seen == 2L,
       "401 -> t3_login() once -> retry succeeds")
 
-# Oracle: t3_login errors clearly (no interactive prompt) when credentials are absent.
+# Oracle: absent credentials -> a t3_missing_credentials condition (not a generic error), so
+# .brapi_try can fail fast on it rather than retry.
 Sys.unsetenv("T3_USERNAME"); Sys.unsetenv("T3_PASSWORD")
-check(inherits(try(t3_login(fake_conn), silent = TRUE), "try-error"),
-      "t3_login errors when T3_USERNAME/T3_PASSWORD are unset")
+mc <- tryCatch(t3_login(fake_conn), error = function(e) e)
+check(inherits(mc, "t3_missing_credentials"), "missing creds -> t3_missing_credentials condition")
+check(grepl("RESTART R", conditionMessage(mc)), "the message tells the user to RESTART R")
+
+# Oracle: on missing creds, .brapi_try does NOT burn its retry budget -- it fails FAST (one
+# thunk call), after LOUDLY reporting the re-login failure (no more silent "unauthorized").
+n_thunk <- 0L
+th401 <- function() { n_thunk <<- n_thunk + 1L; warning("Unauthorized (HTTP 401).")
+                      list(status = list(reason = "Unauthorized")) }
+msgs <- character()
+res <- withCallingHandlers(
+  tryCatch(.brapi_try(th401, conn = fake_conn, settings = list(brapi_tries = 4), base_delay = 0),
+           error = function(e) e),
+  message = function(m) { msgs <<- c(msgs, conditionMessage(m)); invokeRestart("muffleMessage") })
+check(inherits(res, "t3_missing_credentials") && n_thunk == 1L,
+      "missing creds: .brapi_try fails fast (1 attempt, no retry storm)")
+check(any(grepl("re-login FAILED", msgs)), "re-login failure is reported LOUDLY, not swallowed")
+
+# Oracle: a TRANSIENT login failure (not missing creds) does not fail fast -- login is retried
+# across attempts; here it succeeds on the 2nd try and the call then returns.
+Sys.setenv(T3_USERNAME = "u", T3_PASSWORD = "p")
+login_calls <- 0L; authed <- FALSE
+flaky_conn <- list(login = function(username, password) {
+  login_calls <<- login_calls + 1L
+  if (login_calls < 2L) stop("Timeout was reached")   # first login attempt fails transiently
+  authed <<- TRUE; invisible(NULL) })
+th_recover <- function() { if (!authed) { warning("Unauthorized (HTTP 401).")
+                           list(status = list(reason = "Unauthorized")) } else "DATA" }
+check(identical(suppressMessages(.brapi_try(th_recover, conn = flaky_conn,
+                 settings = list(brapi_tries = 5), base_delay = 0)), "DATA") && login_calls >= 2L,
+      "transient login failure is retried across attempts, then recovers")
+Sys.unsetenv("T3_USERNAME"); Sys.unsetenv("T3_PASSWORD")
 if (nzchar(old_u)) Sys.setenv(T3_USERNAME = old_u)
 if (nzchar(old_p)) Sys.setenv(T3_PASSWORD = old_p)
 
@@ -138,6 +169,53 @@ suppressMessages(try(.ensure_project_vcf("8217", bad_conn, es), silent = TRUE))
 check(calls == calls_at_cap, "once capped, .ensure_project_vcf skips WITHOUT calling vcf_archived")
 unlink(etmp, recursive = TRUE)
 rm(list = ls(envir = .vcf_download_fails), envir = .vcf_download_fails)
+
+# ===========================================================================
+cat("remote_server path resolution + cache backup/restore\n")
+# Oracle: local mode puts state under the project dir and disables cache backup; remote mode
+# puts state under OPTIMIZER_PATH and points the backup there; remote with OPTIMIZER_PATH unset
+# fails LOUDLY (not silently at the filesystem root). `remote_server` is the settings.R global.
+old_rs <- remote_server
+sl <- optimizer_settings()
+check(sl$db_path == file.path(here::here(), "state", "evals.sqlite") && is.null(sl$cache_backup_dir),
+      "local mode: state under project dir, cache backup disabled")
+remote_server <<- TRUE
+Sys.setenv(OPTIMIZER_PATH = "/tmp/opt_perm_test")
+sr <- optimizer_settings()
+check(sr$db_path == "/tmp/opt_perm_test/state/evals.sqlite" &&
+      sr$log_dir == "/tmp/opt_perm_test/logs" &&
+      sr$cache_backup_dir == "/tmp/opt_perm_test/cache",
+      "remote mode: state + backup under OPTIMIZER_PATH")
+check(sr$cache_dir == here::here("cache"), "remote mode: cache still on the work disk")
+Sys.unsetenv("OPTIMIZER_PATH")
+check(inherits(try(optimizer_settings(), silent = TRUE), "try-error"),
+      "remote_server = TRUE with OPTIMIZER_PATH unset -> loud error (not root paths)")
+remote_server <<- old_rs   # restore the global
+
+# Oracle: cache backup is additive, excludes raw_project/, and restore only warms an empty
+# work cache. (rsync-dependent; skipped cleanly if rsync is absent.)
+if (nzchar(Sys.which("rsync"))) {
+  work <- tempfile("work_"); bak <- tempfile("bak_"); dir.create(work)
+  dir.create(file.path(work, "dosage"), recursive = TRUE)
+  dir.create(file.path(work, "raw_project"), recursive = TRUE)
+  saveRDS(1L, file.path(work, "dosage", "dosage_1_sz1.rds"))
+  writeLines("x", file.path(work, "raw_project", "raw_project_1.vcf"))
+  bset <- list(cache_dir = work, cache_backup_dir = bak)
+  sync_cache_to_backup(bset)
+  check(file.exists(file.path(bak, "dosage", "dosage_1_sz1.rds")),
+        "cache backup copies dosage files to the backup dir")
+  check(!file.exists(file.path(bak, "raw_project", "raw_project_1.vcf")),
+        "cache backup EXCLUDES the transient raw_project/ VCFs")
+  # restore only warms an EMPTY work cache
+  work2 <- tempfile("work2_"); dir.create(work2)
+  check(restore_cache_from_backup(list(cache_dir = work2, cache_backup_dir = bak)) &&
+        file.exists(file.path(work2, "dosage", "dosage_1_sz1.rds")),
+        "restore warms an empty work cache from the backup")
+  saveRDS(9L, file.path(work2, "already.rds"))
+  check(isFALSE(restore_cache_from_backup(list(cache_dir = work2, cache_backup_dir = bak))),
+        "restore is a no-op when the work cache is non-empty")
+  unlink(c(work, work2, bak), recursive = TRUE)
+} else message("  (rsync not found -- skipping cache backup/restore integration checks)")
 
 # ===========================================================================
 cat("cached() / category-partitioned cache paths\n")

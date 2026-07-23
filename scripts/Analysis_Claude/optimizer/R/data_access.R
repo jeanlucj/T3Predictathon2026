@@ -64,8 +64,15 @@ library(tidyverse)
 t3_login <- function(conn, settings = NULL) {
   user <- Sys.getenv("T3_USERNAME"); pass <- Sys.getenv("T3_PASSWORD")
   if (!nzchar(user) || !nzchar(pass))
-    stop("T3 login needs T3_USERNAME and T3_PASSWORD in the environment ",
-         "(copy .Renviron.example to .Renviron, fill it in, restart R).")
+    # A distinct condition class: this is a setup error, NOT a transient network failure, so
+    # .brapi_try must fail fast rather than retry (retrying re-reads the same empty env).
+    stop(structure(
+      class = c("t3_missing_credentials", "error", "condition"),
+      list(message = paste("T3 login needs T3_USERNAME and T3_PASSWORD in the environment.",
+             "Copy .Renviron.example to .Renviron, fill it in, and RESTART R --",
+             ".Renviron is read only at startup, so editing it mid-session does nothing.",
+             "Check with Sys.getenv(\"T3_USERNAME\")."),
+           call = NULL)))
   conn$login(username = user, password = pass)
   invisible(conn)
 }
@@ -105,7 +112,7 @@ t3_connect <- function(settings) {
                        base_delay = 2, what = "BrAPI call") {
   if (is.null(tries)) tries <- .brapi_tries(settings)
   tries <- max(1L, as.integer(tries))
-  last <- NULL; relogins <- 0L; attempt <- 0L
+  last <- NULL; relogins <- 0L; max_relogin <- 2L; attempt <- 0L
   while (attempt < tries) {
     attempt <- attempt + 1L
     auth_fail <- FALSE
@@ -120,13 +127,21 @@ t3_connect <- function(settings) {
     auth_fail <- auth_fail || (!is_err && .response_auth_failed(r))
     if (!is_err && !auth_fail) return(r)                      # success
 
-    # 401 -> one free re-login, then retry the same thunk with the refreshed token.
-    if (auth_fail && !is.null(conn) && !is.null(settings) && relogins < 1L) {
+    # 401 -> re-login and retry the same thunk with the refreshed token. Bounded by
+    # max_relogin so a token that stays unauthorized after login cannot loop forever.
+    if (auth_fail && !is.null(conn) && !is.null(settings) && relogins < max_relogin) {
       relogins <- relogins + 1L
-      if (tryCatch({ t3_login(conn, settings); TRUE }, error = function(e) { last <<- e; FALSE })) {
+      lr <- tryCatch({ t3_login(conn, settings); TRUE }, error = function(e) { last <<- e; e })
+      if (isTRUE(lr)) {
         message(sprintf("%s: was unauthorized -- logged in, retrying", what))
-        attempt <- attempt - 1L; next
+        attempt <- attempt - 1L; next                         # free retry (fresh token)
       }
+      # Re-login FAILED -- say so LOUDLY (this used to be silent, hiding an unloaded
+      # .Renviron behind cryptic "unauthorized -- retrying" lines).
+      message(sprintf("%s: re-login FAILED: %s", what, conditionMessage(lr)))
+      # Missing credentials is a setup error, not transient: retrying re-reads the same
+      # empty env, so fail fast with the clear message instead of burning the retry budget.
+      if (inherits(lr, "t3_missing_credentials")) stop(lr)
     }
     if (attempt < tries) {
       msg <- if (is_err) conditionMessage(r) else "unauthorized"
@@ -160,6 +175,42 @@ t3_connect <- function(settings) {
   assign(pid, (.vcf_download_fails[[pid]] %||% 0L) + 1L, envir = .vcf_download_fails)
 .clear_vcf_download_fail <- function(pid)
   if (!is.null(.vcf_download_fails[[pid]])) rm(list = pid, envir = .vcf_download_fails)
+
+# --- cache backup / restore ------------------------------------------------
+# Back up the (regenerable) cache to durable storage. Cache files are write-once, so this is
+# purely ADDITIVE -- rsync ships only new files -- hence cheap to call often. --delete is
+# deliberately omitted (never remove a file the run still needs), and the transient
+# raw_project/ VCFs are excluded. No-op if cache_backup_dir is unset or rsync is missing.
+sync_cache_to_backup <- function(settings, quiet = TRUE) {
+  dst <- settings$cache_backup_dir
+  if (is.null(dst) || !nzchar(dst)) return(invisible(FALSE))
+  src <- settings$cache_dir
+  if (is.null(src) || !dir.exists(src)) return(invisible(FALSE))
+  rsync <- Sys.which("rsync")
+  if (!nzchar(rsync)) { message("cache backup: rsync not on PATH -- skipping"); return(invisible(FALSE)) }
+  dir.create(dst, showWarnings = FALSE, recursive = TRUE)
+  code <- suppressWarnings(system2(rsync,
+    c("-a", "--exclude", "raw_project/", paste0(src, "/"), paste0(dst, "/")),
+    stdout = if (quiet) FALSE else "", stderr = if (quiet) FALSE else ""))
+  if (code != 0) message(sprintf("cache backup -> %s failed (rsync exit %d)", dst, code))
+  invisible(code == 0)
+}
+
+# Restore the cache from its durable backup (backup -> work), but ONLY when the work cache is
+# empty -- i.e. a fresh node after a scratch purge. Never overwrites an existing work cache.
+restore_cache_from_backup <- function(settings) {
+  bak <- settings$cache_backup_dir
+  if (is.null(bak) || !nzchar(bak) || !dir.exists(bak)) return(invisible(FALSE))
+  src <- settings$cache_dir
+  if (length(list.files(src, recursive = TRUE))) return(invisible(FALSE))   # work cache non-empty
+  rsync <- Sys.which("rsync")
+  if (!nzchar(rsync)) return(invisible(FALSE))
+  dir.create(src, showWarnings = FALSE, recursive = TRUE)
+  message("restoring cache from backup ", bak, " ...")
+  suppressWarnings(system2(rsync, c("-a", paste0(bak, "/"), paste0(src, "/")),
+                           stdout = FALSE, stderr = FALSE))
+  invisible(TRUE)
+}
 
 # On-disk memoizer. `valid(val)` gates the WRITE: only a result that passes it is
 # persisted, so a soft failure (a 200-with-empty response, or a degraded result missing

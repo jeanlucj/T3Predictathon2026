@@ -60,6 +60,12 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
   dir.create(settings$log_dir, showWarnings = FALSE, recursive = TRUE)
   dir.create(settings$cache_dir, showWarnings = FALSE, recursive = TRUE)
 
+  # Warm the work cache from its durable backup if it is empty (fresh node), and flush it back
+  # on exit (covers a clean stop and an R-level error; a SIGKILL needs the external safety net
+  # in the README). Periodic in-loop backups below bound what an abrupt kill can lose.
+  restore_cache_from_backup(settings)
+  on.exit(sync_cache_to_backup(settings), add = TRUE)
+
   # Real mode needs a live BrAPI connection (made once, reused), logged in from the
   # T3_USERNAME/T3_PASSWORD environment credentials. Simulate mode never touches the network.
   if (!settings$simulate && is.null(conn)) {
@@ -79,6 +85,7 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
   on.exit(close_store(con), add = TRUE)
 
   start <- Sys.time()
+  last_cache_sync <- start
   start_n <- n_evals(con)
   iter <- 0
   consec_sample_fail <- 0L
@@ -126,6 +133,13 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
     if (iter %% settings$checkpoint_every == 0) {
       tryCatch(write_report(con, settings),
                error = function(e) message("report error: ", conditionMessage(e)))
+    }
+    # Time-throttled cache backup (additive rsync; cheap). Bounds what an abrupt kill loses to
+    # roughly one interval of freshly-downloaded cache.
+    sync_min <- settings$cache_sync_minutes %||% 0
+    if (sync_min > 0 &&
+        as.numeric(difftime(Sys.time(), last_cache_sync, units = "mins")) >= sync_min) {
+      sync_cache_to_backup(settings); last_cache_sync <- Sys.time()
     }
   }
 
