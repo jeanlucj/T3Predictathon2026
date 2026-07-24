@@ -3,19 +3,33 @@
 # Every knob in one place. The driver and the optimizer read from here, so you
 # tune the run by editing this file (or overriding fields after sourcing it).
 
-# Put permanent files in the home rather than the work directory if you
-# are running analysis on a remote server
-remote_server <- FALSE
+# remote_server: when TRUE, permanent files (state / logs / cache backup) go to
+# durable HOME storage instead of the work directory (see the paths section and
+# README "Running on a remote server"). It is DRIVEN BY THE ENVIRONMENT -- NOT
+# hard-coded -- so the same tracked settings.R works unedited on your laptop and
+# on the server, and `git pull` never conflicts on this file:
+#   * OPTIMIZER_REMOTE, if set to a truthy value (1/true/yes/on) or falsy (0/false/no/off),
+#   decides explicitly; otherwise
+#   * it auto-detects: TRUE when OPTIMIZER_PATH is set in the environment, else FALSE.
+# The server's .Renviron sets OPTIMIZER_PATH, so the server is remote
+# automatically and a laptop (no OPTIMIZER_PATH) is local -- with no edit to
+# this file on either machine.
+.detect_remote_server <- function() {
+  ovr <- tolower(trimws(Sys.getenv("OPTIMIZER_REMOTE")))
+  if (nzchar(ovr)) return(ovr %in% c("1", "true", "yes", "on"))   # explicit override wins
+  nzchar(Sys.getenv("OPTIMIZER_PATH"))                            # else auto-detect
+}
+remote_server <- .detect_remote_server()
 
 optimizer_settings <- function() {
   # Permanent, resumable state (sqlite store, report, logs, STOP flag) goes under `perm_dir`:
-  # durable HOME storage on a remote server (remote_server = TRUE + OPTIMIZER_PATH), else the
-  # work dir. Fail loudly if remote_server is on but OPTIMIZER_PATH is unset -- otherwise the
+  # durable HOME storage in remote mode, else the work dir. Fail loudly if remote mode is on but
+  # OPTIMIZER_PATH is unset (only possible via an explicit OPTIMIZER_REMOTE=true) -- otherwise the
   # paths would silently resolve to the filesystem root ("/state/...").
   if (remote_server && !nzchar(Sys.getenv("OPTIMIZER_PATH")))
-    stop("remote_server = TRUE but OPTIMIZER_PATH is not set in the environment. Add it to ",
+    stop("remote mode is on but OPTIMIZER_PATH is not set in the environment. Add it to ",
          ".Renviron and RESTART R (.Renviron is read only at startup), or set ",
-         "remote_server = FALSE. Check with Sys.getenv(\"OPTIMIZER_PATH\").")
+         "OPTIMIZER_REMOTE=false. Check with Sys.getenv(\"OPTIMIZER_PATH\").")
   perm_dir <- if (remote_server) Sys.getenv("OPTIMIZER_PATH") else here::here()
 
   list(
@@ -95,6 +109,15 @@ optimizer_settings <- function() {
     max_sample_fail  = 25,       # consecutive trial-sampling failures before halting
                                  # (guards against a too-restrictive domain or a
                                  #  down network spinning the loop forever)
+    # Run the full check_canaries() bug oracle at run_optimizer() startup (real
+    # mode only). It confirms the pipeline can still predict known-feasible
+    # trials BEFORE spending hours, guarding the silent-failure mode where a
+    # data-hiding bug looks like ordinary infeasibility. But it is the heaviest,
+    # most network-bound phase and runs before the resumable loop, so set FALSE
+    # to skip it once you have validated the pipeline (or when a flaky server
+    # makes the canary downloads themselves the risk). You can always run
+    # check_canaries(s, conn) by hand.
+    run_startup_canary = FALSE,
     # Known-feasible trials used as a BUG ORACLE: check_canaries() runs the most
     # permissive config on these and expects success. A canary that comes back
     # infeasible can only mean the code is hiding real data. NULL = no canary
@@ -117,6 +140,10 @@ optimizer_settings <- function() {
     # The three trials expected to be marginal for several methods (soft-warn,
     # not hard CANARY ALARM, when they fail).
     canary_weak_trials = c("10674", "10678", "10681"),
+    # Data-rich trials for sweep_rich_trials(): the config-sweep CODE oracle runs every
+    # method/branch here, where feasibility is a property of the code, not the data, so a
+    # branch that cannot predict on EITHER is a bug. Big6 (10675) + YT_Urb (10677).
+    oracle_trials = c("10675", "10677"),
     brapi_host       = "wheat.triticeaetoolbox.org",
 
     # ---- target domain: which trials the pipeline is being optimized FOR --

@@ -10,6 +10,12 @@
 T3_USERNAME=your_t3_username
 T3_PASSWORD=your_t3_password
 
-# Put permanent files in the home rather than the work directory if you
-# are running analysis on a remote server
+# Put permanent files (state/, logs/, cache backup) in durable HOME storage rather than the
+# work directory when running on a remote server. SETTING THIS TURNS ON REMOTE MODE
+# AUTOMATICALLY -- settings.R derives remote_server from it, so you never edit the tracked file
+# (and `git pull` never conflicts on settings.R). Leave it unset on a laptop for local mode.
 OPTIMIZER_PATH=/home/directory/t3_optimizer
+
+# Optional: force remote mode on/off regardless of OPTIMIZER_PATH (true/false/yes/no/1/0).
+# Rarely needed -- the OPTIMIZER_PATH auto-detect above is usually enough.
+# OPTIMIZER_REMOTE=true

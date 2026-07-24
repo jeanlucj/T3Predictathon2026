@@ -195,6 +195,118 @@ check_canaries <- function(settings, conn, configs = canary_configs()) {
   out
 }
 
+# ===========================================================================
+# Rich-trial config sweep (a CODE-correctness oracle)
+# ===========================================================================
+# check_canaries runs ONE frozen config per trial across nine trials -- a COVERAGE test that
+# conflates a code bug with data-adequacy (a demanding config can legitimately fail on a
+# data-poor trial). This does the complement: it varies ONE method/branch at a time from a
+# robust baseline and runs each variant on a couple of DATA-RICH trials (default Big6 10675 +
+# YT_Urb 10677). On trials rich enough to satisfy every method's data needs, feasibility is a
+# property of the CODE, not the data -- so a branch that cannot produce a prediction on EITHER
+# rich trial is a genuine bug signal. Known-degenerate cells are excluded (see .oracle_degenerate).
+#
+# Verdict per variant:
+#   * an `error` (a crash) on any (trial, scheme) is ALWAYS a bug.
+#   * otherwise the variant is HEALTHY if it produced `ok` on >=1 non-degenerate (trial, scheme);
+#     if it never did (all infeasible/constant/too_few_overlap across both rich trials), it is
+#     SUSPECT -- the branch could not predict even on rich data.
+
+# The robust baseline every variant perturbs by exactly one field.
+.oracle_baseline <- function()
+  list(train_select.method = "accession_overlap", train_select.primary_only = "no",
+       train_select.primary_min = 2, train_select.secondary_min = 8,
+       pheno_prep.method = "raw_mean",
+       geno_select.method = "all_projects", geno_select.marker_thin = "1",
+       kernel.method = "vanRaden_single",
+       model.method = "gblup_rrblup", model.lambda_select = "fixed",
+       predict_post.method = "cond_expectation", predict_post.min_overlap = 3)
+
+# One config per method / behaviour-changing branch level (single-field perturbations of the
+# baseline). Each is a full .make_seed()'d config; `label` says what it exercises.
+.oracle_variants <- function() {
+  b <- .oracle_baseline()
+  v <- function(label, ...) list(label = label, cfg = .make_seed(modifyList(b, list(...))))
+  list(
+    v("baseline"),
+    # -- train_select
+    v("train_select=top_k_similar/genomic",       train_select.method = "top_k_similar", train_select.k = 15, train_select.similarity = "genomic"),
+    v("train_select=top_k_similar/environmental", train_select.method = "top_k_similar", train_select.k = 15, train_select.similarity = "environmental"),
+    v("train_select=top_k_similar/both",          train_select.method = "top_k_similar", train_select.k = 15, train_select.similarity = "both"),
+    v("train_select=same_program",                train_select.method = "same_program", train_select.prog_cap = 20),
+    v("train_select.primary_only=yes",            train_select.primary_only = "yes"),
+    # -- pheno_prep
+    v("pheno_prep=blue_lm",                       pheno_prep.method = "blue_lm", pheno_prep.z_thr = 3),
+    v("pheno_prep=trial_center",                  pheno_prep.method = "trial_center", pheno_prep.z_thr = 3),
+    v("pheno_prep=two_stage_blup",                pheno_prep.method = "two_stage_blup"),
+    v("pheno_prep.ge_weighting=env_gaussian",     pheno_prep.ge_weighting = "env_gaussian", pheno_prep.ge_bandwidth = 1),
+    v("pheno_prep.standardize=per_trial_z",       pheno_prep.standardize = "per_trial_z"),
+    # -- geno_select
+    v("geno_select=focal_plus_onehop",            geno_select.method = "focal_plus_onehop", geno_select.min_bridge = 1),
+    v("geno_select=best_single_project",          geno_select.method = "best_single_project"),
+    v("geno_select.marker_thin=5",                geno_select.marker_thin = "5"),
+    # -- kernel
+    v("kernel=em_combine",                        kernel.method = "em_combine"),
+    v("kernel=rkhs_gaussian",                     kernel.method = "rkhs_gaussian", kernel.rkhs_theta = 1),
+    v("kernel.impute=mean",                       kernel.impute = "mean"),
+    # -- model
+    v("model=gblup_sommer_GE+E",                  model.method = "gblup_sommer_GE", model.include_E = "yes"),
+    v("model=gblup_loo_ridge/loo",                model.method = "gblup_loo_ridge", model.lambda_select = "loo"),
+    v("model=rkhs-E",                             model.method = "rkhs", model.include_E = "no"),
+    # -- predict_post
+    v("predict_post=direct_blup",                 predict_post.method = "direct_blup"),
+    v("predict_post.blend_obs_w=0.3",             predict_post.blend_obs_w = 0.3))
+}
+
+# Cells that are EXPECTED to be degenerate (not bugs): direct_blup masks the test lines out of
+# training, so under CV00 fit$u has no entry for them and every prediction collapses to the
+# mean -> `constant`. (cond_expectation predicts them from the kernel, so it is NOT degenerate.)
+.oracle_degenerate <- function(cfg, scheme)
+  identical(cfg$predict_post.method, "direct_blup") && identical(scheme, "CV00")
+
+sweep_rich_trials <- function(settings, conn,
+                              trials = settings$oracle_trials %||% c("10675", "10677")) {
+  trials <- as.character(trials)
+  descs <- stats::setNames(lapply(trials, function(id)
+    tryCatch(build_trial_descriptor(id, conn, settings), error = function(e) NULL)), trials)
+  variants <- .oracle_variants()
+
+  rows <- purrr::map_dfr(variants, function(v) {
+    purrr::map_dfr(trials, function(id) {
+      tr <- descs[[id]]
+      purrr::map_dfr(settings$schemes, function(sc) {
+        if (is.null(tr))
+          return(tibble::tibble(variant = v$label, trial = id, scheme = sc,
+                                status = "no_descriptor", reason = NA_character_, degenerate = FALSE))
+        ev <- evaluate_config_on_trial(v$cfg, tr, sc, settings, conn)
+        tibble::tibble(variant = v$label, trial = id, scheme = sc, status = ev$status,
+                       reason = ev$reason %||% NA_character_, degenerate = .oracle_degenerate(v$cfg, sc))
+      })
+    })
+  }, .progress = "Rich-trial sweep")
+
+  verdict <- rows |>
+    dplyr::group_by(variant) |>
+    dplyr::summarise(
+      errored = any(status == "error"),
+      healthy = any(status == "ok" & !degenerate),
+      .groups = "drop") |>
+    dplyr::mutate(verdict = dplyr::case_when(errored ~ "BUG(error)",
+                                             healthy ~ "ok",
+                                             TRUE    ~ "SUSPECT"))
+  bad <- dplyr::filter(verdict, verdict != "ok")
+  print(as.data.frame(rows[, c("variant", "trial", "scheme", "status", "reason")]), row.names = FALSE)
+  if (nrow(bad)) {
+    message("\nSWEEP ALARM: ", nrow(bad), " variant(s) never predicted on either rich trial ",
+            "(a code bug, since these trials are data-rich):")
+    for (i in seq_len(nrow(bad))) message(sprintf("  %-40s %s", bad$variant[i], bad$verdict[i]))
+    message("Cross-check a SUSPECT with diagnose_trial() on the same trial + config.")
+  } else {
+    message("\nSWEEP CLEAN: every method/branch produced a prediction on a data-rich trial.")
+  }
+  invisible(list(rows = rows, verdict = verdict))
+}
+
 # Replay ONE trial and print the data funnel stage by stage, alongside an
 # independent re-derivation of the raw counts straight from T3. The pipeline's
 # numbers and the independent numbers should agree; where they diverge -- or

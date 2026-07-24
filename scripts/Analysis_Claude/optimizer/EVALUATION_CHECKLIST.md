@@ -10,7 +10,7 @@ Bootstrap once (see EVALUATION.md §3), then:
 - [x] **L2 `engine`** — `choose_config()` moves through phases seed → `random_init` → `acquisition` at the right counts; `expected_improvement()` ≥ 0; on the sim world the surrogate phase beats random search; incumbent honours `incumbent_min_reps`.
 - [x] **L3 `store`** — `store_eval` ↔ `read_evals` round-trip (incl. `NA` score & `detail`); `config_from_json(config_to_json(cfg))` == `cfg` including `NA` params; `write_report()` renders `state/report.md`.
 - [x] **L4 `scoring`** — `score_predictions(x, a·x+b)` = +1 (a\>0); \<5 overlap or constant → `NA` with a reason; `mask_cv` under CV00 drops **exactly** the focal accessions CV0 keeps; no leakage (score not ≈1).
-- [x] **Test suite** — `Rscript tests/run_all.R` → `2/2 test files passed`; counts match (`config_space` 8007, `subtasks` 121). `run_all.R --all` → sim-loop `PASS`.
+- [x] **Test suite** — `Rscript tests/run_all.R` → `2/2 test files passed`; counts match (`config_space` 8007, `subtasks` 134). `run_all.R --all` → sim-loop `PASS`.
 
 ## Live BrAPI — `simulate = FALSE` — smallest / cheapest first
 
@@ -23,7 +23,7 @@ Bootstrap once (see EVALUATION.md §3), then:
 - [x] **L9 `subtaskD`** — `peek(K)` square, **symmetric**, sane diagonal; clones give identical rows; ≥50 markers survived QC.
 - [x] **L10 `subtaskE` + `subtaskF`** — `peek(pred)` not constant (when overlap adequate); CV0 blend on, CV00 blend is a no-op.
 - [x] **L11 `flow`** — `run_pipeline()` funnel has **no cliff** (many in, \~0 out); `score_predictions(po$pred, po$obs)` plausible (not ≈1, not `NA`).
-- [ ] **L12 `diagnostics`** — `calibrate_canary_trials()` agrees with `canary_anchor()` (no `divergent` rows); `check_canaries()` green on strong trials (soft-warn OK on weak trials `10674/10678/10681`).
+- [ ] **L12 `diagnostics`** — `calibrate_canary_trials()` agrees with `canary_anchor()` (no `divergent` rows — the light, trustworthy plumbing check); `sweep_rich_trials()` is `SWEEP CLEAN` (the code oracle — every branch predicts on rich trials); `check_canaries()` green on strong trials (coverage oracle; weigh `infeasible`/`constant` per §9's bug-vs-data table, soft-warn OK on weak trials `10674/10678/10681`).
 
 ## Whole system
 

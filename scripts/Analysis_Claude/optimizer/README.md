@@ -130,36 +130,50 @@ preserved.
    -- run a handful of iterations there so the trials you'll use are cached -- then
    run the heavy loop offline against that cache.
 
-3. **Put the working directories on the right disk.** On BioHPC you typically
-   reserve a machine and `ssh` in; `/workdir/<user>` is fast *local* scratch but is
-   **not guaranteed to persist after your reservation**, while `/home` is
-   persistent network storage (smaller, slower). Edit the paths in `settings.R`
-   accordingly -- a good split is the large, regenerable cache on local scratch and
-   the small, irreplaceable store on persistent storage:
-   ```r
-   cache_dir   = "/workdir/<user>/optimizer_cache",      # fast, local, expendable
-   db_path     = "/home/<user>/optimizer_state/evals.sqlite",
-   report_path = "/home/<user>/optimizer_state/report.md",
-   stop_file   = "/home/<user>/optimizer_state/STOP",
-   log_dir     = "/home/<user>/optimizer_state/logs",
+3. **Put the working directories on the right disk -- via the environment, not by
+   editing `settings.R`.** On BioHPC you typically reserve a machine and `ssh` in;
+   `/workdir/<user>` is fast *local* scratch but is **not guaranteed to persist after
+   your reservation**, while `/home` is persistent network storage (smaller, slower).
+   The right split is the large, regenerable **cache on local scratch** and the small,
+   irreplaceable **state on persistent `/home`**.
+
+   You get that split by setting **one environment variable** -- no code edit:
+   ```bash
+   # in the optimizer folder's .Renviron (alongside T3_USERNAME / T3_PASSWORD):
+   OPTIMIZER_PATH=/home/<user>/t3_optimizer
    ```
-   (Create those dirs first.) Or keep everything on `/workdir` for speed and copy
-   the store back before the reservation ends -- see below.
+   `settings.R` reads this and switches to **remote mode automatically**: `state/`,
+   `logs/`, `report.md`, and the `STOP` flag go under `$OPTIMIZER_PATH` (persistent),
+   while `cache/` stays on the work disk and is backed up to `$OPTIMIZER_PATH/cache`
+   (see "Automatic cache backup" below). A laptop with no `OPTIMIZER_PATH` stays in
+   local mode. **`remote_server` is derived from the environment** (`.detect_remote_server()`
+   in `settings.R`):
+   - it is **TRUE when `OPTIMIZER_PATH` is set**, else FALSE (auto-detect), and
+   - `OPTIMIZER_REMOTE=true|false` (also in `.Renviron` or the shell) forces it either
+     way if you ever need to.
+
+   **Why env-driven matters:** the tracked `settings.R` is *identical* on your laptop
+   and the server -- each machine picks its mode from its own environment -- so
+   `git pull` on the server **never conflicts on `settings.R`**. (Before this, you had
+   to edit `remote_server <- TRUE` on the server, and every upstream change to
+   `settings.R` collided on pull.) `.Renviron` is gitignored and is read only at R
+   **startup**, so after creating/editing it, **restart R**; verify with
+   `Sys.getenv("OPTIMIZER_PATH")`.
 
 ### What to save when the reservation ends, and how to resume
 
 - **Must save:** `state/evals.sqlite` (or wherever you pointed `db_path`). This
   single file *is* the optimizer's state -- the incumbent, the surrogate's
   training data, and what to try next are all recomputed from it on startup. Put
-  it on durable storage: set `remote_server = TRUE` (top of `settings.R`) and
-  `OPTIMIZER_PATH=/home/<user>/t3_optimizer` in `.Renviron`, which sends
+  it on durable storage by setting `OPTIMIZER_PATH=/home/<user>/t3_optimizer` in
+  `.Renviron` (see item 3 above) -- remote mode turns on automatically and sends
   `state/` and `logs/` to `$OPTIMIZER_PATH` while the cache stays on the work disk.
 - **Worth saving:** `cache/` -- large but regenerable; keeping it lets a resumed
   run skip re-downloading the trials it already touched. `state/report.md`/`logs/`
   are convenience only.
 
-**Automatic cache backup.** When `remote_server = TRUE`, `run_optimizer()` backs the
-cache up to `$OPTIMIZER_PATH/cache` on its own: it restores from there at startup if
+**Automatic cache backup.** In remote mode (i.e. `OPTIMIZER_PATH` set), `run_optimizer()`
+backs the cache up to `$OPTIMIZER_PATH/cache` on its own: it restores from there at startup if
 the work cache is empty (fresh node), rsyncs additively every `cache_sync_minutes`
 (default 30) during the run, and flushes once more on a clean stop or an R-level error.
 So a graceful stop, an error, or a hit budget loses nothing.

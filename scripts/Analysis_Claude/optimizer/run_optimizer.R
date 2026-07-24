@@ -72,11 +72,11 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
     conn <- t3_connect(settings)
   }
 
-  # Bug oracle: before spending hours, confirm the pipeline can still predict
-  # trials we KNOW are feasible. A canary failure means the code is hiding real
-  # data (a name/parse/column bug), so the "infeasible" verdicts cannot be
-  # trusted. We warn loudly but do not halt -- the choice to proceed is yours.
-  if (!settings$simulate && !is.null(settings$canary_trials)) {
+  # Bug oracle (opt-out via run_startup_canary = FALSE): before spending hours, confirm the
+  # pipeline can still predict trials we KNOW are feasible. A canary failure means the code is
+  # hiding real data (a name/parse/column bug), so the "infeasible" verdicts cannot be trusted.
+  # We warn loudly but do not halt -- the choice to proceed is yours.
+  if (!settings$simulate && isTRUE(settings$run_startup_canary) && !is.null(settings$canary_trials)) {
     tryCatch(check_canaries(settings, conn),
              error = function(e) message("canary check error: ", conditionMessage(e)))
   }

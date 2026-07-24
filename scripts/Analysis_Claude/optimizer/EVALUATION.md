@@ -389,16 +389,27 @@ score_predictions(po$pred, po$obs)
 ``` r
 arm_evaluation("diagnostics")
 anchor <- canary_anchor(s)                       # counts from the 5 teams' submission CSVs (no optimizer code)
-cal    <- calibrate_canary_trials(s, conn, anchor)   # our counts vs the anchor, per trial
+cal    <- calibrate_canary_trials(s, conn, anchor)   # our counts vs the anchor, per trial (LIGHT: no model fits)
 print_calibration(cal)
-check_canaries(s, conn)                          # the startup bug oracle
+check_canaries(s, conn)                          # coverage oracle: one frozen config per trial
+sweep_rich_trials(s, conn)                       # code oracle: every method/branch on 2 rich trials
 disarm_evaluation()
 ```
 
-- **→ returns** `cal` a per-trial table with a `divergent` flag; `check_canaries` prints `CANARY ALARM` (hard, strong trial) or a soft warning (weak trial).
-- **🔍 eyeball** every non-`divergent` row means our pipeline's count **agrees** with the independent anchor — positive evidence the plumbing is right.
-- **🚩 red flag** any `divergent` row (our count outside 0.5×–2× the anchor) — a bug localized to that trial; a `CANARY ALARM` on a strong trial means the "infeasible" verdicts elsewhere cannot be trusted.
-- *Assumption:* the anchor shares **none** of the optimizer's code, so a bug rarely corrupts it and our derivation identically — agreement is real evidence. Freeze `canary_configs()` only once calibration agrees (human-reviewed).
+There are **three** distinct checks here; run the light one first, then pick the oracle that answers your question:
+
+| Tool | What it asks | Cost | Read a failure as |
+|---|---|---|---|
+| `calibrate_canary_trials` + `canary_anchor` | Does our per-trial **data count** match independent ground truth (the 5 teams' submissions)? | Light — no VCF download (`deep=FALSE`), no model fits | a `divergent` row = a **data-plumbing bug** localized to that trial |
+| `check_canaries` | Can the pipeline predict nine known trials under **one frozen config each**? | Heavy — downloads + fits for 9 trials | ambiguous: `error`=bug, but `infeasible`/`constant`=this config × that trial's data (or a stale freeze) — see "Reading a `check_canaries` result" in §9 |
+| `sweep_rich_trials` | Does **every method/branch** produce a prediction on **data-rich** trials (10675, 10677)? | Medium — 2 trials' genotypes (cached after) × a fit per variant | on rich data feasibility is a code property, so a `SUSPECT`/`BUG` variant is a **code bug**, not a data verdict |
+
+**Which to run.** Always do the calibrate step — it's cheap and rests on independent ground truth, so it's the trustworthy plumbing check. Then: reach for **`sweep_rich_trials`** when you want "is the *code* correct?" (after a change to the pipeline), because it isolates a broken branch without the data-adequacy ambiguity. Reach for **`check_canaries`** when you want "does this *frozen production config* still work on the trials I care about?" — but only trust its `infeasible`/`constant` verdicts once its configs have been validated by calibration (they have not been fully, so today read those as "data/method," not "bug").
+
+- **→ returns** `cal` a per-trial table with a `divergent` flag; `check_canaries` prints `CANARY ALARM` (hard, strong trial) or a soft warning (weak trial); `sweep_rich_trials` prints `SWEEP CLEAN` or a `SWEEP ALARM` naming suspect variants.
+- **🔍 eyeball** every non-`divergent` calibration row means our pipeline's count **agrees** with the independent anchor — positive evidence the plumbing is right; a `SWEEP CLEAN` means every code path predicts on rich data.
+- **🚩 red flag** any `divergent` row (our count outside 0.5×–2× the anchor) — a bug localized to that trial; a `SWEEP ALARM` variant — a broken code branch (cross-check with `diagnose_trial()`); a `check_canaries` `error` — a crash bug (but weigh `infeasible`/`constant` against §9's bug-vs-data table).
+- *Assumption:* the anchor shares **none** of the optimizer's code, so a bug rarely corrupts it and our derivation identically — agreement is real evidence. `check_canaries`'s frozen `canary_configs()` are a *coverage* set, not a validated-feasible one (freeze only once calibration agrees, human-reviewed); `sweep_rich_trials` sidesteps that by testing on trials rich enough that a failure is the code's fault.
 
 ------------------------------------------------------------------------
 
@@ -468,7 +479,7 @@ Each file is self-contained: it sources the subsystem, runs hand-rolled `check()
 | Command | Expected |
 |----|----|
 | `tests/test_config_space.R` | \~5 genome invariants across \~400 sampled/recombined configs → `config_space tests: 8007 passed, 0 failed` (8007 = individual assertions) |
-| `tests/test_subtasks.R` | `Tier 1 subtask tests: 121 passed, 0 failed` |
+| `tests/test_subtasks.R` | `Tier 1 subtask tests: 134 passed, 0 failed` |
 | `tests/run_all.R` | `2/2 test files passed` |
 | `tests/test_sim_loop.R` (or `run_all.R --all`) | `PASS: optimizer beats submissions and improves over random search`, exit 0 |
 
@@ -602,6 +613,17 @@ Triage rule:
 **Two caveats that make a stale result the third category, beyond bug vs data:**
 1. **The oracle is frozen.** Its promise ("these configs work on these trials") was set at calibration time. If the T3 data changed — or was *hidden* by a since-fixed bug (poisoned caches, 401s) — the frozen configs can report `infeasible`/`constant` with **no code bug and no true data change**: the freeze has simply drifted. Re-calibrate (`calibrate_canary_trials` → review → re-freeze `canary_configs`) after any change that alters what data the pipeline sees.
 2. **A result taken before a data-layer fix cannot be trusted as a data verdict.** E.g. a `check_canaries` run predating the cache-poisoning / auth-retry fixes may show `infeasible`/`constant` for trials whose data was being hidden — re-run on the fixed code before concluding "the data is inadequate."
+
+### `sweep_rich_trials(settings, conn)` — the CODE-correctness oracle (`R/diagnostics.R`)
+
+The complement to `check_canaries`, built to escape its central ambiguity. `check_canaries` runs **one config per trial across nine trials** — a *coverage* test that conflates a code bug with data-adequacy (a demanding config can legitimately fail on a data-poor trial). `sweep_rich_trials` instead **varies one method/branch at a time from a robust baseline** and runs each variant on a couple of **data-rich** trials (default Big6 `10675` + YT_Urb `10677`, via `settings$oracle_trials`). The point: on trials rich enough to satisfy every method's data prerequisites, **feasibility is a property of the code, not the data** — so a branch that can't produce a prediction on *either* rich trial is a genuine bug signal, not a data verdict.
+
+- **22 variants** (`.oracle_variants()`) — one per subtask method plus each behaviour-changing branch level; a test asserts they cover every method in `SUBTASKS`.
+- **Verdict per variant:** an `error` (crash) anywhere is always `BUG`; otherwise the variant is `ok` if it produced `ok` on ≥1 **non-degenerate** (trial, scheme), and `SUSPECT` if it never did.
+- **Known-degenerate cells are excluded** (`.oracle_degenerate`): `direct_blup` under **CV00** masks the test lines out of training, so predictions collapse to the mean → `constant` by construction, not a bug. (cond_expectation predicts them from the kernel, so it is *not* degenerate.)
+- **Run it:** `sweep_rich_trials(s, conn)`. `SWEEP CLEAN` = every branch predicted on rich data; a `SWEEP ALARM` lists the suspect variants — cross-check one with `diagnose_trial()` on the same trial+config. Costs ~one download of the two trials' genotypes (cached thereafter) plus a fit per variant × 2 trials × 2 schemes.
+
+This is the trustworthy, achievable half of validation (the full all-configs × all-trials matrix is neither): a green sweep says the code paths work; it does **not** claim every config suits every trial (nor should it).
 
 ### `diagnose_trial(id, settings, conn)` (`R/diagnostics.R`)
 

@@ -171,6 +171,26 @@ unlink(etmp, recursive = TRUE)
 rm(list = ls(envir = .vcf_download_fails), envir = .vcf_download_fails)
 
 # ===========================================================================
+cat("sweep_rich_trials oracle (coverage + valid configs + degeneracy rule)\n")
+ov <- .oracle_variants()
+# Oracle: every subtask METHOD is exercised by at least one sweep variant (else the code
+# oracle has a blind spot). SUBTASKS is the single source of truth for the method list.
+meth_seen <- function(st) unique(vapply(ov, function(v) as.character(v$cfg[[paste0(st, ".method")]]), character(1)))
+for (st in names(SUBTASKS)) {
+  miss <- setdiff(SUBTASKS[[st]]$methods, meth_seen(st))
+  check(length(miss) == 0, sprintf("sweep covers every %s method (missing: %s)", st, paste(miss, collapse = ",")))
+}
+# Oracle: each variant is a well-formed config (repair_config left no applicable *.method NA).
+check(all(vapply(ov, function(v) all(vapply(names(SUBTASKS),
+        function(st) !is.na(v$cfg[[paste0(st, ".method")]]), logical(1))), logical(1))),
+      "every sweep variant is a complete config")
+# Oracle: the degeneracy rule is exactly direct_blup under CV00 (and nothing else).
+check(.oracle_degenerate(list(predict_post.method = "direct_blup"), "CV00") &&
+      !.oracle_degenerate(list(predict_post.method = "direct_blup"), "CV0") &&
+      !.oracle_degenerate(list(predict_post.method = "cond_expectation"), "CV00"),
+      ".oracle_degenerate: only direct_blup + CV00 is expected-degenerate")
+
+# ===========================================================================
 cat("remote_server path resolution + cache backup/restore\n")
 # Oracle: local mode puts state under the project dir and disables cache backup; remote mode
 # puts state under OPTIMIZER_PATH and points the backup there; remote with OPTIMIZER_PATH unset
@@ -180,8 +200,28 @@ cat("remote_server path resolution + cache backup/restore\n")
 # (a run with remote_server = TRUE and OPTIMIZER_PATH set from .Renviron must be left intact).
 old_rs <- remote_server
 old_op <- Sys.getenv("OPTIMIZER_PATH", unset = NA_character_)
+old_or <- Sys.getenv("OPTIMIZER_REMOTE", unset = NA_character_)
 
+# Oracle: remote_server is ENV-DRIVEN (so the tracked settings.R is unedited on every machine):
+# OPTIMIZER_REMOTE (truthy/falsy) wins; else it auto-detects from OPTIMIZER_PATH being set.
+Sys.unsetenv("OPTIMIZER_PATH"); Sys.unsetenv("OPTIMIZER_REMOTE")
+check(isFALSE(.detect_remote_server()), "no OPTIMIZER_PATH/REMOTE -> local (FALSE)")
+Sys.setenv(OPTIMIZER_PATH = "/tmp/opt_perm_test")
+check(isTRUE(.detect_remote_server()), "OPTIMIZER_PATH set -> remote (auto-detect)")
+Sys.setenv(OPTIMIZER_REMOTE = "false")
+check(isFALSE(.detect_remote_server()), "OPTIMIZER_REMOTE=false overrides the auto-detect")
+Sys.unsetenv("OPTIMIZER_PATH"); Sys.setenv(OPTIMIZER_REMOTE = "yes")
+check(isTRUE(.detect_remote_server()), "OPTIMIZER_REMOTE=yes -> remote even without OPTIMIZER_PATH")
+Sys.unsetenv("OPTIMIZER_PATH"); Sys.unsetenv("OPTIMIZER_REMOTE")
+
+# From here, force the global into known LOCAL state (the source-time value may be remote if
+# the env had OPTIMIZER_PATH); optimizer_settings() reads this global, not the env.
 remote_server <<- FALSE
+
+# Oracle: the startup canary check is opt-out-able and defaults on.
+check(isTRUE(optimizer_settings()$run_startup_canary),
+      "run_startup_canary defaults TRUE (opt out with FALSE to skip the startup check)")
+
 sl <- optimizer_settings()
 check(sl$db_path == file.path(here::here(), "state", "evals.sqlite") && is.null(sl$cache_backup_dir),
       "local mode: state under project dir, cache backup disabled")
@@ -198,8 +238,9 @@ Sys.unsetenv("OPTIMIZER_PATH")
 check(inherits(try(optimizer_settings(), silent = TRUE), "try-error"),
       "remote_server = TRUE with OPTIMIZER_PATH unset -> loud error (not root paths)")
 
-remote_server <<- old_rs                                          # restore BOTH globals/env
-if (is.na(old_op)) Sys.unsetenv("OPTIMIZER_PATH") else Sys.setenv(OPTIMIZER_PATH = old_op)
+remote_server <<- old_rs                                          # restore the global and env vars
+if (is.na(old_op)) Sys.unsetenv("OPTIMIZER_PATH")   else Sys.setenv(OPTIMIZER_PATH   = old_op)
+if (is.na(old_or)) Sys.unsetenv("OPTIMIZER_REMOTE") else Sys.setenv(OPTIMIZER_REMOTE = old_or)
 
 # Oracle: cache backup is additive and excludes raw_project/; restore ADDITIVELY reconciles
 # the work cache from the backup -- filling gaps in a PARTIALLY-populated cache (the case that
