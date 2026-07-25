@@ -456,6 +456,36 @@ check(identical(get_project_dosage("P1", c("s1", "s3"), NULL, ds, marker_thin = 
       "keep_samples subsets rows after the thin subsets columns")
 unlink(.dtmp, recursive = TRUE)
 
+# Oracle: re-densify -- a bigger budget re-downloads a cache that a smaller-budget machine
+# thinned (so a big server is not pinned to a laptop-thinned warmed cache). A fake conn writes
+# a small full VCF; the pre-seeded coarse thin4 cache must be replaced by a full-density parse.
+rdmp <- tempfile("redense_"); dir.create(rdmp)
+rds  <- modifyList(optimizer_settings(),
+                   list(cache_dir = rdmp, dosage_budget_bytes = 1e12,   # huge -> ideal thin = 1
+                        dosage_redensify = TRUE, brapi_tries = 1))
+.cache_save(rds, "stat", "PZ", list(n_samples = 3L, n_markers = 3L))    # ideal thin here = 1
+.cache_save(rds, "dosage", "PZ_thin4_sz1",                              # a COARSE thin-4 cache
+            matrix(0L, 3, 1, dimnames = list(c("S1", "S2", "S3"), "m1")))
+vln <- c("##fileformat=VCFv4.2",
+  paste("#CHROM","POS","ID","REF","ALT","QUAL","FILTER","INFO","FORMAT","S1","S2","S3", sep = "\t"),
+  paste("1","10","m1","A","G",".",".",".","GT","0/0","0/1","1/1", sep = "\t"),
+  paste("1","20","m2","A","G",".",".",".","GT","0/1","1/1","0/0", sep = "\t"),
+  paste("1","30","m3","A","G",".",".",".","GT","1/1","0/0","0/1", sep = "\t"))
+fconn <- list(vcf_archived = function(output, genotyping_project_id) writeLines(vln, output))
+rmsg <- character()
+dz <- withCallingHandlers(get_project_dosage("PZ", NULL, fconn, rds, marker_thin = 1L),
+        message = function(m) { rmsg <<- c(rmsg, conditionMessage(m)); invokeRestart("muffleMessage") })
+check(any(grepl("re-densify", rmsg)), "re-densify: a coarser-than-affordable cache triggers a re-download")
+check(!is.null(dz) && ncol(dz) == 3L, "re-densify: re-parsed at full density (3 markers, was thinned to 1)")
+check(length(list.files(file.path(rdmp, "dosage"), "thin4")) == 0, "re-densify: the coarse thin4 cache is superseded")
+# And the opposite: with dosage_redensify = FALSE, the coarse cache is served as-is (no download).
+.cache_save(rds, "dosage", "PZ2_thin4_sz1", matrix(0L, 3, 1, dimnames = list(c("S1","S2","S3"), "m1")))
+.cache_save(rds, "stat", "PZ2", list(n_samples = 3L, n_markers = 3L))
+rds_off <- modifyList(rds, list(dosage_redensify = FALSE))
+check(ncol(get_project_dosage("PZ2", NULL, NULL, rds_off, marker_thin = 1L)) == 1L,
+      "dosage_redensify = FALSE keeps the coarse cache (no re-download; conn = NULL never called)")
+unlink(rdmp, recursive = TRUE)
+
 # ===========================================================================
 cat(".qc_markers\n")
 set.seed(1)

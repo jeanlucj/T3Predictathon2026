@@ -628,9 +628,27 @@ get_project_dosage <- function(project_id, keep_samples, conn, settings,
   if (!is.na(.cache_existing(settings, "unparseable", pid))) return(NULL)
 
   # A single cached dosage (the densest one) serves every requested thin by column-subset --
-  # no re-download when a different config asks for a different thin.
+  # no re-download when a different config asks for a different thin. BUT: the cached thin was
+  # fixed by the memory budget AT PARSE TIME. If this machine's budget now affords a DENSER
+  # parse than the cached thin (e.g. a laptop-thinned cache warmed onto a big-memory server),
+  # re-fetch at the denser thin so a bigger machine is not pinned to a suboptimal warmed cache.
+  # The check is cheap (from stat_<pid>); acting costs a one-time re-download (the VCF was
+  # deleted), and only ever fires for projects that were thinned (thin > 1). Disable with
+  # settings$dosage_redensify = FALSE.
   cd <- .find_densest_dosage(settings, pid)
-  if (!is.null(cd)) return(serve(readRDS(cd$path), cd$thin))
+  if (!is.null(cd)) {
+    e_ideal <- cd$thin
+    if (!isFALSE(settings$dosage_redensify) && cd$thin > 1L) {
+      st <- tryCatch(readRDS(.cache_existing(settings, "stat", pid)), error = function(e) NULL)
+      if (is.list(st))
+        e_ideal <- .cache_thin(st$n_samples, st$n_markers, settings$dosage_budget_bytes)
+    }
+    if (e_ideal >= cd$thin) return(serve(readRDS(cd$path), cd$thin))   # cache is dense enough
+    message(sprintf(
+      "project %s: cached at every %dth marker, but this budget affords every %dth -- re-downloading to re-densify",
+      pid, cd$thin, e_ideal))
+    unlink(cd$path)                                                    # supersede the coarse cache
+  }
 
   # Miss -> fetch, measure, and parse ONCE at the densest thin the budget allows.
   path <- .ensure_project_vcf(project_id, conn, settings)      # download + integrity check

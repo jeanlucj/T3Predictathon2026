@@ -92,6 +92,13 @@ optimizer_settings <- function() {
     # choose_geno_sources loads all covering projects and the GRM needs headroom too.
     dosage_budget_bytes = 2e9,
 
+    # Re-densify a cached dosage when THIS machine's budget affords a denser parse than the
+    # cache was thinned to (e.g. a laptop-thinned cache warmed onto a big-memory server): on
+    # access, if dosage_budget_bytes now allows a smaller thin than the cached file, re-download
+    # and re-parse denser (a one-time cost, only for projects that were thinned). FALSE keeps
+    # whatever thin is cached (no re-downloads when you move to a bigger machine).
+    dosage_redensify = TRUE,
+
     # How many times to attempt a BrAPI network call before giving up. A flaky T3
     # server (intermittent HTTP 500 / timeout) is ridden out by retrying with backoff, so
     # a transient error does not surface as a spurious infeasible/error. 1 disables retry.

@@ -479,7 +479,7 @@ Each file is self-contained: it sources the subsystem, runs hand-rolled `check()
 | Command | Expected |
 |----|----|
 | `tests/test_config_space.R` | \~5 genome invariants across \~400 sampled/recombined configs → `config_space tests: 8007 passed, 0 failed` (8007 = individual assertions) |
-| `tests/test_subtasks.R` | `Tier 1 subtask tests: 140 passed, 0 failed` |
+| `tests/test_subtasks.R` | `Tier 1 subtask tests: 144 passed, 0 failed` |
 | `tests/run_all.R` | `2/2 test files passed` |
 | `tests/test_sim_loop.R` (or `run_all.R --all`) | `PASS: optimizer beats submissions and improves over random search`, exit 0 |
 
@@ -530,7 +530,7 @@ Specified for later; not yet implemented. Oracles already worked out:
 | `obs_<studyid>.rds` | `get_observations()` | all numeric observations of a study | 30 d |
 | `proj_<hash>.rds` | `projects_for_accessions()` | genotyping **project** ids covering an accession set | 30 d |
 | `raw_project_<id>.vcf` | `.ensure_project_vcf()` | the archived VCF (validated complete). **Transient**: deleted once its dosage is cached OR the archive is found unparseable | until dosage/unparseable cached |
-| `dosage_<id>[_thin<e>]_sz<size>.rds` | `get_project_dosage()` | the **whole project's** accessions×markers dosage, parsed **once** at the densest thin `e` the `dosage_budget_bytes` budget allows (thin 1 = full markers for anything that fits). A config's requested `marker_thin` is **derived at read** by keeping every `max(1, floor(marker_thin/e))`-th marker — so a project is never re-downloaded for a different thin. One dosage file per project (older per-thin files are redundant; `prune_dosage_cache.R` removes them). | ∞ |
+| `dosage_<id>[_thin<e>]_sz<size>.rds` | `get_project_dosage()` | the **whole project's** accessions×markers dosage, parsed **once** at the densest thin `e` the `dosage_budget_bytes` budget allows (thin 1 = full markers for anything that fits). A config's requested `marker_thin` is **derived at read** by keeping every `max(1, floor(marker_thin/e))`-th marker — so a project is never re-downloaded for a different thin. One dosage file per project (older per-thin files are redundant; `prune_dosage_cache.R` removes them). **Re-densify:** on access, if *this* machine's `dosage_budget_bytes` affords a denser thin than the cached `e` (e.g. a laptop-thinned cache warmed onto a big-memory server), it re-downloads and re-parses denser once — from `stat_<id>`, cheap to detect; `dosage_redensify = FALSE` disables it. | ∞ |
 | `stat_<id>.rds` | `get_project_dosage()` | `{n_samples, n_markers}` of a project, written on first extraction so a later run can compute the effective thin — and hence the right `dosage_` name — without the (deleted) VCF | ∞ |
 | `unparseable_<id>.rds` | `get_project_dosage()` | **negative cache**: this archive is not a usable VCF (transposed / header-vs-data sample-count mismatch / no genotypes). Future calls skip it instead of re-downloading and re-failing every run. `{reason, when}`. **Delete to force a retry** (e.g. after the archive is fixed upstream) | ∞ |
 | `calibration_lightweight.rds` | (diagnostics, when you save it) | the last calibration table | — |
