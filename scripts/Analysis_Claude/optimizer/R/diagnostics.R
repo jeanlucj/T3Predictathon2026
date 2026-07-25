@@ -264,12 +264,27 @@ check_canaries <- function(settings, conn, configs = canary_configs()) {
 .oracle_degenerate <- function(cfg, scheme)
   identical(cfg$predict_post.method, "direct_blup") && identical(scheme, "CV00")
 
+# Keep the variants whose label matches any `only` pattern (fixed substring, so "em_combine"
+# matches "kernel=em_combine"). NULL/empty -> keep all. Errors if a filter matches nothing.
+.select_variants <- function(variants, only = NULL) {
+  if (is.null(only) || !length(only)) return(variants)
+  keep <- vapply(variants, function(v)
+    any(vapply(only, function(p) grepl(p, v$label, fixed = TRUE), logical(1))), logical(1))
+  if (!any(keep)) stop("no sweep variant matches `only` (", paste(only, collapse = ", "),
+                       "). Labels: ", paste(vapply(variants, `[[`, character(1), "label"), collapse = ", "))
+  variants[keep]
+}
+
+# `only`: run just the variants whose label contains any of these strings (e.g.
+# only = "em_combine", or c("kernel=", "model=")). Handy for re-checking one branch after a
+# fix without re-running the whole sweep. See .oracle_variants() for the labels.
 sweep_rich_trials <- function(settings, conn,
-                              trials = settings$oracle_trials %||% c("10675", "10677")) {
+                              trials = settings$oracle_trials %||% c("10675", "10677"),
+                              only = NULL) {
   trials <- as.character(trials)
   descs <- stats::setNames(lapply(trials, function(id)
     tryCatch(build_trial_descriptor(id, conn, settings), error = function(e) NULL)), trials)
-  variants <- .oracle_variants()
+  variants <- .select_variants(.oracle_variants(), only)
 
   rows <- purrr::map_dfr(variants, function(v) {
     purrr::map_dfr(trials, function(id) {

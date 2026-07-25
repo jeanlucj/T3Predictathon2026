@@ -71,7 +71,7 @@ EVAL_GROUPS <- list(
   diagnostics = c("check_canaries", "diagnose_trial", "canary_anchor",
                   "calibrate_canary_trials", "print_calibration",
                   "canary_coverage", "canary_config", "canary_configs",
-                  "sweep_rich_trials", ".oracle_variants")
+                  "sweep_rich_trials", ".oracle_variants", ".select_variants")
 )
 
 # Convenience aggregate: the whole inner pipeline (all six subtasks, but NOT

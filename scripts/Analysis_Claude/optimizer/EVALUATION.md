@@ -479,7 +479,7 @@ Each file is self-contained: it sources the subsystem, runs hand-rolled `check()
 | Command | Expected |
 |----|----|
 | `tests/test_config_space.R` | \~5 genome invariants across \~400 sampled/recombined configs → `config_space tests: 8007 passed, 0 failed` (8007 = individual assertions) |
-| `tests/test_subtasks.R` | `Tier 1 subtask tests: 134 passed, 0 failed` |
+| `tests/test_subtasks.R` | `Tier 1 subtask tests: 140 passed, 0 failed` |
 | `tests/run_all.R` | `2/2 test files passed` |
 | `tests/test_sim_loop.R` (or `run_all.R --all`) | `PASS: optimizer beats submissions and improves over random search`, exit 0 |
 
@@ -622,6 +622,7 @@ The complement to `check_canaries`, built to escape its central ambiguity. `chec
 - **Verdict per variant:** an `error` (crash) anywhere is always `BUG`; otherwise the variant is `ok` if it produced `ok` on ≥1 **non-degenerate** (trial, scheme), and `SUSPECT` if it never did.
 - **Known-degenerate cells are excluded** (`.oracle_degenerate`): `direct_blup` under **CV00** masks the test lines out of training, so predictions collapse to the mean → `constant` by construction, not a bug. (cond_expectation predicts them from the kernel, so it is *not* degenerate.)
 - **Run it:** `sweep_rich_trials(s, conn)`. `SWEEP CLEAN` = every branch predicted on rich data; a `SWEEP ALARM` lists the suspect variants — cross-check one with `diagnose_trial()` on the same trial+config. Costs ~one download of the two trials' genotypes (cached thereafter) plus a fit per variant × 2 trials × 2 schemes.
+- **Re-run one branch:** `sweep_rich_trials(s, conn, only = "em_combine")` runs just the variants whose label contains the string (e.g. `only = c("kernel=", "model=")`), so after a fix you re-check one branch without the whole sweep.
 
 This is the trustworthy, achievable half of validation (the full all-configs × all-trials matrix is neither): a green sweep says the code paths work; it does **not** claim every config suits every trial (nor should it).
 

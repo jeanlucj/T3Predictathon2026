@@ -189,6 +189,20 @@ check(.oracle_degenerate(list(predict_post.method = "direct_blup"), "CV00") &&
       !.oracle_degenerate(list(predict_post.method = "direct_blup"), "CV0") &&
       !.oracle_degenerate(list(predict_post.method = "cond_expectation"), "CV00"),
       ".oracle_degenerate: only direct_blup + CV00 is expected-degenerate")
+# Oracle: `only` selects variants by label substring; empty -> all; no match -> error.
+check(length(.select_variants(ov, NULL)) == length(ov), ".select_variants: NULL keeps all")
+sel <- .select_variants(ov, "em_combine")
+check(length(sel) == 1 && grepl("em_combine", sel[[1]]$label), ".select_variants: 'em_combine' picks the one kernel variant")
+check(length(.select_variants(ov, "model=")) >= 3, ".select_variants: 'model=' picks all model variants")
+check(inherits(try(.select_variants(ov, "nonesuch"), silent = TRUE), "try-error"), ".select_variants: no match -> error")
+
+# Oracle: .note_geno_once messages once per key per session, then stays silent for that key.
+rm(list = ls(envir = .geno_note_seen), envir = .geno_note_seen)
+n_msg <- 0L
+withCallingHandlers({ .note_geno_once("k1", "hi"); .note_geno_once("k1", "hi"); .note_geno_once("k2", "yo") },
+                    message = function(m) { n_msg <<- n_msg + 1L; invokeRestart("muffleMessage") })
+check(n_msg == 2L, ".note_geno_once: fires once per key (2 distinct keys, repeat suppressed)")
+rm(list = ls(envir = .geno_note_seen), envir = .geno_note_seen)
 
 # ===========================================================================
 cat("remote_server path resolution + cache backup/restore\n")
@@ -218,9 +232,9 @@ Sys.unsetenv("OPTIMIZER_PATH"); Sys.unsetenv("OPTIMIZER_REMOTE")
 # the env had OPTIMIZER_PATH); optimizer_settings() reads this global, not the env.
 remote_server <<- FALSE
 
-# Oracle: the startup canary check is opt-out-able and defaults on.
-check(isTRUE(optimizer_settings()$run_startup_canary),
-      "run_startup_canary defaults TRUE (opt out with FALSE to skip the startup check)")
+# Oracle: the startup canary check is a boolean opt-out flag (value is the user's choice).
+check({ v <- optimizer_settings()$run_startup_canary; is.logical(v) && length(v) == 1 && !is.na(v) },
+      "run_startup_canary is a single logical (TRUE/FALSE opt-out flag)")
 
 sl <- optimizer_settings()
 check(sl$db_path == file.path(here::here(), "state", "evals.sqlite") && is.null(sl$cache_backup_dir),
@@ -595,6 +609,14 @@ Kem <- build_kernel(kcfg("em_combine", ridge = 0), list(A = pA, B = pB), need2)
 check(setequal(rownames(Kem), need2), "em_combine result is exactly need x need (bridges dropped)")
 check(isSymmetric(unname(Kem)), "em_combine stitched GRM is symmetric")
 check(all(is.finite(Kem)), "em_combine stitched GRM is finite (cross-panel block estimated)")
+
+# Oracle (the sweep-oracle regression): a marker-POOR panel (<50 markers -> .qc_markers throws
+# too_few_markers) must be DROPPED, not sink the whole combine. Rich panel survives -> valid K.
+pRich <- mkpanel(c("n1", "n2", paste0("r", 1:8)), paste0("mR", 1:120))   # passes QC
+pPoor <- mkpanel(c("n1", "n2", paste0("r", 1:8)), paste0("mP", 1:10))    # 10 markers -> QC fails
+Kdrop <- build_kernel(kcfg("em_combine", ridge = 0), list(rich = pRich, poor = pPoor), need2)
+check(setequal(rownames(Kdrop), need2) && all(is.finite(Kdrop)),
+      "em_combine drops a marker-poor panel instead of failing (too_few_markers no longer sinks it)")
 
 # ===========================================================================
 cat(".group_by_panel / .prune_redundant\n")

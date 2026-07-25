@@ -160,6 +160,13 @@ select_training_trials <- function(cfg, trial, conn, settings) {
 # run_pipeline's min_train_trials check while contributing no observations.
 .overlap_memo <- new.env(parent = emptyenv())
 
+# Emit an informational note at most once per `key` per session (so a recurring geno-source
+# observation -- e.g. a marker-poor panel -- is reported once, not on every evaluation).
+.geno_note_seen <- new.env(parent = emptyenv())
+.note_geno_once <- function(key, msg) {
+  if (is.null(.geno_note_seen[[key]])) { message(msg); assign(key, TRUE, envir = .geno_note_seen) }
+}
+
 .find_related <- function(x, conn, settings, min_common, input = c("trial", "accessions")) {
   input <- match.arg(input)
   if (input == "trial") {
@@ -358,6 +365,19 @@ choose_geno_sources <- function(cfg, train_acc, test_acc, conn, settings) {
   dl <- purrr::compact(dl)
   if (!length(dl)) return(structure(list(), n_projects = length(projs)))
 
+  # Drop a project with intrinsically < 50 markers: every kernel method needs >= 50 markers
+  # surviving QC, and QC only REMOVES markers, so such a project can never yield a GRM under
+  # ANY config or method -- a property of the panel itself, not of how it's used. Skip it at
+  # the source so it never sinks a downstream combine; noted once per session per project.
+  # (A panel with >= 50 raw markers that fails only under a strict QC config is NOT dropped
+  # here -- that is config-dependent and handled per-evaluation in build_kernel.)
+  poor <- names(dl)[vapply(dl, ncol, integer(1)) < 50L]
+  for (pid in poor)
+    .note_geno_once(paste0("poormarker_", pid), sprintf(
+      "geno: project %s has < 50 markers -- unusable for any GRM; skipping it", pid))
+  dl <- dl[setdiff(names(dl), poor)]
+  if (!length(dl)) return(structure(list(), n_projects = length(projs)))
+
   if (identical(cfg$geno_select.method, "best_single_project")) {
     cover <- vapply(dl, function(d) length(intersect(rownames(d), need)), integer(1))
     dl <- dl[which.max(cover)]
@@ -451,7 +471,23 @@ build_kernel <- function(cfg, dosage_list, need) {
     # which case this reduces to the old need-only behaviour.
     bridge <- .bridge_accessions(dosage_list)
     keep   <- union(need, bridge)
-    grms <- purrr::compact(lapply(dosage_list, function(d) .vanraden(.qc_markers(d, cfg), keep)))
+    # Build a GRM per panel, but DROP a panel that cannot yield one -- too few markers after
+    # THIS config's QC (.qc_markers throws too_few_markers) or too little overlap (.vanraden
+    # returns NULL) -- rather than letting one weak panel sink the whole combine. Report which
+    # panel was dropped and why (once per session per panel+QC), for the user's reference. This
+    # drop is config-dependent (a panel with >=50 raw markers may pass under looser QC), so it
+    # is NOT persisted; an intrinsically marker-poor project is filtered earlier, in
+    # choose_geno_sources.
+    grms <- purrr::compact(purrr::imap(dosage_list, function(d, nm) {
+      g <- tryCatch(.vanraden(.qc_markers(d, cfg), keep), error = function(e) e)
+      if (is.null(g) || inherits(g, "error")) {
+        why <- if (inherits(g, "error")) conditionMessage(g) else "too little needed/bridge overlap"
+        .note_geno_once(sprintf("emdrop_%s_maf%s_miss%s", nm, cfg$kernel.maf, cfg$kernel.max_missing),
+          sprintf("em_combine: dropped panel %s under this QC (%s)", nm, why))
+        return(NULL)
+      }
+      g
+    }))
     if (!length(grms)) infeasible("no_geno_overlap_in_panels")
     if (length(grms) == 1) {
       K <- grms[[1]]

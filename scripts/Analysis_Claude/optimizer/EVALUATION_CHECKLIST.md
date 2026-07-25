@@ -10,7 +10,7 @@ Bootstrap once (see EVALUATION.md §3), then:
 - [x] **L2 `engine`** — `choose_config()` moves through phases seed → `random_init` → `acquisition` at the right counts; `expected_improvement()` ≥ 0; on the sim world the surrogate phase beats random search; incumbent honours `incumbent_min_reps`.
 - [x] **L3 `store`** — `store_eval` ↔ `read_evals` round-trip (incl. `NA` score & `detail`); `config_from_json(config_to_json(cfg))` == `cfg` including `NA` params; `write_report()` renders `state/report.md`.
 - [x] **L4 `scoring`** — `score_predictions(x, a·x+b)` = +1 (a\>0); \<5 overlap or constant → `NA` with a reason; `mask_cv` under CV00 drops **exactly** the focal accessions CV0 keeps; no leakage (score not ≈1).
-- [x] **Test suite** — `Rscript tests/run_all.R` → `2/2 test files passed`; counts match (`config_space` 8007, `subtasks` 134). `run_all.R --all` → sim-loop `PASS`.
+- [x] **Test suite** — `Rscript tests/run_all.R` → `2/2 test files passed`; counts match (`config_space` 8007, `subtasks` 140). `run_all.R --all` → sim-loop `PASS`.
 
 ## Live BrAPI — `simulate = FALSE` — smallest / cheapest first
 
