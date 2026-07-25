@@ -291,10 +291,12 @@ sweep_rich_trials <- function(settings, conn,
       tr <- descs[[id]]
       purrr::map_dfr(settings$schemes, function(sc) {
         if (is.null(tr))
-          return(tibble::tibble(variant = v$label, trial = id, scheme = sc,
-                                status = "no_descriptor", reason = NA_character_, degenerate = FALSE))
+          return(tibble::tibble(variant = v$label, trial = id, scheme = sc, status = "no_descriptor",
+                                score = NA_real_, n_test = NA_integer_, reason = NA_character_,
+                                degenerate = FALSE))
         ev <- evaluate_config_on_trial(v$cfg, tr, sc, settings, conn)
         tibble::tibble(variant = v$label, trial = id, scheme = sc, status = ev$status,
+                       score = ev$score, n_test = ev$n_test %||% NA_integer_,
                        reason = ev$reason %||% NA_character_, degenerate = .oracle_degenerate(v$cfg, sc))
       })
     })
@@ -305,12 +307,20 @@ sweep_rich_trials <- function(settings, conn,
     dplyr::summarise(
       errored = any(status == "error"),
       healthy = any(status == "ok" & !degenerate),
+      # accuracy = the Pearson r that score_predictions returns; best across the ok cells.
+      best_score = suppressWarnings(max(score[status == "ok"], na.rm = TRUE)),
       .groups = "drop") |>
-    dplyr::mutate(verdict = dplyr::case_when(errored ~ "BUG(error)",
+    dplyr::mutate(best_score = ifelse(is.finite(best_score), best_score, NA_real_),
+                  verdict = dplyr::case_when(errored ~ "BUG(error)",
                                              healthy ~ "ok",
                                              TRUE    ~ "SUSPECT"))
   bad <- dplyr::filter(verdict, verdict != "ok")
-  print(as.data.frame(rows[, c("variant", "trial", "scheme", "status", "reason")]), row.names = FALSE)
+
+  disp <- rows; disp$score <- round(disp$score, 3)
+  print(as.data.frame(disp[, c("variant", "trial", "scheme", "status", "score", "reason")]), row.names = FALSE)
+  message("\naccuracy (best Pearson r on the ok cells) per variant:")
+  vd <- verdict; vd$best_score <- round(vd$best_score, 3)
+  print(as.data.frame(vd[, c("variant", "verdict", "best_score")]), row.names = FALSE)
   if (nrow(bad)) {
     message("\nSWEEP ALARM: ", nrow(bad), " variant(s) never predicted on either rich trial ",
             "(a code bug, since these trials are data-rich):")
