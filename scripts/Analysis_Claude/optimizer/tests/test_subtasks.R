@@ -291,6 +291,35 @@ if (nzchar(Sys.which("rsync"))) {
 } else message("  (rsync not found -- skipping cache backup/restore integration checks)")
 
 # ===========================================================================
+cat("settings.local.R overrides (untracked, machine-specific)\n")
+# Oracle: .apply_overrides layers overrides on defaults and warns on an unknown (typo) key.
+check(identical(.apply_overrides(list(a = 1, b = 2), list()), list(a = 1, b = 2)),
+      ".apply_overrides: no overrides -> defaults unchanged")
+check(identical(.apply_overrides(list(a = 1, b = 2), list(b = 9))$b, 9),
+      ".apply_overrides: an override replaces a default")
+check(inherits(tryCatch(.apply_overrides(list(a = 1), list(typo = 3)), warning = function(w) w),
+               "warning"), ".apply_overrides: an unknown key warns (typo guard)")
+# Oracle: .local_overrides reads settings_override from a file; absent -> list(); non-list -> error.
+lf1 <- tempfile(fileext = ".R")
+writeLines("settings_override <- list(dosage_budget_bytes = 16e9, simulate = FALSE)", lf1)
+ov1 <- .local_overrides(lf1)
+check(ov1$dosage_budget_bytes == 16e9 && isFALSE(ov1$simulate), ".local_overrides reads settings_override")
+check(identical(.local_overrides(tempfile(fileext = ".R")), list()), ".local_overrides: absent file -> empty list")
+lf2 <- tempfile(fileext = ".R"); writeLines("settings_override <- 42", lf2)
+check(inherits(try(.local_overrides(lf2), silent = TRUE), "try-error"),
+      ".local_overrides: non-list settings_override -> error")
+unlink(c(lf1, lf2))
+# End-to-end via optimizer_settings() -- only if there is no REAL settings.local.R to clobber.
+lf <- here::here("settings.local.R")
+if (!file.exists(lf)) {
+  writeLines("settings_override <- list(dosage_budget_bytes = 7e9, run_startup_canary = FALSE)", lf)
+  s_ov <- suppressWarnings(optimizer_settings())
+  check(s_ov$dosage_budget_bytes == 7e9 && isFALSE(s_ov$run_startup_canary),
+        "optimizer_settings() applies settings.local.R overrides")
+  file.remove(lf)
+} else message("  (a real settings.local.R exists -- skipping the end-to-end override check)")
+
+# ===========================================================================
 cat("cached() / category-partitioned cache paths\n")
 # Oracle: a cache entry lives at cache/<category>/<category>_<identifier>.rds; reads fall
 # back to the pre-migration FLAT path so an un-migrated cache still hits; writes go nested;

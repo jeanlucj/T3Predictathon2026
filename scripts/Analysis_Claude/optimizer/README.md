@@ -160,6 +160,28 @@ preserved.
    **startup**, so after creating/editing it, **restart R**; verify with
    `Sys.getenv("OPTIMIZER_PATH")`.
 
+4. **Change any OTHER setting per machine via an untracked `settings.local.R`.** The
+   environment handles only the directory split; for anything else you want different
+   on the server -- `simulate = FALSE`, a bigger `dosage_budget_bytes`, a `max_hours`
+   under your reservation limit, `run_startup_canary = FALSE`, custom paths -- **do not
+   edit the tracked `settings.R`** (that reintroduces the `git pull` conflict). Instead
+   copy `settings.local.R.example` to `settings.local.R` (gitignored) and set just your
+   deltas:
+   ```r
+   # settings.local.R  (untracked)
+   settings_override <- list(
+     simulate            = FALSE,
+     dosage_budget_bytes = 16e9,
+     max_hours           = 23.5,
+     run_startup_canary  = FALSE
+   )
+   ```
+   `optimizer_settings()` layers these on top of its defaults, so upstream owns the
+   tracked defaults and your server owns only its overrides. An unknown key warns
+   (typo guard). Overrides are top-level settings; to change a list-valued one (e.g.
+   `target_domain`) give the whole list. Unlike `.Renviron`, `settings.local.R` is read
+   every time `optimizer_settings()` is called, so no restart is needed after editing it.
+
 ### What to save when the reservation ends, and how to resume
 
 - **Must save:** `state/evals.sqlite` (or wherever you pointed `db_path`). This

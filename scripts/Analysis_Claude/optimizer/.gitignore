@@ -10,3 +10,4 @@ logs/*
 T3BrapiHelpers_extraction_proposal.md
 .Renviron
 .Rprofile
+settings.local.R

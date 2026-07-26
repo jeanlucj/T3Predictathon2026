@@ -1,0 +1,21 @@
+# settings.local.R  --  machine-specific setting overrides (UNTRACKED)
+#
+# Copy this file to `settings.local.R` (same folder) and set only the fields you want to change
+# on THIS machine. `settings.local.R` is gitignored, so the tracked `settings.R` stays identical
+# everywhere and `git pull` never conflicts on it. optimizer_settings() layers these on top of
+# its defaults; an unknown key warns (likely a typo). Only top-level settings can be overridden
+# (to change a list-valued setting like target_domain, provide the whole list).
+#
+# NOTE: the local/remote directory split (remote_server) is driven by the ENVIRONMENT, not here
+# -- set OPTIMIZER_PATH (or OPTIMIZER_REMOTE) in .Renviron for that. Use this file for the rest.
+
+settings_override <- list(
+  # --- typical server tuning ---------------------------------------------
+  # simulate            = FALSE,     # run against real T3 data, not the synthetic world
+  # dosage_budget_bytes = 16e9,      # a big-memory server can hold denser dosages
+  # max_hours           = 23.5,      # self-stop before a 24 h reservation's walltime
+  # run_startup_canary  = FALSE,     # skip the heavy startup canary once validated
+
+  # --- custom paths (optional; usually OPTIMIZER_PATH is enough) ----------
+  # cache_dir           = "/workdir/<user>/optimizer_cache"
+)

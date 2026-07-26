@@ -21,6 +21,33 @@
 }
 remote_server <- .detect_remote_server()
 
+# Machine-specific setting overrides live in an UNTRACKED settings.local.R (gitignored; see
+# settings.local.R.example) so the tracked settings.R stays identical on every machine and
+# `git pull` never conflicts on it. That file defines `settings_override <- list(...)`; those
+# values are layered on top of the defaults below. Use it for anything you tune per machine --
+# simulate, dosage_budget_bytes, max_hours, run_startup_canary, custom paths, ... (remote_server
+# itself is env-driven, above -- set OPTIMIZER_PATH / OPTIMIZER_REMOTE for the local/remote
+# split rather than overriding it here).
+.local_overrides <- function(path = here::here("settings.local.R")) {
+  if (!file.exists(path)) return(list())
+  e <- new.env(parent = globalenv())
+  tryCatch(sys.source(path, envir = e),
+           error = function(err) stop("settings.local.R failed to source: ", conditionMessage(err)))
+  ov <- get0("settings_override", envir = e, ifnotfound = list())
+  if (!is.list(ov)) stop("settings.local.R must define `settings_override` as a list()")
+  ov
+}
+
+# Layer overrides on top of the defaults; warn on an unknown key (usually a typo, since it
+# would otherwise be silently added and never read).
+.apply_overrides <- function(defaults, ov) {
+  if (!length(ov)) return(defaults)
+  unknown <- setdiff(names(ov), names(defaults))
+  if (length(unknown))
+    warning("settings.local.R sets unknown setting(s) [typo?]: ", paste(unknown, collapse = ", "))
+  modifyList(defaults, ov)
+}
+
 optimizer_settings <- function() {
   # Permanent, resumable state (sqlite store, report, logs, STOP flag) goes under `perm_dir`:
   # durable HOME storage in remote mode, else the work dir. Fail loudly if remote mode is on but
@@ -32,7 +59,7 @@ optimizer_settings <- function() {
          "OPTIMIZER_REMOTE=false. Check with Sys.getenv(\"OPTIMIZER_PATH\").")
   perm_dir <- if (remote_server) Sys.getenv("OPTIMIZER_PATH") else here::here()
 
-  list(
+  defaults <- list(
     # ---- mode -------------------------------------------------------------
     # TRUE  = synthetic offline world (fast; for verifying the machinery).
     # FALSE = real T3 pipeline on real data (network + heavy model fits).
@@ -205,4 +232,5 @@ optimizer_settings <- function() {
     # not iterations, so checkpoint_every = 1 doesn't rsync every step.
     cache_sync_minutes = 120
   )
+  .apply_overrides(defaults, .local_overrides())
 }
