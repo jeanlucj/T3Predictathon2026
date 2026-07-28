@@ -65,13 +65,39 @@ optimizer_settings <- function() {
     # FALSE = real T3 pipeline on real data (network + heavy model fits).
     simulate = TRUE,
 
-    # ---- which CV schemes to score each evaluation under ------------------
+    # ---- simulate-mode variance (offline testing only) --------------------
+    # .sim_true() -- the synthetic objective -- is DETERMINISTIC in (config, trial, scheme).
+    # Two separate things make an *evaluation* of it noisy, and they are independently
+    # controllable so that "does the search work at all?" can be tested apart from "how many
+    # evaluations does a given noise level need?":
+    #   sim_noise_sd     sd of the observation noise .sim_evaluate() adds (0 = none).
+    #   sim_fixed_trial  TRUE returns the SAME trial descriptor every time, removing
+    #                    trial-to-trial heterogeneity. This is the LARGER of the two sources
+    #                    and the easier one to overlook: .sim_true ends with q*(0.5 + h) for
+    #                    h ~ U(0.2, 0.7), which alone swings a score by about +-25%, and
+    #                    env_var / n_projects additionally change WHICH methods are best.
+    # The defaults reproduce the realistic, noisy regime; tests/test_sim_loop.R turns both
+    # down to isolate the algorithm.
+    sim_noise_sd    = 0.07,
+    sim_fixed_trial = FALSE,
+
+    # ---- CV schemes -------------------------------------------------------
+    # `schemes` lists every CV scheme the DIAGNOSTICS sanity-check for code bugs
+    # (check_canaries / sweep_rich_trials / diagnose_trial test all of them, e.g.
+    # to catch the direct_blup+CV00 degeneracy).
     schemes = c("CV0", "CV00"),
+    # The OPTIMIZER targets exactly ONE scheme per run: CV0 and CV00 are distinct
+    # prediction tasks with (potentially) different optimal pipelines, so blending
+    # them would only find a compromise. To optimize both, run the optimizer twice
+    # -- once per scheme -- against the same store (evals.sqlite is a shared archive
+    # scoped per scheme on read) and cache (the second run reuses cached genotypes).
+    # Must be a single string and a member of `schemes` (validated below).
+    optimize_scheme = "CV0",
 
     # ---- search behaviour -------------------------------------------------
     n_random_init       = 25,    # random configs before the surrogate takes over
     incumbent_min_reps  = 2,     # trials a config needs before it can be "incumbent"
-    reeval_prob         = 0.15,  # chance an iteration re-evaluates the incumbent
+    reeval_prob         = 0.15,  # chance an iteration re-evaluates a random elite (denoise leaders)
     ei_xi               = 0.01,  # Expected-Improvement exploration constant
     n_elites            = 8,     # elites that seed crossover/mutation
     n_cross             = 60, n_mut = 60, n_rand = 60,  # candidate pool sizes
@@ -112,10 +138,10 @@ optimizer_settings <- function() {
     # Memory budget for a single project's dense dosage matrix (samples x markers x 4 B).
     # This is the SOLE control on cached marker density: each project is downloaded and
     # parsed ONCE, at the densest thinning that fits this budget (thin 1 = full markers for
-    # anything that fits; a 7.5M-marker GBS panel is thinned to fit). A config's requested
-    # marker_thin is then derived by column-subsetting that one cache -- never re-parsed --
-    # so set this deliberately: a bigger budget caches denser (better GRMs, more disk/RAM
-    # per project), smaller thins large panels harder. Keep it well under total RAM, since
+    # anything that fits; a 7.5M-marker GBS panel is thinned to fit). Marker density is NOT a
+    # search parameter -- this setting is the whole story (LESSONS.md #16) -- so set it
+    # deliberately: a bigger budget caches denser (better GRMs, more disk/RAM per project),
+    # smaller thins large panels harder. Keep it well under total RAM, since
     # choose_geno_sources loads all covering projects and the GRM needs headroom too.
     dosage_budget_bytes = 2e9,
 
@@ -232,5 +258,13 @@ optimizer_settings <- function() {
     # not iterations, so checkpoint_every = 1 doesn't rsync every step.
     cache_sync_minutes = 120
   )
-  .apply_overrides(defaults, .local_overrides())
+  s <- .apply_overrides(defaults, .local_overrides())
+  # The optimizer targets exactly one scheme per run (validate the effective value,
+  # so a settings.local.R override is checked too).
+  if (length(s$optimize_scheme) != 1L || !is.character(s$optimize_scheme) ||
+      !(s$optimize_scheme %in% s$schemes))
+    stop("optimize_scheme must be a single scheme that is one of `schemes` (",
+         paste(s$schemes, collapse = ", "), "); got: ",
+         paste(s$optimize_scheme, collapse = ", "))
+  s
 }

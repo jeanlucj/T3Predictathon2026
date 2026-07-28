@@ -23,9 +23,9 @@ methods so they can be freely recombined (`R/config_space.R`).
 |---|---------|---------------------------------------------|
 | A | **Select training trials** from T3 for a focal trial | accession_overlap with a `primary_only` toggle — direct germplasm-overlap neighbours of the focal trial, optionally plus a second "friends-of-friends" tier (P1/P2); top-k genomic/environmental similarity (P3); same breeding program (P5) |
 | B | **Preprocess** training phenotypes into per-accession targets | per-trial BLUE `y~germ+rep+block` then average (P1), trial-centering `y - trial_mean + grand_mean` (P4), two-stage BLUP shrinkage, raw mean (baseline); optional G×E environmental weighting (P4) |
-| C | **Select genotyping data** (which projects / VCFs) | focal+one-hop with bridges (Analysis_Claude), best single project (P5), all projects / global union (P2) |
+| C | **Select genotyping data** (which projects / VCFs) | focal+one-hop with bridges — the focal trial's panel plus any panel sharing `min_bridge` accessions with it (Analysis_Claude), best single project (P5), all projects / global union (P2) |
 | D | **Build the relationship / kernel** from markers | VanRaden GRM on a merged matrix (P1/P2/P4), Wishart-EM combine of per-project GRMs (P3/P5), RKHS Gaussian kernel (P5 CV00) |
-| E | **Train the prediction model** | rrBLUP GBLUP (P1), sommer multi-kernel G+E (P3), GBLUP with LOO-selected ridge (P4), RKHS (P5) |
+| E | **Train the prediction model** | rrBLUP GBLUP (P1), sommer multi-kernel G+E (P3), RKHS (P5); orthogonally, how the ridge is chosen — `lambda_select` ∈ REML (P1) / fixed (P2) / leave-one-out grid (P4) |
 | F | **Predict** on the focal (test) trial | direct BLUP, conditional expectation `G21 G11^-1 u` (P1), blend with observed BLUE (P4), mean fallback when overlap is too small |
 
 A **configuration** is one choice of method + parameters for each subtask -- a
@@ -212,6 +212,11 @@ end to end; dispatchers `select_training_trials()`, `build_targets()`,
 by marker overlap — protocol *ids* cannot do this, since a `V2`/`v2.1` protocol is the
 same protocol against another reference genome), `.prune_redundant` (drop re-called
 duplicate projects within a group), `.merge_markers`, `.qc_markers`, `.best_panel`,
+`.onehop_filter` (subtask C's hop: keep the focal trial's panel plus any panel sharing
+`min_bridge` accessions with it — one hop, not the transitive closure, which is what makes
+`focal_plus_onehop` narrower than `all_projects`),
+`.ridge_blup`/`.loo_lambda` (GBLUP at a given ridge; the PRESS-identity leave-one-out grid
+search ported from Prediction4),
 `.bridge_accessions` (accessions genotyped in >1 protocol group — the shared rows
 `em_combine` stitches its per-panel GRMs through), `.vanraden` (VanRaden GRM over the
 needed accessions, centred and scaled on the panel population's allele frequencies —
@@ -237,9 +242,12 @@ substrate `.find_related`/`.trial_similarity` compute germplasm overlap from);
 VCF → dosage — a base-R **streaming, chunked** reader (bounded memory; skips malformed
 variant lines; rejects transposed/non-VCF archives; gzip/BGZF transparent). Each project is
 parsed **once**, at the densest thin its dense size fits `settings$dosage_budget_bytes`
-(`.cache_thin()`); a config's `marker_thin` is then derived by column-subsetting that single
-cache (`.find_densest_dosage()` + read-time subsample), so a project is never re-downloaded
-for a different thin. A `stat_<id>` / `unparseable_<id>` cache lets a coarse-sizing decision
+(`.cache_thin()`), and that budget is the **only** control on marker density — the pipeline
+no longer asks for a thin of its own (`marker_thin` was removed from the search space: a
+request could only be served by subsetting this cache, so it was a silent no-op whenever the
+budget had already thinned harder). `get_project_dosage()` keeps a `marker_thin` argument for
+manual probes, served by column-subsetting (`.find_densest_dosage()` + read-time subsample)
+rather than by re-downloading. A `stat_<id>` / `unparseable_<id>` cache lets a coarse-sizing decision
 and an unparseable-archive verdict persist without the (deleted) VCF. A transient VCF-download
 failure is tracked **per session** (`.vcf_download_plan`, in RAM): effort decreases per prior
 failure and the project is skipped after `settings$vcf_max_download_attempts`, so a timing-out

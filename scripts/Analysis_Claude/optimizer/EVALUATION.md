@@ -162,6 +162,8 @@ disarm_evaluation()
 - **🔍 eyeball** with few evals `source` is `seed` then `random_init`; only past `n_random_init` does it become `acquisition`. Inside acquisition, `expected_improvement()` is always ≥ 0 and rises with predicted mean.
 - **🚩 red flag** the surrogate predicts a flat score for every candidate (no signal learned); acquisition picks the same config forever (EI collapsed); `incumbent_config()` returns a config with fewer than `incumbent_min_reps` reps.
 - *Assumption:* the surrogate trains on the **per-config mean** score (`aggregate_scores`), i.e. the best config for a *random* trial is the one with the best average — not tuned to any single trial.
+- *Target-domain **and scheme** scoping:* `evals.sqlite` is a **shared archive of every evaluation ever run**, across target domains *and CV schemes*. But a given optimization only wants evidence from **its own** domain and **its own scheme** (the premise: the best pipeline for a domain/scheme is what you deploy on a *new* trial from that domain, under that scheme). So `choose_config()` filters the store **first** — `filter_evals_to_domain` (same `.apply_target_domain` predicate that restricts trial sampling) **then** `filter_evals_to_scheme(settings$optimize_scheme)` — scoping *everything* downstream: seeds, the done/avoid dedup set, aggregation, the surrogate, and the incumbent. A config evaluated only in *another* domain or *another* scheme therefore counts as **untried here** and gets (re)run to build in-slice evidence. Each row stores the trial's `study_name / program_name / location_name / year` (domain) plus its `scheme`, so both filters are pure offline predicates. **CV0 and CV00 are distinct tasks** (they can have different optimal pipelines — the sim world even models it, `evaluate.R:147`), so the optimizer targets exactly **one** scheme per run (`optimize_scheme`); to optimize both, run twice against the same store/cache. In `simulate` mode there is no real domain (no domain filtering), but the scheme filter still applies. **🚩 red flag:** a run with a narrow `target_domain`/scheme never leaves the `seed`/`random_init` phase because almost no stored rows are in-slice (expected early on — it is gathering in-slice data), or `report.md` shows a large "out of this scheme/domain" count you did not expect.
+- *Denoising the leaders (`reeval_elite`):* because each step scores **one** scheme (one rep), a config needs several selections to reach `incumbent_min_reps`. The `reeval_prob` branch therefore re-runs a **random elite** (top-`n_elites` by mean), not just the incumbent — otherwise no challenger could accumulate the reps to overtake a noisy leader and the incumbent would freeze on whichever config was denoised first. **🚩 red flag:** the incumbent never changes across a long run despite `late > early` improving, or one config has vastly more reps than the rest of the elite pack.
 
 ### L3 — `store` (offline)
 
@@ -313,6 +315,7 @@ peek(dl, accessions = c(names(targets), trial$accessions))
 - **→ returns** `dl` a named list with **one matrix per protocol group** (name = the merged project ids, e.g. `"2762+9441"`), each holding that group's **full genotyped population** — every sample in the constituent projects, not just the accessions this trial needs. `nrow()` in the hundreds-to-thousands is correct and expected. An `n_projects` attribute carries how many covering projects we started from.
 - **🔍 eyeball** `peek(dl, accessions=…)` — each matrix's **rowname overlap** with the accession set is \> 0 (it will be far smaller than `nrow`, which is the point). `names(dl)` shows which projects got merged: same-panel projects (a protocol and its `V2`/`v2.1` re-registration against another reference genome) should land together.
 - **🚩 red flag** a **non-empty dosage matrix with overlap = 0** — the decisive synonym / name-mismatch signature (VCF samples under old preliminary names); `n_projects > 0` but `length(dl) == 0` (found projects, extracted nothing → a download/parse bug, flagged `suspect` by `run_pipeline`). Also: two obviously different panels merged into one group (check `settings$merge_containment`), or a group whose matrix has far fewer accessions than its projects did (over-eager `.prune_redundant`). Cross-check with `diagnose_trial("10676", s, conn)`.
+- *Assumption:* under `focal_plus_onehop` the returned list has already been through `.onehop_filter()`: the panel(s) genotyping the **focal** accessions, plus — one hop out — any panel sharing at least `min_bridge` accessions with them. Confirm the method is doing something: `length(choose_geno_sources(cfg_onehop_mb1, …))` should be **smaller** than the same call under `all_projects` whenever some panel bridges nothing, and raising `min_bridge` must shrink it monotonically. 🚩 If the two methods return identical lists on a many-panel trial, the hop is a no-op and `focal_plus_onehop` has silently become `all_projects` (which is exactly what it was before the filter existed). When no panel covers the focal accessions the filter passes the list through unchanged — there is nothing to hop from — and the trial is judged by the usual overlap check.
 - *Assumption:* a genotyping **project** id (not protocol id) is what `vcf_archived()` accepts. Protocol *ids* are **not** used to group projects — a `V2`/`v2.1` protocol is the same protocol scored against a different reference genome and carries a different id, so grouping is done on **marker overlap** (`settings$merge_containment`, 0.95).
 
 ### L9 — `subtaskD` build the kernel
@@ -365,10 +368,11 @@ disarm_evaluation()
 peek(pred)
 ```
 
-- **→ returns** `fit` a model object (`kind = "gblup"`, a `u` random effect, a `mu`); `pred` a named numeric over the test accessions.
+- **→ returns** `fit` a model object (`kind = "gblup"`, a `u` random effect, a `mu`, and the `lambda` actually used); `pred` a named numeric over the test accessions.
 - **🔍 eyeball** `peek(pred)` — **not constant**, plausible range; under the fallback (too little overlap) it is deliberately `mean(targets)` for everyone.
 - **🚩 red flag** predictions constant when overlap was adequate (the model collapsed, not the fallback); blending changing predictions under **CV00** (it must be a no-op there — those phenotypes were masked).
 - *Assumption:* `predict_test`'s `cond_expectation` computes `mu + K21 K11⁻¹ u`; the observed-BLUE blend applies **only** under CV0.
+- *Assumption:* `model.lambda_select` decides how the ridge is chosen and the three rules give genuinely different fits: `reml` lets `rrBLUP::mixed.solve` estimate it, `fixed` uses `model.lambda_fixed` verbatim, `loo` minimizes leave-one-out MSE over a log grid (Prediction4's method). Check `fit$lambda` under each — three rules, three values. 🚩 If `fixed` at a large and a small `lambda_fixed` return the same `u`, the parameter is not reaching the solve; if `loo` and `reml` agree to many digits on real data, suspect the grid rather than celebrate. The LOO search relies on the PRESS identity (LOO residual = rᵢ/(1−hᵢᵢ)), which is exact only for the linear smoother `K(K+λI)⁻¹` on **centred** y — `tests/test_subtasks.R` checks it against an explicit leave-one-out refit.
 
 ### L11 — `flow` end to end (watch the funnel)
 
@@ -421,7 +425,7 @@ Live work is dominated by VCF downloads and mixed-model fits. Order it so the ch
 - **Few training trials before many.** In subtask A, start with a *high* `accession_overlap` `primary_min` (fewest neighbours → fewest downloads); lower it only once the high-threshold path is clean. The prompt's rule of thumb — overlap 20 before overlap 3. Turning `primary_only` off adds a secondary lookup over the pooled primary germplasm, so a low `primary_min` (large pool) plus a low `secondary_min` (loose threshold) is the most expensive corner of the whole search space; go there last.
 - **Neighbour lookups warm the `acc_` cache; dosages are what actually cost.** `.find_related()` fetches `acc_<sid>` for each candidate trial on a cold cache, then reuses them for every later trial and for `.trial_similarity`. What the bigger training sets still cost you is downstream: more training trials → more genotyping projects → more VCFs in subtask C.
 - **Smallest canary before largest.** `calibrate_canary_trials()` / `canary_anchor()` print per-trial accession counts; check the smallest trial before the largest so a bug surfaces on cheap data.
-- **Thin markers on the first touch of a big project.** Pass `marker_thin > 1` (e.g. via a config's `geno_select.marker_thin`) so the first parse of a large VCF is cheap; repeat un-thinned once the path is trusted.
+- **Lower the budget on the first touch of a big project.** Marker density is set by `settings$dosage_budget_bytes` at *parse* time, so that is the knob that makes a first download/parse cheap — set it low for an exploratory pass, then restore it and let `dosage_redensify` re-parse denser. (There used to be a `geno_select.marker_thin` config parameter here; it was removed. It only ever subset the cache at *read* time, so it never made the first parse cheaper, and it was a no-op whenever the budget had already thinned harder than the request.)
 - **Watch the progress bars.** The slow loops report progress: `"Load project dosages"` (per project in `choose_geno_sources`), `"Similarity: candidate trials"`, `"Observations from study ids"`, `"Genotyping projects for accessions"`, `"Canary trials"`, `"Calibrate canaries"`. A bar that stalls tells you *which* item is slow.
 
 ------------------------------------------------------------------------
@@ -479,9 +483,9 @@ Each file is self-contained: it sources the subsystem, runs hand-rolled `check()
 | Command | Expected |
 |----|----|
 | `tests/test_config_space.R` | \~5 genome invariants across \~400 sampled/recombined configs → `config_space tests: 8007 passed, 0 failed` (8007 = individual assertions) |
-| `tests/test_subtasks.R` | `Tier 1 subtask tests: 151 passed, 0 failed` |
+| `tests/test_subtasks.R` | `Tier 1 subtask tests: 196 passed, 0 failed` |
 | `tests/run_all.R` | `2/2 test files passed` |
-| `tests/test_sim_loop.R` (or `run_all.R --all`) | `PASS: optimizer beats submissions and improves over random search`, exit 0 |
+| `tests/test_sim_loop.R` (or `run_all.R --all`) | `PASS: the surrogate search beats random search and the submissions on an exact objective`, exit 0. Deterministic — incumbent 0.600 vs random-search bar 0.567 vs best seed 0.507, every run. |
 
 If a count drifts after a change, that is the regression signal — reconcile it before moving on.
 
@@ -498,6 +502,8 @@ If a count drifts after a change, that is the regression signal — reconcile it
 | `.group_by_panel` / `.prune_redundant` (`pipeline.R`) | 100%-marker-containment projects group together, 40% do not; identical accession sets → the richer marker build survives; ≥90%-overlapping accession sets → the project with more accessions survives; disjoint accession sets → both kept. |
 | `.bridge_accessions` + em_combine (`pipeline.R`) | bridge = accessions in ≥2 panels (empty when disjoint); a panel with one needed accession is `NULL` under `need` alone but a valid GRM once bridges are kept; `build_kernel("em_combine")` is feasible *because of* the bridges and returns exactly `need × need` (bridges eliminated). |
 | `build_targets` + `.blue_per_trial` (`pipeline.R`) | `raw_mean` = mean of per-trial means; `trial_center` invariant to a constant added to one trial; `blue_lm` recovers group means; outlier removal at `z_thr`; `two_stage_blup` shrinks spread; `per_trial_z` → mean 0 sd 1. |
+| `.onehop_filter` (`pipeline.R`) | the focal panel is always kept; an unbridged panel never is; a panel sharing exactly 3 accessions is admitted iff `min_bridge` ≤ 3; the admitted set is nested in `min_bridge`; no focal coverage → list unchanged. |
+| `.loo_lambda` / `.ridge_blup` (`pipeline.R`) | the PRESS shortcut equals an explicit leave-one-out refit (tol 1e-8); `.loo_lambda` returns the grid point minimizing brute-force LOO MSE; `.ridge_blup` equals `K(K+λI)⁻¹(y−ȳ)` computed the long way and shrinks monotonically in λ; `train_model` honours each `lambda_select` rule and falls back to REML on `NA`. |
 | `predict_test` (`pipeline.R`) | conditional expectation with a clone test line → `mu + u[clone-source]`; `blend_obs_w` blends under CV0, no-op under CV00; fallback below `min_overlap` → all predictions `mean(targets)`. |
 | `mask_cv` (`pipeline.R`) | CV0 keeps every row; CV00 drops exactly the focal-accession rows (CV0 set minus CV00 set = the focal rows). |
 
@@ -507,14 +513,29 @@ Sampling, encoding, JSON round-trips, and crossover/mutation all produce well-fo
 
 ### End-to-end *(implemented: `tests/test_sim_loop.R`, slow)*
 
-Runs the whole optimizer against the synthetic world (`.sim_true`/`.sim_evaluate` in `evaluate.R`) and asserts the discovered incumbent beats the submitted seeds and that the surrogate phase improves on random search. This is the regression test for any change to the search space or optimizer; run it after such changes.
+Runs the whole optimizer against the synthetic world (`.sim_true`/`.sim_evaluate` in `evaluate.R`) in a **deterministic regime** — `sim_noise_sd = 0`, `sim_fixed_trial = TRUE` — and asserts the incumbent beats (a) equal-budget **random search** and (b) the best submitted seed. That regime is the one where a correct implementation *must* win: if the surrogate cannot beat random sampling when every evaluation is exact, the search is broken and no budget rescues it. The file is fully deterministic (fixed seeds, no noise), so it cannot flake. Run it after any change to the search space or optimizer.
+
+Keep two questions apart here — conflating them is what made an earlier version of this file unreliable, failing on the RNG rather than on a regression:
+
+1. **Does the algorithm work?** A correctness property → asserted, in the deterministic regime.
+2. **How many evaluations does it need at a given noise level?** An empirical property of the *objective* → measured, asserted nowhere.
+
+For (2), the fair experiment (two arms, 320 evaluations each, both deploying the incumbent their own evaluations selected, seeds 42/7/2024):
+
+| regime | surrogate | random search | diff | surrogate wins |
+|---|---|---|---|---|
+| deterministic (what the test asserts) | **0.606** | 0.553 | **+0.053** | **3/3** |
+| trial variation only (observation noise off) | 0.513 | 0.525 | −0.012 | 1/3 |
+| full defaults | 0.527 | 0.528 | −0.001 | 2/3 |
+
+The algorithm is sound; its advantage is spent entirely on variance at this budget. Note the middle row: with observation noise **off** the search is still no better than random, so the binding constraint is **trial heterogeneity** — the objective is a mean over a heterogeneous population estimated one trial at a time — not measurement precision. Replicating configs across more trials is what would help; more precise individual evaluations would not. See `BACKGROUND.md` §4.
 
 ### Tiers 2–4 — planned
 
 Specified for later; not yet implemented. Oracles already worked out:
 
 - **Tier 2 — optimizer mechanics.** `expected_improvement` (≥0; ↑ with mean; ↑ with sd when mean\<best; →0 as sd→0); `fit_surrogate`/`predict_surrogate` (NULL below `min_obs`; monotone signal → high rank-correlation; sd floor); `aggregate_scores`/ `get_elites`/`incumbent_config` (mean excludes failures, `n` counts them; top-k; `min_reps` honored); `crossover`/`mutate_config`/`propose_candidates` (each child block matches one parent; mutation changes ≥1 block; candidates repaired); `choose_config` phases (empty store → seed; \< `n_random_init` → `random_init`; enough → `acquisition`).
-- **Tier 3 — store / data helpers / reporting.** `store_eval`↔`read_evals` round-trip incl. NA score and `detail`; `.matches_trait`/`.focal_trait_parts`/ `.apply_target_domain`; `.obs_tibble`+`get_observations` on a fake response; `cached` write/read; `report.R` (`format_config`, `method_importance`, `failure_summary`, "BEATS submissions" only when incumbent \> best seed).
+- **Tier 3 — store / data helpers / reporting.** `store_eval`↔`read_evals` round-trip incl. NA score and `detail`; the four domain columns persist and `filter_evals_to_domain` restricts to the target program/year (NULL = no constraint; NA-attribute rows out-of-domain under a constraint, kept when NULL); `filter_evals_to_scheme` restricts to the target scheme and composes with the domain filter; `choose_config` re-offers a seed evaluated only in another domain **or another scheme** (and does *not* when it is in-slice); `optimizer_settings()` rejects an `optimize_scheme` outside `schemes`; `.matches_trait`/`.focal_trait_parts`/ `.apply_target_domain`; `.obs_tibble`+`get_observations` on a fake response; `cached` write/read; `report.R` (`format_config`, `method_importance`, `failure_summary`, "BEATS submissions" only when incumbent \> best seed).
 - **Tier 4 — network subtasks via a mock `conn`.** Inject a fake `conn` (closures for `$wizard`/`$search`/`$vcf_archived`) + a fake `trial_catalog` and test the *logic* of `select_training_trials`, `.trial_similarity`, `choose_geno_sources` (most-similar ranks first; `same_program` respects `prog_cap`; `top_k_similar` returns `k`; `best_single_project` picks the most-covering project). Needs a `tests/fixtures.R`.
 
 ------------------------------------------------------------------------
@@ -530,14 +551,14 @@ Specified for later; not yet implemented. Oracles already worked out:
 | `obs_<studyid>.rds` | `get_observations()` | all numeric observations of a study | 30 d |
 | `proj_<hash>.rds` | `projects_for_accessions()` | genotyping **project** ids covering an accession set | 30 d |
 | `raw_project_<id>.vcf` | `.ensure_project_vcf()` | the archived VCF (validated complete). **Transient**: deleted once its dosage is cached OR the archive is found unparseable | until dosage/unparseable cached |
-| `dosage_<id>[_thin<e>]_sz<size>.rds` | `get_project_dosage()` | the **whole project's** accessions×markers dosage, parsed **once** at the densest thin `e` the `dosage_budget_bytes` budget allows (thin 1 = full markers for anything that fits). A config's requested `marker_thin` is **derived at read** by keeping every `max(1, floor(marker_thin/e))`-th marker — so a project is never re-downloaded for a different thin. One dosage file per project (older per-thin files are redundant; `prune_dosage_cache.R` removes them). **Re-densify:** on access, if *this* machine's `dosage_budget_bytes` affords a denser thin than the cached `e` (e.g. a laptop-thinned cache warmed onto a big-memory server), it re-downloads and re-parses denser once — from `stat_<id>`, cheap to detect; `dosage_redensify = FALSE` disables it. | ∞ |
+| `dosage_<id>[_thin<e>]_sz<size>.rds` | `get_project_dosage()` | the **whole project's** accessions×markers dosage, parsed **once** at the densest thin `e` the `dosage_budget_bytes` budget allows (thin 1 = full markers for anything that fits). `e` is the *only* thing that sets marker density: the pipeline requests no thin of its own (the `marker_thin` search parameter was removed). A `marker_thin` passed manually to `get_project_dosage()` is **derived at read** by keeping every `max(1, floor(marker_thin/e))`-th marker — never by re-downloading. One dosage file per project (older per-thin files are redundant; `prune_dosage_cache.R` removes them). **Re-densify:** on access, if *this* machine's `dosage_budget_bytes` affords a denser thin than the cached `e` (e.g. a laptop-thinned cache warmed onto a big-memory server), it re-downloads and re-parses denser once — from `stat_<id>`, cheap to detect; `dosage_redensify = FALSE` disables it. | ∞ |
 | `stat_<id>.rds` | `get_project_dosage()` | `{n_samples, n_markers}` of a project, written on first extraction so a later run can compute the effective thin — and hence the right `dosage_` name — without the (deleted) VCF | ∞ |
 | `unparseable_<id>.rds` | `get_project_dosage()` | **negative cache**: this archive is not a usable VCF (transposed / header-vs-data sample-count mismatch / no genotypes). Future calls skip it instead of re-downloading and re-failing every run. `{reason, when}`. **Delete to force a retry** (e.g. after the archive is fixed upstream) | ∞ |
 | `calibration_lightweight.rds` | (diagnostics, when you save it) | the last calibration table | — |
 
 **`state/`** — the single source of truth.
 
-- `evals.sqlite` (`store.R`): one table `evals` with columns `id, config_hash, config_json, trial_id, scheme, score, n_test, status, reason, detail, seconds, ts`. Every evaluation — success **and** failure — is a row; the incumbent, surrogate training data, and "what to try next" are all recomputed from this table, so the process is killable/resumable. `status` ∈ `ok | infeasible | suspect | error`; `reason` is the machine code; `detail` is the failure funnel.
+- `evals.sqlite` (`store.R`): one table `evals` with columns `id, config_hash, config_json, trial_id, study_name, program_name, location_name, year, scheme, score, n_test, status, reason, detail, seconds, ts`. Every evaluation — success **and** failure — is a row; the incumbent, surrogate training data, and "what to try next" are all recomputed from this table, so the process is killable/resumable. `status` ∈ `ok | infeasible | suspect | error`; `reason` is the machine code; `detail` is the failure funnel. The four domain columns (`study_name / program_name / location_name / year`) record the focal trial's target-domain attributes, and `scheme` records the CV scheme, so a run can train on **only its own domain + scheme slice** of this shared store (see L2 "Target-domain and scheme scoping"); the domain columns reuse the catalogue's names so `.apply_target_domain` filters both sampling and evals, and a run optimizes exactly one `optimize_scheme`. Older stores are migrated in `open_store` (added via `ALTER TABLE`, like `detail`); pre-migration rows have NULL attributes and so are treated as out-of-domain whenever a `target_domain` is set.
 - `report.md` (`report.R::write_report`): rewritten every `checkpoint_every` iterations — incumbent, subtask-method importance, the failure log (`failure_summary`), the "⚠ Suspected bugs" section, and the running-best curve.
 - `STOP`: create it (`touch state/STOP`) to halt cleanly after the current eval.
 
@@ -588,7 +609,7 @@ check_canaries(s, conn)            -> run each trial under its config, every sch
 |---|---|
 | 10673 Aurora | `em_combine` + `gblup_sommer_GE` (G×E) + `focal_plus_onehop` |
 | 10675 Big6 | `top_k_similar` + `rkhs_gaussian` + `rkhs` |
-| 10676 CornellMaster | `same_program` + `all_projects`(thin5) + `gblup_loo_ridge` |
+| 10676 CornellMaster | `same_program` + `all_projects` + `gblup_rrblup`[lambda=loo] |
 | 10677 YT_Urb | `accession_overlap` + `vanRaden_single` + `gblup_rrblup` |
 | 10679, 10680, + weak 10674 / 10678 / 10681 | `.canary_filler`: `best_single_project` + `vanRaden_single` + `gblup_rrblup` |
 
@@ -618,7 +639,7 @@ Triage rule:
 
 The complement to `check_canaries`, built to escape its central ambiguity. `check_canaries` runs **one config per trial across nine trials** — a *coverage* test that conflates a code bug with data-adequacy (a demanding config can legitimately fail on a data-poor trial). `sweep_rich_trials` instead **varies one method/branch at a time from a robust baseline** and runs each variant on a couple of **data-rich** trials (default Big6 `10675` + YT_Urb `10677`, via `settings$oracle_trials`). The point: on trials rich enough to satisfy every method's data prerequisites, **feasibility is a property of the code, not the data** — so a branch that can't produce a prediction on *either* rich trial is a genuine bug signal, not a data verdict.
 
-- **22 variants** (`.oracle_variants()`) — one per subtask method plus each behaviour-changing branch level; a test asserts they cover every method in `SUBTASKS`.
+- **23 variants** (`.oracle_variants()`) — one per subtask method plus each behaviour-changing branch level; a test asserts they cover every method in `SUBTASKS`.
 - **Verdict per variant:** an `error` (crash) anywhere is always `BUG`; otherwise the variant is `ok` if it produced `ok` on ≥1 **non-degenerate** (trial, scheme), and `SUSPECT` if it never did.
 - **Accuracy is reported.** The per-cell table now includes the `score` (the Pearson *r* from `score_predictions`), and the returned `$verdict` carries `best_score` (best *r* over a variant's ok cells) — so you see how *well* each branch predicts, not just that it ran. The full per-cell `score`/`n_test` are in the returned `$rows`.
 - **Known-degenerate cells are excluded** (`.oracle_degenerate`): `direct_blup` under **CV00** masks the test lines out of training, so predictions collapse to the mean → `constant` by construction, not a bug. (cond_expectation predicts them from the kernel, so it is *not* degenerate.)
@@ -633,10 +654,14 @@ Replays one trial and prints the data funnel stage by stage **next to an indepen
 
 ### Lessons baked in (don't re-learn the hard way)
 
-- **Cache poisoning + big VCFs.** A partial/raced VCF download once cached a tiny dosage matrix *forever* (`get_project_dosage` used `max_age_days = Inf`). Now `.ensure_project_vcf()` validates completeness (`.vcf_complete`) and re-downloads truncated files. `get_project_dosage()` downloads and parses each project **exactly once**, at the densest thin the budget allows, and reuses that one cache for every trial and every requested `marker_thin` by subsetting rows (samples) and columns (markers) at read; it **deletes the raw VCF once the dosage is cached**. If genotype counts ever look low, clear `cache/dosage/` (regenerable).
-- **Interactive prompt.** `conn$vcf_archived()` can prompt to pick a file and hang a non-interactive run — always launch real-mode scripts with `</dev/null`.
-- **The VCF parser is streaming, and some archives are broken.** `.vcf_to_dosage()` streams the VCF in chunks (base R, no `vcfR`) so memory is bounded by one chunk plus the thinned result — a 7.5M-marker panel no longer OOMs. It (a) decompresses gzip/BGZF transparently, (b) **skips a malformed variant line** rather than failing the whole file (a real archive had one 3-field record), and (c) **rejects** a transposed / non-VCF layout. Real T3 archives seen that are genuinely unusable — a transposed export, and one whose `#CHROM` header declares more samples than the data rows carry — are recorded in `cache/unparseable/unparseable_<id>.rds` and skipped forever after (delete that file to retry). A project too large to hold densely is thinned to fit `settings$dosage_budget_bytes` at parse time, the thin `e` recorded in the `dosage_` filename; that budget is the sole control on cached marker density. If a project you expect silently yields no genotypes, look for its `unparseable_` marker and read the reason.
-- **A timing-out download is not re-stormed.** A transient VCF-download failure (T3 choking on a big archive, e.g. project 8217) is tracked **per session** in RAM by project id: each subsequent attempt tries less hard (fewer in-call retries, shorter backoff) and after `settings$vcf_max_download_attempts` (default 3) the project is **skipped for the rest of the run** instead of re-downloading on every covering trial × scheme. This is *not* an `unparseable_` (structural) verdict — it is session-only and resets on a new run, so a project that was merely down is retried fresh next time. A successful download clears the counter. If a project you expect is being skipped, it hit its download-attempt cap this session — start a new session (or raise `vcf_max_download_attempts`) once T3 is healthy.
+The traps that produced the machinery in this section — cache poisoning from a partial download,
+archives that are not usable VCFs, a download storm from one sick project, an interactive prompt
+that hangs a batch run, a search-space knob that was never wired, an assertion that tested the
+RNG — are recorded in **`LESSONS.md`**, one entry each, with the symptom that gave it away and
+where the fix lives.
+
+Read it when you are about to simplify something here: most of these look like unnecessary
+complexity until you know what they are defending against.
 
 ------------------------------------------------------------------------
 

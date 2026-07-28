@@ -17,7 +17,8 @@ library(tidyverse)
     pheno_prep.ge_weighting = "none",
     pheno_prep.ge_bandwidth = 1,
     pheno_prep.standardize  = "none",
-    geno_select.marker_thin = "1",
+    model.lambda_select     = "reml",
+    model.lambda_fixed      = 1,
     kernel.maf              = 0.05,
     kernel.max_missing      = 0.20,
     kernel.ridge            = 1e-4,
@@ -46,7 +47,7 @@ seed_configs <- function() {
       geno_select.min_bridge    = 1,
       kernel.method             = "vanRaden_single",
       model.method              = "gblup_rrblup",
-      model.lambda_select       = "fixed",
+      model.lambda_select       = "reml",     # rrBLUP::mixed.solve estimates the ratio
       predict_post.method       = "cond_expectation"
     )),
 
@@ -64,7 +65,11 @@ seed_configs <- function() {
       kernel.maf                = 0.01,
       kernel.max_missing        = 0.50,
       model.method              = "gblup_rrblup",
+      # P2 solved a closed-form ridge at a hard-coded, deliberately tiny lambda
+      # (config.yaml lambda_factor 1e-5), i.e. near-unregularized: the bottom of the
+      # search range is the closest expressible equivalent.
       model.lambda_select       = "fixed",
+      model.lambda_fixed        = 0.01,
       predict_post.method       = "direct_blup"
     )),
 
@@ -101,8 +106,8 @@ seed_configs <- function() {
       kernel.method             = "vanRaden_single",
       kernel.maf                = 0.01,
       kernel.max_missing        = 0.50,
-      model.method              = "gblup_loo_ridge",
-      model.lambda_select       = "loo",
+      model.method              = "gblup_rrblup",
+      model.lambda_select       = "loo",      # P4's log-grid LOO search
       predict_post.method       = "direct_blup",
       predict_post.blend_obs_w  = 0.70
     )),

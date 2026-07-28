@@ -41,17 +41,23 @@ optimizer_step <- function(con, settings, conn = NULL) {
                        message("  trial sampling: ", conditionMessage(e)); NULL })
   if (is.null(trial)) return(list(source = choice$source, sampling_failed = TRUE))
 
-  recs <- purrr::map(settings$schemes, function(scheme) {
-    ev <- evaluate_config_on_trial(choice$cfg, trial, scheme, settings, conn)
-    store_eval(con, choice$cfg, trial$id, scheme, ev$score, ev$n_test,
-               ev$status, ev$reason, ev$detail %||% NA_character_, ev$seconds)
-    ev
-  },
-  .progress = "Evaluate config on trials")
-  scores   <- vapply(recs, function(r) r$score, numeric(1))
-  statuses <- vapply(recs, function(r) r$status, character(1))
+  # The optimizer targets ONE scheme per run (settings$optimize_scheme); CV0 and
+  # CV00 are distinct tasks, optimized in separate runs against the shared store.
+  scheme <- settings$optimize_scheme
+  ev <- evaluate_config_on_trial(choice$cfg, trial, scheme, settings, conn)
+  # Record the trial's target-domain attributes alongside the score so a later run
+  # can train the surrogate on only its own domain (and scheme) slice of this store.
+  # (Simulated trials have no program/location/year -> NA, which is correct: sim
+  # runs use no target_domain, so nothing is filtered out.)
+  store_eval(con, choice$cfg, trial$id, scheme, ev$score, ev$n_test,
+             ev$status, ev$reason, ev$detail %||% NA_character_, ev$seconds,
+             study_name    = trial$study_name %||% NA_character_,
+             program_name  = trial$program    %||% NA_character_,
+             location_name = trial$location   %||% NA_character_,
+             year          = trial$year       %||% NA_integer_)
+  # scores/statuses kept as length-1 vectors so the main-loop logging is unchanged.
   list(source = choice$source, trial = trial$id,
-       scores = scores, statuses = statuses, ei = choice$ei %||% NA_real_)
+       scores = ev$score, statuses = ev$status, ei = choice$ei %||% NA_real_)
 }
 
 # The main loop. Reusable from tests with a small max_iters.

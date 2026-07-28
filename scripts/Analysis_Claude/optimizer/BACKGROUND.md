@@ -236,53 +236,15 @@ re-introducing a known, subtle correctness bug.
 
 ## 3b. The data-management challenge: the T3 layer
 
-The statistics above assume clean inputs. Getting clean inputs out of T3/Wheat over
-BrAPI is itself a substantial part of the work — the responses are inconsistent and
-several plausible-looking calls return wrong-but-non-erroring results. Each issue
-below was hit during bring-up; the fix is in `R/data_access.R` unless noted.
+The statistics above assume clean inputs. Getting clean inputs out of T3/Wheat over BrAPI is
+itself a substantial part of the work: the responses are inconsistent, and several
+plausible-looking calls return wrong-but-non-erroring results — a trait filter that silently
+returns every trial, metadata without coordinates, protocol ids that are not project ids,
+archives that are not usable VCFs, sample names that are synonyms of the accession you asked for.
 
-- **Trait → trial filtering needs the numeric variable id, not the name.** Passing
-  the human trait string (`"Grain yield - kg/ha|CO_321:0001218"`) to the breeder
-  wizard's `traits` filter *silently returns every trial* with a "no matching trait"
-  warning — the wizard's trait dimension only lists derived `COMP:` traits. We
-  filter the studies search by `observationVariableDbIds` instead
-  (`settings$focal_trait_db_id`, grain yield = `84527`), which narrows ~9030 wheat
-  trials to ~7561 grain-yield ones. `focal_trait` (the name) is still used for
-  matching within an observation set.
-- **Trial metadata has no coordinates / no year.** `get_all_trial_meta_data`
-  returns snake_case columns (janitor) but no `latitude`/`longitude`/`year`. We
-  derive `year` from `start_date` and join `latitude`/`longitude`/`elevation` per
-  location via `T3BrapiHelpers::get_lat_long_elev_from_location_vec`, cached with the
-  catalogue — which is what enables the environmental-similarity and G×E paths.
-- **janitor snake_case columns.** All `T3BrapiHelpers` outputs are
-  `janitor::clean_names()`-ed (`study_db_id`, `program_name`, …), while raw
-  `conn$search`/`conn$wizard` responses keep camelCase. The two are not
-  interchangeable; using the wrong case throws "object not found" inside
-  `dplyr::filter`.
-- **Genotyping protocol id ≠ project id.** `conn$vcf_archived()` needs a downloadable
-  genotyping **project** id; `get_geno_protocol_from_germ_vec` returns **protocol**
-  ids. We get project ids from the `genotyping_projects` wizard
-  (`projects_for_accessions()`), batching accessions.
-- **`/observations` shape.** The records live in `resp$combined_data` (the
-  auto-paginated list), not `resp$data` (search metadata); each record is a nested
-  list, and rep/block are not returned (they would require an `observationUnits`
-  query), so BLUE estimation degrades gracefully to per-germplasm means.
-- **VCF sample synonyms.** Some archived VCFs name samples by old/preliminary
-  synonyms, so a focal accession can be genotyped yet not match by name — a small
-  residual tail after the fixes above (e.g. ~22 of 139 on one trial). This is the
-  one item only partially handled; the canary calibration measures its size per
-  trial.
-- **Cache poisoning from partial downloads.** `get_project_dosage` caches dosage
-  with `max_age_days = Inf`. A truncated/raced VCF download once produced a tiny
-  dosage that was then cached *forever*, silently shrinking every GRM built from it
-  (observed: one project's focal overlap collapsed 115 → 6). Fix: `.ensure_project_vcf()`
-  validates the VCF is complete (`.vcf_complete`) and re-downloads a truncated one;
-  the dosage cache key now includes the VCF byte size **and** a hash of the
-  requested samples, so a re-downloaded VCF or a different sample set can never
-  return a stale subset.
-- **`vcf_archived` can prompt.** When a project has multiple archived files,
-  `conn$vcf_archived()` prompts interactively and hangs a non-interactive run; always
-  redirect stdin from `/dev/null`.
+Each was hit during bring-up and each is now handled in `R/data_access.R`. They are catalogued,
+with the symptom that gave each one away, in **`LESSONS.md` §1 (#1–#10)** — worth reading before
+touching the data layer, since most are re-enterable by a reasonable-looking simplification.
 
 ## 3c. Telling genuine infeasibility from a data-hiding bug
 
@@ -332,6 +294,23 @@ broken build can run for hours looking like it is working. Three defences:
 - **Multi-objective.** CV0 and CV00 are scored separately but optimized as one
   mean. If the two scenarios trade off, a Pareto or scalarized multi-objective
   treatment may be preferable.
+- **The algorithm is verified; its advantage is spent on variance at realistic budgets.**
+  Two claims that must not be conflated. (a) *The search works.* On a deterministic version
+  of the synthetic objective (`sim_noise_sd = 0`, `sim_fixed_trial = TRUE`) the surrogate
+  beats equal-budget random search in every seed tested, 0.606 vs 0.553, and beats the best
+  submitted seed 3/3 — `tests/test_sim_loop.R` asserts exactly this. (b) *At a
+  320-evaluation budget under realistic variance it does not yet show that advantage*:
+  0.527 vs 0.528 against random search, and it beat the best seed in only 2 of 3 seeds.
+  The decisive diagnostic is the intermediate regime — observation noise **off**, trials
+  still varying — where the search is *also* no better than random (0.513 vs 0.525). So the
+  binding constraint is **trial heterogeneity**, not measurement noise: the objective is a
+  mean over a heterogeneous trial population estimated one trial at a time, and 320
+  evaluations spread over ~300 distinct configs leave one or two draws each. The incumbent,
+  being the maximum over many noisy means, is then largely chosen by luck (on one seed it
+  measured 0.554 against the best seed's 0.462 and was truly *worse*, 0.476 vs 0.498 — the
+  winner's curse). Making individual evaluations more precise would not help; the note below
+  sets out what would. Until one of those lands, an incumbent's reported score is an
+  optimistic estimate, not evidence that it beats the submissions.
 - **Real run partially validated.** The real-data path has now been exercised
   against the live BrAPI server: the project-membership layer agrees with the
   independent submission-file anchor on all nine canary trials, the dosage
@@ -340,6 +319,67 @@ broken build can run for hours looking like it is working. Three defences:
   *accuracy* has not been measured (the canary scores test feasibility, not tuned
   accuracy); the VCF synonym tail is only partially handled; and some methods'
   feasibility on the broader (non-focal) trial population is unconfirmed.
+
+### Note, NOT IMPLEMENTED: setting replication from the variance the run itself measures
+
+Recorded for later; deliberately not built, because the code is complicated enough already.
+The idea is that the optimizer accumulates, evaluation by evaluation, exactly the information
+needed to choose its own `reeval_prob` and `incumbent_min_reps` — and to decide how far to
+trust an observed mean against the surrogate's prediction.
+
+**The design problem comes first, and it is not replication.** Write an evaluation as
+
+  y_ij = μ + q_i + t_j + e_ij
+
+for configuration *i* on trial *j*: `q_i` is the quality we want to rank, `t_j` is trial
+difficulty, `e_ij` the residual. `optimizer_step()` samples a **fresh** trial for every
+evaluation, so each trial appears essentially once and `t_j` is confounded with `e_ij` —
+not merely large, but *inestimable*. A configuration's observed mean therefore carries the
+mean difficulty of whichever trials it happened to draw, and two configurations evaluated on
+different trials are not directly comparable. That, rather than measurement error, is what the
+three-regime experiment identified as the binding constraint.
+
+**The cheap fix is a shared trial panel.** Evaluate configurations on a common set of trials
+rather than one fresh trial each. The cost is far lower than it looks: a trial's phenotypes,
+accession lists and dosage matrices are cached on first touch, so the expensive part is paid
+once per *trial*, not once per (config, trial) pair — the marginal cost of a second
+configuration on an already-touched trial is a model fit. Comparisons then become paired,
+`t_j` drops out of the contrast, and the two variance components become estimable by ordinary
+means (`lme4::lmer(score ~ (1|config) + (1|trial))` on the stored table, which already carries
+`config_hash` and `trial_id`).
+
+**Then the constants follow from the variances.** With paired trials, resolving a quality
+difference Δ between two configurations at level α with power 1−β needs about
+
+  r ≥ 2 σ²_e (z_{1−α/2} + z_{1−β})² / Δ²
+
+replicates — note σ²_e, not σ²_t + σ²_e, which is the gain pairing buys. `incumbent_min_reps`
+is then whatever *r* corresponds to the Δ actually worth resolving (a difference of 0.02 in
+predictive ability, say). `reeval_prob` is the budget share that equalizes the marginal
+information from replicating a current leader against probing a new configuration; the
+standard treatment is Optimal Computing Budget Allocation (Chen et al. 2000), which allocates
+replicates roughly in proportion to (σ_i/δ_i)² where δ_i is a configuration's distance from the
+best. Racing (F-Race, and `irace`) is the simpler alternative: evaluate a set of candidates on
+a growing common panel and drop those already statistically dominated, which reallocates budget
+without needing the variances up front.
+
+**Blending the observation with the surrogate** is then an empirical-Bayes shrinkage rather
+than a choice between two numbers:
+
+  q̂_i = ( (r_i/σ²_e)·ȳ_i + (1/τ²)·μ̂_i ) / ( r_i/σ²_e + 1/τ² )
+
+where μ̂_i is the surrogate's prediction and τ² its residual variance. A configuration seen once
+leans on the model; one seen many times leans on its own data. This attacks the winner's curse
+directly, since a lucky singleton is pulled back toward what the model expects of a
+configuration with its features. One caveat to respect if it is ever built: the surrogate is
+trained on those same observed means, so using its in-sample prediction would double-count the
+luck — the bagged forest makes **out-of-bag** predictions available, and those are what belong
+in the formula.
+
+**Order of value, on current evidence:** the shared panel first (it removes the dominant
+variance component and costs little), shrinkage second (it fixes incumbent selection, which is
+where the observed failure was), and tuned `reeval_prob` / `incumbent_min_reps` third — those
+matter mainly once the first two make the remaining variance the limiting factor.
 
 ---
 
@@ -362,3 +402,8 @@ broken build can run for hours looking like it is working. Three defences:
    selection with R package rrBLUP.* The Plant Genome 4:250–255.
 8. Akdemir D. *CovCombR* — Wishart-EM combination of partial covariance/relationship
    matrices (used via `T3BrapiHelpers::covariance_combiner`).
+9. Chen C.-H., Lin J., Yücesan E., Chick S.E. (2000). *Simulation budget allocation for
+   further enhancing the efficiency of ordinal optimization.* Discrete Event Dynamic
+   Systems 10:251–270. (OCBA — allocating replicates under noise; §4 note.)
+10. Birattari M., Stützle T., Paquete L., Varrentrapp K. (2002). *A racing algorithm for
+    configuring metaheuristics.* GECCO. (F-Race; `irace` is its descendant — §4 note.)

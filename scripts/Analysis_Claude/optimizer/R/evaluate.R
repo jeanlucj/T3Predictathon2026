@@ -23,6 +23,14 @@ library(tidyverse)
 # ---------------------------------------------------------------------------
 sample_trial <- function(settings, conn = NULL) {
   if (settings$simulate) {
+    # Fixed-trial mode: one constant descriptor, so a config's score stops depending on
+    # which trial it happened to land on. This removes the LARGER of the two variance
+    # sources (see settings$sim_fixed_trial). Mid-range values, so that no method branch
+    # is degenerate: n_projects 3 keeps em_combine meaningful, env_var 0.5 keeps the G+E
+    # and ge_weighting terms live.
+    if (isTRUE(settings$sim_fixed_trial))
+      return(list(id = "simtrial_fixed", n_projects = 3L, env_var = 0.5,
+                  n_acc = 150L, heritability = 0.45))
     id <- paste0("simtrial_", sample.int(1e6, 1))
     list(
       id          = id,
@@ -48,7 +56,7 @@ evaluate_config_on_trial <- function(cfg, trial, scheme, settings, conn = NULL) 
   # the halt; from a lone handler it propagates out as intended.)
   res <- tryCatch({
       if (settings$simulate) {
-        .sim_evaluate(cfg, trial, scheme)
+        .sim_evaluate(cfg, trial, scheme, settings)
       } else {
         preds_obs <- run_pipeline(cfg, trial, scheme, settings, conn)  # R/pipeline.R
         score_predictions(preds_obs$pred, preds_obs$obs)
@@ -122,9 +130,13 @@ score_predictions <- function(pred, obs) {
     q <- q + 0.06 * trial$env_var - 0.02 * (1 - trial$env_var)  # pays off only on atypical envs
   }
 
-  # C. genotyping data: one-hop with bridges is the sweet spot.
+  # C. genotyping data: one-hop with bridges is the sweet spot, and how strict the
+  #    bridge requirement is has an interior optimum -- 1 admits panels hanging off a
+  #    single shared line (a barely-identified cross-panel block), 5 turns away panels
+  #    that carried real information.
   q <- q + switch(cfg$geno_select.method,
-    focal_plus_onehop = 0.06, best_single_project = 0.03, all_projects = 0.04)
+    focal_plus_onehop = 0.06 - 0.006 * (as.integer(cfg$geno_select.min_bridge) - 2)^2,
+    best_single_project = 0.03, all_projects = 0.04)
 
   # D. kernel: EM-combine shines when many projects must be bridged; a single
   #    VanRaden GRM is best when one project covers the trial.
@@ -133,13 +145,19 @@ score_predictions <- function(pred, obs) {
     vanRaden_single = 0.07 - 0.05 * (trial$n_projects - 1) / 3,
     rkhs_gaussian   = 0.04 - 0.01 * abs(log(cfg$kernel.rkhs_theta)))
 
-  # E. model: multi-kernel G+E helps on atypical envs when E is on; LOO ridge is
-  #    a robust all-rounder; RKHS only pays off with the RKHS kernel.
+  # E. model: multi-kernel G+E helps on atypical envs when E is on; RKHS only pays off
+  #    with the RKHS kernel.
   q <- q + switch(cfg$model.method,
     gblup_sommer_GE = 0.04 + ifelse(identical(cfg$model.include_E, "yes"), 0.05 * trial$env_var, 0),
-    gblup_loo_ridge = 0.05,
     gblup_rrblup    = 0.03,
     rkhs            = ifelse(cfg$kernel.method == "rkhs_gaussian", 0.06, 0.01))
+  # ... and how lambda is chosen matters on its own: LOO is the robust all-rounder under
+  # a misspecified model, REML is fine but trusts the model, and a fixed lambda is only
+  # as good as the value (best near 1 here, worse by orders of magnitude either way).
+  q <- q + switch(cfg$model.lambda_select,
+    loo   = 0.03,
+    reml  = 0.01,
+    fixed = 0.02 - 0.012 * abs(log10(cfg$model.lambda_fixed)))
 
   # F. prediction post-processing: blending observed BLUE helps under CV0 (focal
   #    lines may recur in training) but HURTS under CV00 (they are masked out).
@@ -157,9 +175,13 @@ score_predictions <- function(pred, obs) {
   max(min(q, 0.85), -0.1)
 }
 
-.sim_evaluate <- function(cfg, trial, scheme) {
+.sim_evaluate <- function(cfg, trial, scheme, settings = NULL) {
   truth <- .sim_true(cfg, trial, scheme)
-  noise <- stats::rnorm(1, 0, 0.07)               # single-trial sampling noise
+  # Observation noise on top of the deterministic truth. settings$sim_noise_sd = 0 makes an
+  # evaluation exact, which (with sim_fixed_trial) turns the objective into a noiseless
+  # black-box function -- the regime in which the search algorithm itself can be tested.
+  sd    <- if (is.null(settings$sim_noise_sd)) 0.07 else settings$sim_noise_sd
+  noise <- if (sd > 0) stats::rnorm(1, 0, sd) else 0
   list(score = max(min(truth + noise, 0.95), -0.3),
        n_test = trial$n_acc, status = "ok", reason = NA_character_)
 }

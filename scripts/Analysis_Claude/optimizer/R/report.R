@@ -93,7 +93,13 @@ failure_summary <- function(evals) {
 
 # Write a Markdown snapshot to disk.
 write_report <- function(con, settings) {
-  evals <- read_evals(con)
+  all_evals <- read_evals(con)
+  # Report on this optimization's own domain + scheme (what the surrogate actually
+  # learns from); keep the global count for context.
+  td      <- if (isTRUE(settings$simulate)) NULL else settings$target_domain
+  evals   <- filter_evals_to_domain(all_evals, td) |>
+               filter_evals_to_scheme(settings$optimize_scheme)
+  n_other <- nrow(all_evals) - nrow(evals)
   agg   <- aggregate_scores(evals)
   inc   <- incumbent_config(agg, settings$incumbent_min_reps)
 
@@ -114,9 +120,11 @@ write_report <- function(con, settings) {
     "# Optimizer report",
     paste0("_", format(Sys.time(), tz = "UTC", usetz = TRUE), "_"),
     "",
+    paste0("- optimized scheme: ", settings$optimize_scheme),
     paste0("- evaluations: ", nrow(evals),
            " (", sum(is.finite(evals$score)), " scored, ",
-           sum(!is.finite(evals$score)), " failed)"),
+           sum(!is.finite(evals$score)), " failed)",
+           if (n_other > 0) paste0("; ", n_other, " more in the store are out of this scheme/domain") else ""),
     paste0("- distinct configurations: ", nrow(agg)),
     paste0("- best single-trial score: ",
            ifelse(nrow(ok), signif(max(ok$score), 3), "NA")),

@@ -43,6 +43,8 @@ All knobs live in `optimizer_settings()` in `settings.R`. The ones you will set:
 |---|---|
 | `simulate` | `TRUE` = fast offline synthetic world (for confirming the install); `FALSE` = the real T3 pipeline. |
 | `target_domain` | Restrict the random focal trials to `programs` / `years` / `locations` (each `NULL` = no constraint). This tailors the pipeline to a subpopulation; leave all `NULL` for a global all-rounder. |
+| `optimize_scheme` | The **one** CV scheme this run optimizes (`"CV0"` or `"CV00"`). CV0 and CV00 are distinct prediction tasks with potentially different optimal pipelines, so a run targets one; to optimize both, run twice (see below). Must be a member of `schemes`. |
+| `schemes` | The CV schemes the **diagnostics** (`check_canaries`, `sweep_rich_trials`) sanity-check — kept at `c("CV0","CV00")` so bug checks cover both; this does **not** control what the optimizer targets (that's `optimize_scheme`). |
 | `focal_trait`, `focal_trait_db_id` | The trait to optimize prediction of (defaults to grain yield, T3 variable id `84527`). |
 | `max_iters`, `max_hours` | Stop after this many evaluations / this much wall-clock, whichever first. |
 | `db_path`, `cache_dir`, `report_path`, `stop_file`, `log_dir` | Where state, cache, the report, the stop-file, and logs go (see the BioHPC section for splitting these across disks). |
@@ -84,6 +86,16 @@ touch state/STOP
 It is fully resumable: kill it any time and re-launch -- it continues from the
 SQLite store at `state/evals.sqlite`. Phenotypes and genotypes are cached under
 `cache/`, so revisiting a trial is cheap.
+
+**Optimizing both CV schemes.** A run optimizes one scheme (`optimize_scheme`), because
+CV0 and CV00 are distinct tasks that can want different pipelines. To do both, run the
+optimizer **twice** against the same store and cache -- e.g. set `optimize_scheme = "CV0"`
+(or override it in `settings.local.R`) and run to completion, then set `"CV00"` and run
+again. `state/evals.sqlite` is a shared archive: `choose_config()` reads only the rows for
+the current `optimize_scheme` (and `target_domain`), so the two runs don't interfere, while
+the second run reuses all genotypes the first cached under `cache/`. `state/report.md`
+records which scheme it optimized. (`schemes` is separate -- it only lists which schemes the
+diagnostics sanity-check.)
 
 ## Reading the output (`state/report.md`)
 

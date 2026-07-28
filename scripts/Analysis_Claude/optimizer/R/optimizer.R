@@ -20,9 +20,33 @@
 
 library(tidyverse)
 
-# Mean score per distinct configuration (over the trials/schemes it was run on),
-# with the parsed config attached. Failed evaluations (NA score) count toward n
-# but not the mean; a config that only ever failed gets mean_score = NA.
+# Restrict a set of evaluations to those whose trial falls in the current target
+# domain. evals.sqlite is a shared archive of EVERY evaluation ever run (across
+# target domains); a specific optimization only wants evidence from its own domain,
+# on the premise that the best pipeline for a domain is the one to deploy on a new
+# trial FROM that domain. The domain attributes were stored on each row under the
+# catalogue's own column names, so the identical predicate that restricts trial
+# sampling (.apply_target_domain) restricts the eval slice here. A NULL domain (e.g.
+# simulate mode) is no constraint -> all rows. Rows with unknown attributes (NA,
+# e.g. pre-migration or simulated) are out-of-domain whenever a constraint is set.
+filter_evals_to_domain <- function(evals, td) {
+  if (is.null(td) || !nrow(evals)) return(evals)
+  .apply_target_domain(evals, td)
+}
+
+# Restrict evaluations to a single CV scheme. evals.sqlite is a shared archive that
+# may hold rows for BOTH schemes (e.g. from an earlier run that optimized the other
+# one); a given optimization targets exactly one, since CV0 and CV00 are distinct
+# tasks that can have different optimal pipelines. Composes with filter_evals_to_domain.
+filter_evals_to_scheme <- function(evals, scheme) {
+  if (is.null(scheme) || !nrow(evals)) return(evals)
+  dplyr::filter(evals, scheme == !!scheme)
+}
+
+# Mean score per distinct configuration (over the trials it was run on, within the
+# already domain/scheme-filtered slice), with the parsed config attached. Failed
+# evaluations (NA score) count toward n but not the mean; a config that only ever
+# failed gets mean_score = NA.
 aggregate_scores <- function(evals) {
   if (!nrow(evals)) {
     return(tibble::tibble(config_hash = character(), mean_score = numeric(),
@@ -101,7 +125,19 @@ incumbent_config <- function(agg, min_reps = 2) {
 
 # Decide the next configuration to evaluate. Returns list(cfg, source[, ei]).
 choose_config <- function(con, settings) {
-  evals       <- read_evals(con)
+  # The store is global; this optimization only learns from its own target domain.
+  # Filtering here scopes EVERYTHING downstream -- seeds, the done/avoid set,
+  # aggregation, the surrogate, and the incumbent -- to the in-domain slice, so a
+  # config evaluated only in some OTHER domain counts as untried here and gets run
+  # to build in-domain evidence.
+  # In simulate mode there is no real target domain (synthetic trials carry no
+  # program/location/year), so no domain filtering applies. The scheme filter always
+  # applies: this run optimizes exactly one scheme, and the store may hold rows for
+  # the other from a previous run.
+  td          <- if (isTRUE(settings$simulate)) NULL else settings$target_domain
+  evals       <- read_evals(con) |>
+                   filter_evals_to_domain(td) |>
+                   filter_evals_to_scheme(settings$optimize_scheme)
   done_hashes <- unique(evals$config_hash)
 
   # Phase 1: seed the five submissions.
@@ -120,10 +156,15 @@ choose_config <- function(con, settings) {
     return(list(cfg = fresh_random(done_hashes), source = "random_init"))
   }
 
-  # Occasional re-evaluation of the incumbent on a new trial to denoise it.
-  inc <- incumbent_config(agg, settings$incumbent_min_reps)
-  if (!is.null(inc) && stats::runif(1) < settings$reeval_prob) {
-    return(list(cfg = inc$config, source = "reeval_incumbent"))
+  # Occasional re-evaluation of a top config on a new trial to denoise the leaders.
+  # We re-run a random ELITE, not only the incumbent: each step scores ONE scheme
+  # (one rep), so a config needs several selections to reach incumbent_min_reps. If
+  # only the incumbent were ever re-run, no challenger could accumulate the reps to
+  # overtake it and the incumbent would freeze on whichever config was denoised first.
+  # Sampling across the elite pack lets challengers reach the reps bar and win.
+  re_elites <- get_elites(agg, settings$n_elites)
+  if (length(re_elites) && stats::runif(1) < settings$reeval_prob) {
+    return(list(cfg = re_elites[[sample(length(re_elites), 1)]], source = "reeval_elite"))
   }
 
   # Phase 3: surrogate-guided. Fit on per-config mean scores.

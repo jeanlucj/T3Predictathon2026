@@ -316,7 +316,7 @@ if (!file.exists(lf)) {
   s_ov <- suppressWarnings(optimizer_settings())
   check(s_ov$dosage_budget_bytes == 7e9 && isFALSE(s_ov$run_startup_canary),
         "optimizer_settings() applies settings.local.R overrides")
-  file.remove(lf)
+  invisible(file.remove(lf))
 } else message("  (a real settings.local.R exists -- skipping the end-to-end override check)")
 
 # ===========================================================================
@@ -708,6 +708,116 @@ check(length(.prune_redundant(list(big = big, indep = indep), gset)) == 2,
       "disjoint accessions -> both projects kept")
 
 # ===========================================================================
+cat(".onehop_filter (subtask C: focal_plus_onehop's hop)\n")
+# Three panels: `focal` genotypes the focal trial's lines; `near` shares 3 lines with it
+# (a bridge); `far` shares none. Marker sets are irrelevant here -- grouping already
+# happened -- so give each its own.
+fmat <- function(rows) matrix(1, length(rows), 5, dimnames = list(rows, paste0("m", 1:5)))
+focal <- fmat(c("f1", "f2", "f3", "s1", "s2", "s3"))
+near  <- fmat(c("s1", "s2", "s3", "n1", "n2"))          # 3 accessions shared with focal
+far   <- fmat(c("x1", "x2", "x3"))                       # none shared
+panels <- list(focal = focal, near = near, far = far)
+test_acc <- c("f1", "f2", "f3")
+
+# Oracle: the focal panel is always kept; `far` bridges nothing so it is never admitted;
+# `near` is admitted exactly while min_bridge <= 3 (it shares 3).
+for (mb in 1:5) {
+  keptn <- names(.onehop_filter(panels, test_acc, mb))
+  check("focal" %in% keptn, sprintf("one-hop: the focal panel is kept (min_bridge=%d)", mb))
+  check(!("far" %in% keptn), sprintf("one-hop: an unbridged panel is dropped (min_bridge=%d)", mb))
+  check(("near" %in% keptn) == (mb <= 3),
+        sprintf("one-hop: a 3-bridge panel is admitted iff min_bridge<=3 (min_bridge=%d)", mb))
+}
+# Oracle: nested -- raising min_bridge can only shrink the admitted set.
+sets <- lapply(1:5, function(mb) names(.onehop_filter(panels, test_acc, mb)))
+check(all(vapply(2:5, function(i) all(sets[[i]] %in% sets[[i - 1]]), logical(1))),
+      "one-hop: the admitted set is nested in min_bridge")
+# Oracle: this is what distinguishes focal_plus_onehop from all_projects -- at min_bridge=1
+# it still drops `far`, which all_projects would keep.
+check(length(sets[[1]]) < length(panels),
+      "one-hop at min_bridge=1 is still narrower than all_projects")
+# Oracle: no panel genotypes the focal lines -> nothing to hop from -> pass through
+# unchanged (run_pipeline's overlap check judges the trial, not this filter).
+check(length(.onehop_filter(panels, c("zz1", "zz2"), 2)) == length(panels),
+      "one-hop: no focal coverage -> list returned unchanged")
+# Oracle: a single panel is returned as-is regardless of threshold.
+check(length(.onehop_filter(panels["focal"], test_acc, 5)) == 1,
+      "one-hop: a lone panel is never filtered away")
+
+# ===========================================================================
+cat(".loo_lambda / .ridge_blup (subtask E: how lambda is chosen)\n")
+set.seed(11)
+nL <- 25
+ZL <- matrix(rnorm(nL * 40), nL, 40)
+KL <- tcrossprod(ZL) / 40
+diag(KL) <- diag(KL) + 1e-6
+yL  <- as.numeric(KL %*% rnorm(nL)) + rnorm(nL, sd = 0.5)
+ycL <- yL - mean(yL)
+
+# Oracle: the PRESS identity the implementation relies on. Brute force -- actually refit
+# on n-1 points and predict the held-out one -- must agree with r_i/(1-h_ii) to numerical
+# precision. This is the assumption that makes the grid search cheap; if it is wrong, the
+# selected lambda is wrong in a way nothing downstream would reveal.
+loo_brute <- function(K, y, lam) {
+  vapply(seq_len(nrow(K)), function(i) {
+    Kii <- K[-i, -i, drop = FALSE]
+    y[i] - as.numeric(K[i, -i, drop = FALSE] %*% solve(Kii + lam * diag(nrow(Kii)), y[-i]))
+  }, numeric(1))
+}
+loo_press <- function(K, y, lam) {
+  H <- K %*% solve(K + lam * diag(nrow(K)))
+  (y - as.numeric(H %*% y)) / (1 - diag(H))
+}
+check(approx(loo_brute(KL, ycL, 0.3), loo_press(KL, ycL, 0.3), tol = 1e-8),
+      "PRESS identity: shortcut LOO residuals equal an explicit leave-one-out refit")
+
+# Oracle: .loo_lambda returns the grid point minimizing brute-force LOO MSE.
+gridL <- 10^seq(-4, 4, length.out = 30)
+mseL  <- vapply(gridL, function(l) mean(loo_brute(KL, ycL, l)^2), numeric(1))
+check(approx(.loo_lambda(KL, ycL), gridL[which.min(mseL)], tol = 1e-9),
+      ".loo_lambda picks the grid lambda with the lowest leave-one-out MSE")
+check(.loo_lambda(KL, ycL) %in% gridL, ".loo_lambda returns a point of its own grid")
+
+# Oracle: .ridge_blup solves u = K(K + lambda I)^-1 (y - mean y) -- computed here the
+# long way -- and reports mean(y) as the intercept.
+idsL <- paste0("g", seq_len(nL))
+rownames(KL) <- colnames(KL) <- idsL
+fitL <- .ridge_blup(yL, KL, 0.7, idsL)
+uL   <- as.numeric(KL %*% solve(KL + 0.7 * diag(nL), ycL))
+check(approx(as.numeric(fitL$u), uL) && identical(names(fitL$u), idsL),
+      ".ridge_blup = K(K+lambda I)^-1 (y - mean y), named by training id")
+check(approx(fitL$mu, mean(yL)), ".ridge_blup intercept is the training mean")
+# Oracle: shrinkage is monotone in lambda -- more ridge, smaller effects.
+norms <- vapply(c(0.01, 0.1, 1, 10, 100),
+                function(l) sqrt(sum(.ridge_blup(yL, KL, l, idsL)$u^2)), numeric(1))
+check(all(diff(norms) < 0), ".ridge_blup shrinks monotonically as lambda grows")
+
+# Oracle: train_model dispatches on lambda_select. "fixed" must use the given lambda
+# (identical to calling .ridge_blup with it) and REML must NOT (it estimates its own),
+# so the two branches are genuinely different fits rather than one code path.
+mcfg <- function(rule, lam = 1) list(model.method = "gblup_rrblup",
+                                     model.lambda_select = rule, model.lambda_fixed = lam,
+                                     model.include_E = "no")
+yn    <- stats::setNames(yL, idsL)
+f_fix <- train_model(mcfg("fixed", 0.7), yn, KL, idsL, character(0), NULL, NULL)
+check(approx(as.numeric(f_fix$u), uL), "train_model[fixed] fits at exactly lambda_fixed")
+f_rem <- train_model(mcfg("reml"), yn, KL, idsL, character(0), NULL, NULL)
+f_loo <- train_model(mcfg("loo"),  yn, KL, idsL, character(0), NULL, NULL)
+check(!approx(f_rem$lambda, f_fix$lambda, tol = 1e-3) ||
+      !approx(as.numeric(f_rem$u), uL, tol = 1e-6),
+      "train_model[reml] estimates its own lambda rather than reusing lambda_fixed")
+check(approx(f_loo$lambda, .loo_lambda(KL, ycL)), "train_model[loo] uses the LOO-selected lambda")
+check(all(vapply(list(f_fix, f_rem, f_loo),
+                 function(f) identical(f$kind, "gblup") && length(f$u) == nL &&
+                             is.finite(f$mu) && !is.matrix(f$mu), logical(1))),
+      "every lambda rule returns the same shape (kind/u/mu) for predict_test")
+# Oracle: an absent or NA rule falls back to REML rather than erroring (crossover can
+# hand train_model a config whose lambda_select came from a block that lacked it).
+f_na <- train_model(list(model.method = "gblup_rrblup", model.lambda_select = NA,
+                         model.include_E = "no"), yn, KL, idsL, character(0), NULL, NULL)
+check(approx(f_na$lambda, f_rem$lambda, tol = 1e-8), "an NA lambda_select falls back to REML")
+
+# ===========================================================================
 cat("build_targets + .blue_per_trial\n")
 mkobs <- function(study, germ, value) tibble::tibble(
   study_id = study, germplasm_name = germ, value = value, rep = "r1", block = "b1")
@@ -791,6 +901,103 @@ check(nrow(m0) == 4, "CV0 keeps all rows")
 check(nrow(m00) == 2 && !any(m00$germplasm_name %in% focal), "CV00 drops focal-accession rows")
 check(setequal(setdiff(m0$germplasm_name, m00$germplasm_name), focal),
       "CV0 minus CV00 = exactly the focal accessions")
+
+# ===========================================================================
+cat("evals store: domain attributes persisted + surrogate trains per-domain\n")
+# Oracle: the store keeps each trial's target-domain attributes so a run can learn
+# only from its own domain's slice of this shared archive.
+dbp <- tempfile(fileext = ".sqlite"); con <- open_store(dbp)
+flds <- DBI::dbListFields(con, "evals")
+check(all(c("study_name", "program_name", "location_name", "year") %in% flds),
+      "open_store: evals table has the four domain columns")
+cfgA <- sample_config()
+store_eval(con, cfgA, "101", "CV0", 0.40, 50L, "ok",
+           study_name = "T_Cornell_24", program_name = "Cornell", location_name = "Ithaca", year = 2024)
+store_eval(con, cfgA, "102", "CV0", 0.20, 50L, "ok",
+           study_name = "T_OSU_24", program_name = "OSU", location_name = "Columbus", year = 2024)
+ev <- read_evals(con)
+check(nrow(ev) == 2 && setequal(ev$program_name, c("Cornell", "OSU")),
+      "store_eval persists program_name for each row")
+# Oracle: filter_evals_to_domain keeps only the matching program; NULL domain keeps all.
+cornell <- filter_evals_to_domain(ev, list(programs = "Cornell"))
+check(nrow(cornell) == 1 && cornell$program_name == "Cornell",
+      "filter_evals_to_domain restricts to the target program")
+check(nrow(filter_evals_to_domain(ev, NULL)) == 2,
+      "filter_evals_to_domain: NULL domain is no constraint")
+check(nrow(filter_evals_to_domain(ev, list(programs = "Cornell", years = 2023))) == 0,
+      "filter_evals_to_domain: a year mismatch excludes the row")
+# Oracle: an unknown/NA-attribute row (e.g. simulated or pre-migration) is out of
+# domain once a constraint is set, but retained when the domain is NULL.
+store_eval(con, sample_config(), "sim_9", "CV0", 0.5, 10L, "ok")   # all attrs NA
+ev2 <- read_evals(con)
+check(nrow(filter_evals_to_domain(ev2, list(programs = "Cornell"))) == 1,
+      "filter_evals_to_domain: NA-attribute rows are out-of-domain under a constraint")
+check(nrow(filter_evals_to_domain(ev2, NULL)) == 3,
+      "filter_evals_to_domain: NA-attribute rows kept when domain is NULL")
+close_store(con); unlink(dbp)
+# Oracle: a config seen only OUT of the current domain still counts as untried, so
+# choose_config re-offers a seed rather than treating it as done.
+dbp2 <- tempfile(fileext = ".sqlite"); con2 <- open_store(dbp2)
+seed1 <- seed_configs()[[1]]
+store_eval(con2, seed1, "900", "CV0", 0.3, 40L, "ok",
+           study_name = "elsewhere", program_name = "OSU", location_name = "X", year = 2024)
+# simulate = FALSE so the (real-data) target-domain filter actually engages.
+st <- modifyList(optimizer_settings(),
+                 list(simulate = FALSE, target_domain = list(programs = "Cornell")))
+pick <- choose_config(con2, st)
+check(identical(config_hash(pick$cfg), config_hash(seed1)) && grepl("^seed:", pick$source),
+      "choose_config: an out-of-domain seed eval does not count as done in this domain")
+# Control: with NO domain restriction, that same seed eval DOES count as done, so
+# choose_config moves past seed1 to a later unevaluated seed.
+st0  <- modifyList(optimizer_settings(), list(simulate = FALSE, target_domain = NULL))
+pick0 <- choose_config(con2, st0)
+check(!identical(config_hash(pick0$cfg), config_hash(seed1)),
+      "choose_config: with no domain, the recorded seed is not re-offered")
+close_store(con2); unlink(dbp2)
+
+# ===========================================================================
+cat("evals store: optimizer targets ONE scheme (per-scheme slice of the archive)\n")
+# Oracle: filter_evals_to_scheme keeps only the target scheme; NULL keeps all; and
+# it composes with filter_evals_to_domain.
+dbp3 <- tempfile(fileext = ".sqlite"); con3 <- open_store(dbp3)
+cfgS <- sample_config()
+store_eval(con3, cfgS, "201", "CV0",  0.4, 50L, "ok", program_name = "Cornell")
+store_eval(con3, cfgS, "202", "CV00", 0.3, 50L, "ok", program_name = "Cornell")
+store_eval(con3, cfgS, "203", "CV0",  0.2, 50L, "ok", program_name = "OSU")
+evS <- read_evals(con3)
+check(nrow(filter_evals_to_scheme(evS, "CV0")) == 2 &&
+      all(filter_evals_to_scheme(evS, "CV0")$scheme == "CV0"),
+      "filter_evals_to_scheme keeps only the target scheme")
+check(nrow(filter_evals_to_scheme(evS, NULL)) == 3,
+      "filter_evals_to_scheme: NULL scheme is no constraint")
+check(nrow(filter_evals_to_domain(evS, list(programs = "Cornell")) |>
+             filter_evals_to_scheme("CV0")) == 1,
+      "domain + scheme filters compose (Cornell & CV0 -> 1 row)")
+close_store(con3); unlink(dbp3)
+# Oracle: a config seen only under the OTHER scheme counts as untried here, so
+# choose_config re-offers a seed; once it exists under this scheme it is done.
+dbp4 <- tempfile(fileext = ".sqlite"); con4 <- open_store(dbp4)
+seedA <- seed_configs()[[1]]
+store_eval(con4, seedA, "900", "CV0", 0.3, 40L, "ok")   # CV0 only; no domain attrs
+stCV00 <- modifyList(optimizer_settings(),
+                     list(simulate = FALSE, target_domain = NULL, optimize_scheme = "CV00"))
+pickB <- choose_config(con4, stCV00)
+check(identical(config_hash(pickB$cfg), config_hash(seedA)) && grepl("^seed:", pickB$source),
+      "choose_config: a seed evaluated only under CV0 is untried when optimizing CV00")
+store_eval(con4, seedA, "901", "CV00", 0.3, 40L, "ok")  # now it exists under CV00
+pickC <- choose_config(con4, stCV00)
+check(!identical(config_hash(pickC$cfg), config_hash(seedA)),
+      "choose_config: once the seed has a CV00 eval it is not re-offered")
+close_store(con4); unlink(dbp4)
+# Oracle: optimize_scheme must be a single scheme within `schemes`; a bad override
+# is rejected by optimizer_settings(). Guard so a real settings.local.R is untouched.
+lfs <- here::here("settings.local.R")
+if (!file.exists(lfs)) {
+  writeLines('settings_override <- list(optimize_scheme = "CVxx")', lfs)
+  check(inherits(try(optimizer_settings(), silent = TRUE), "try-error"),
+        "optimizer_settings(): an optimize_scheme outside `schemes` errors")
+  invisible(file.remove(lfs))
+} else message("  (a real settings.local.R exists -- skipping the optimize_scheme validation check)")
 
 # ===========================================================================
 cat(sprintf("\nTier 1 subtask tests: %d passed, %d failed\n", ok, fail))

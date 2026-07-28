@@ -58,11 +58,19 @@ SUBTASKS <- list(
   ),
 
   # C. Select which genotyping data (projects / VCFs) to use.
+  #
+  # Marker density is NOT a search parameter: it is set by settings$dosage_budget_bytes at
+  # parse time, and a per-config request could only subset that cache (LESSONS.md #16).
   geno_select = list(
     methods = c("focal_plus_onehop", "best_single_project", "all_projects"),
     params = list(
-      min_bridge  = list(type = "int", range = c(1, 5),  methods = "focal_plus_onehop"),
-      marker_thin = list(type = "cat", values = c("1", "2", "5", "10"), methods = NULL)
+      # focal_plus_onehop admits a protocol group only if it shares at least
+      # `min_bridge` accessions with the group(s) genotyping the FOCAL trial. Those
+      # shared lines are the rows em_combine stitches panels through, so this is the
+      # strictness of the connectivity requirement: 1 admits a panel hanging off a
+      # single shared line (a barely-identified cross-panel block), 5 demands a real
+      # anchor. It is what makes this method narrower than all_projects.
+      min_bridge  = list(type = "int", range = c(1, 5),  methods = "focal_plus_onehop")
     )
   ),
 
@@ -79,13 +87,20 @@ SUBTASKS <- list(
   ),
 
   # E. Train the prediction model.
+  #
+  # `lambda_select` is how the ridge (variance ratio lambda = sigma2_e / sigma2_u) is CHOSEN,
+  # which is a separate question from which model is fit -- hence a knob, not a method name.
+  # It applies to every method: all of them reach the same GBLUP backbone when the G+E path
+  # is off or unavailable.
   model = list(
-    methods = c("gblup_rrblup", "gblup_sommer_GE", "gblup_loo_ridge", "rkhs"),
+    methods = c("gblup_rrblup", "gblup_sommer_GE", "rkhs"),
     params = list(
       include_E     = list(type = "cat", values = c("yes", "no"),
                            methods = c("gblup_sommer_GE", "rkhs")),
-      lambda_select = list(type = "cat", values = c("fixed", "loo"),
-                           methods = c("gblup_rrblup", "gblup_loo_ridge"))
+      lambda_select = list(type = "cat", values = c("reml", "fixed", "loo"), methods = NULL),
+      # Used only when lambda_select = "fixed" (sampled but ignored otherwise, as
+      # ge_bandwidth is under ge_weighting = "none").
+      lambda_fixed  = list(type = "real", range = c(1e-2, 1e2), scale = "log", methods = NULL)
     )
   ),
 

@@ -145,19 +145,15 @@ select_training_trials <- function(cfg, trial, conn, settings) {
 # itself is excluded from the result) or an accession vector directly
 # (input = "accessions"; e.g. the pooled germplasm of several trials).
 #
-# Derived from the acc_<sid> cache rather than from
-# T3BrapiHelpers::find_other_studies_evaluating_same_germplasm(), which spends one
-# wizard query PER GERMPLASM (223 queries for trial 10676) to answer for exactly one
-# trial. Here one wizard query returns the candidate trials, and the overlap counts
-# are set intersections of accession lists we already cache -- and those lists are
-# shared across every trial and with .trial_similarity, so the cost decays to nothing
-# as the cache warms.
+# Derived from the acc_<sid> cache, NOT from
+# T3BrapiHelpers::find_other_studies_evaluating_same_germplasm() -- that helper costs one
+# wizard query per germplasm (LESSONS.md #17). One wizard query gets the candidate trials;
+# overlaps are set intersections of cached accession lists, shared with .trial_similarity,
+# so the cost decays as the cache warms.
 #
-# Two differences from the helper, both deliberate: overlap is counted in germplasm
-# NAME space (what acc_<sid> holds, and what every downstream join uses) rather than
-# germplasm_db_id space, and candidates are restricted to the focal-trait catalogue --
-# a trial that never measured the trait is not a training trial, and used to pad
-# run_pipeline's min_train_trials check while contributing no observations.
+# Two invariants: overlap is counted in germplasm NAME space (what acc_<sid> holds and every
+# downstream join uses), and candidates are restricted to the focal-trait catalogue -- a trial
+# that never measured the trait is not a training trial.
 .overlap_memo <- new.env(parent = emptyenv())
 
 # Emit an informational note at most once per `key` per session (so a recurring geno-source
@@ -350,15 +346,16 @@ build_targets <- function(cfg, train_obs, trial, conn, settings) {
 # handful of needed accessions is what made both unstable.
 choose_geno_sources <- function(cfg, train_acc, test_acc, conn, settings) {
   need  <- union(train_acc, test_acc)
-  thin  <- as.integer(cfg$geno_select.marker_thin)
   projs <- projects_for_accessions(need, conn, settings)
   if (!length(projs)) return(structure(list(), n_projects = 0L))
 
-  # Load the WHOLE population of each covering project (keep_samples = NULL). This
-  # is the heaviest loop in the pipeline -- one VCF download + parse per project on
-  # a cold cache -- so it reports progress per project.
+  # Load the WHOLE population of each covering project (keep_samples = NULL), at whatever
+  # marker density settings$dosage_budget_bytes produced when the project was parsed --
+  # density is a budget setting, not a searchable parameter (see config_space.R). This is
+  # the heaviest loop in the pipeline -- one VCF download + parse per project on a cold
+  # cache -- so it reports progress per project.
   dl <- purrr::map(projs, function(pid) {
-    d <- tryCatch(get_project_dosage(pid, NULL, conn, settings, thin), error = function(e) NULL)
+    d <- tryCatch(get_project_dosage(pid, NULL, conn, settings), error = function(e) NULL)
     if (!is.null(d) && nrow(d) > 0 && length(intersect(rownames(d), need))) d else NULL
   }, .progress = "Load project dosages")
   names(dl) <- as.character(projs)
@@ -382,19 +379,49 @@ choose_geno_sources <- function(cfg, train_acc, test_acc, conn, settings) {
     cover <- vapply(dl, function(d) length(intersect(rownames(d), need)), integer(1))
     dl <- dl[which.max(cover)]
   }
-  # focal_plus_onehop and all_projects both keep every covering project; the one-hop
-  # bridging is handled in the EM combine (it uses shared accessions).
 
   groups <- .group_by_panel(dl, settings)
   out <- purrr::map(groups, function(pids) {
     .merge_markers(.prune_redundant(dl[pids], settings))
   })
   names(out) <- vapply(groups, function(pids) paste(pids, collapse = "+"), character(1))
+
+  # focal_plus_onehop: keep only the panels reachable from the focal trial's own panel.
+  # all_projects keeps everything; this is what makes the two methods different.
+  if (identical(cfg$geno_select.method, "focal_plus_onehop"))
+    out <- .onehop_filter(out, test_acc, cfg$geno_select.min_bridge)
   # Carry how many covering projects we started from, so run_pipeline can tell a
   # genuinely ungenotyped trial (0 projects) from a "found projects but extracted
   # no dosage" bug signature (projects > 0, dosage 0).
   attr(out, "n_projects") <- length(projs)
   out
+}
+
+# The "one hop" of `focal_plus_onehop`, applied to the MERGED protocol groups (bridging is
+# between panels, so it cannot be judged on raw project ids -- two projects in one group
+# share a panel and need no bridge).
+#
+# Seed = the group(s) that genotype the focal trial's accessions. One hop out from there:
+# admit a further group only if it shares at least `min_bridge` accessions with the seed.
+# Those shared lines are the rows covariance_combiner stitches through, so a group with
+# none of them contributes a block the combine cannot relate to the focal accessions --
+# markers and compute, no information about the test set. Deliberately ONE hop, not the
+# transitive closure: a panel reachable only via a third panel is two hops away, and
+# admitting it would make this method all_projects by another name.
+#
+# If no group covers the focal accessions there is nothing to hop from; return the list
+# unchanged and let run_pipeline's usual overlap check judge the trial.
+.onehop_filter <- function(dl, test_acc, min_bridge) {
+  if (length(dl) <= 1) return(dl)
+  mb <- suppressWarnings(as.integer(min_bridge))
+  if (!isTRUE(is.finite(mb))) mb <- 1L
+
+  covers_focal <- vapply(dl, function(d) length(intersect(rownames(d), test_acc)) > 0, logical(1))
+  if (!any(covers_focal)) return(dl)
+
+  seed_acc <- unique(unlist(lapply(dl[covers_focal], rownames), use.names = FALSE))
+  bridged  <- vapply(dl, function(d) length(intersect(rownames(d), seed_acc)) >= mb, logical(1))
+  dl[covers_focal | bridged]
 }
 
 # Group projects into protocols by MARKER OVERLAP, not by protocol id: a "V2"/"v2.1"
@@ -467,8 +494,9 @@ build_kernel <- function(cfg, dosage_list, need) {
     # Bridge accessions -- genotyped in >1 protocol group -- are the shared rows through
     # which covariance_combiner stitches the separately-built per-panel GRMs. Keep them in
     # each GRM alongside the needed accessions (they may not be needed themselves), then
-    # drop them from the combined result. `bridge` is empty when panels are disjoint, in
-    # which case this reduces to the old need-only behaviour.
+    # drop them from the combined result. Dropping bridges BEFORE the combine collapses
+    # em_combine to block-diagonal with no error (LESSONS.md #13). `bridge` is empty when
+    # the panels are disjoint.
     bridge <- .bridge_accessions(dosage_list)
     keep   <- union(need, bridge)
     # Build a GRM per panel, but DROP a panel that cannot yield one -- too few markers after
@@ -549,16 +577,11 @@ build_kernel <- function(cfg, dosage_list, need) {
 # is exactly the [need, need] submatrix of the whole population's GRM -- at
 # O(n_need^2 * m) instead of O(n_pop^2 * m).
 #
-# NOT rrBLUP::A.mat: A.mat documents {-1,0,1} coding and our dosages are {0,1,2}. Its
-# internal freq = (colMeans(X)+1)/2 then equals p + 0.5, so its MAF = pmin(freq, 1-freq)
-# goes NEGATIVE for every marker with alt frequency > ~0.5 and its min.MAF filter drops
-# them silently -- about half the panel, leaving a GRM whose off-diagonals correlate
-# only ~0.7 with the correct one. (Centering happened to survive; the scaling did not.)
+# Do NOT replace this with rrBLUP::A.mat: it assumes {-1,0,1} coding and silently discards
+# every alt-major marker when fed {0,1,2} dosages (LESSONS.md #11).
 #
-# The {0,1,2} assumption has not gone away -- it has MOVED here, into `p`. So guard it:
-# a negative entry means someone changed the dosage encoding (e.g. "fixed" .vcf_to_dosage
-# to rrBLUP's {-1,0,1}), which would make p meaningless and reproduce the same class of
-# silent bug. Fail loudly instead.
+# The {0,1,2} assumption lives here now, in `p`, so guard it: a negative entry means the
+# dosage encoding changed underneath us, which would make p meaningless. Fail loudly.
 .vanraden <- function(X, need) {
   rows <- intersect(rownames(X), need)
   if (length(rows) < 2) return(NULL)
@@ -618,15 +641,74 @@ train_model <- function(cfg, y_train, K, train_in, test_in, trial, train_obs) {
                     error = function(e) NULL)
     if (!is.null(out)) return(out)
   }
-  # Genomic-only GBLUP via rrBLUP (the reliable backbone for every GBLUP variant;
-  # mixed.solve estimates the variance ratio by REML, i.e. the optimal ridge).
-  Ktt <- K[train_in, train_in, drop = FALSE]
-  sol <- rrBLUP::mixed.solve(y = as.numeric(y_train[train_in]), K = Ktt)
-  # mixed.solve returns u as an n x 1 matrix and beta as a 1 x 1 matrix; coerce to plain
-  # numerics so downstream `mu + u_test` is scalar + vector, not array + vector (which R
-  # rejects as "non-conformable arrays").
-  list(kind = "gblup", u = stats::setNames(as.numeric(sol$u), train_in),
-       mu = as.numeric(sol$beta))
+  # Genomic-only GBLUP backbone, reached by gblup_rrblup always and by the other two
+  # whenever the G+E path is off or unavailable. `lambda_select` decides how the ridge
+  # -- the variance ratio lambda = sigma2_e / sigma2_u -- is chosen:
+  #
+  #   reml   rrBLUP::mixed.solve estimates it by REML: the likelihood-optimal value IF
+  #          the model is correct.
+  #   fixed  use cfg$model.lambda_fixed as given (a submission that hard-codes a ridge).
+  #   loo    minimize leave-one-out predictive MSE over a log grid (Prediction4).
+  #
+  # REML and LOO are different estimators, not two routes to one number: REML maximizes a
+  # likelihood premised on the model being right, LOO minimizes out-of-sample error and so
+  # shrinks harder when it is not. Here it is not -- the GRM is block-diagonal or
+  # EM-stitched across panels and the phenotypes are pooled over trials with heterogeneous
+  # error variances -- which is exactly why the choice is worth searching over.
+  Ktt  <- K[train_in, train_in, drop = FALSE]
+  y    <- as.numeric(y_train[train_in])
+  rule <- cfg$model.lambda_select
+  if (length(rule) != 1L || is.na(rule)) rule <- "reml"
+
+  if (identical(rule, "reml")) {
+    sol <- rrBLUP::mixed.solve(y = y, K = Ktt)
+    # mixed.solve returns u as an n x 1 matrix and beta as a 1 x 1 matrix; coerce to plain
+    # numerics so downstream `mu + u_test` is scalar + vector, not array + vector (which R
+    # rejects as "non-conformable arrays").
+    return(list(kind = "gblup", u = stats::setNames(as.numeric(sol$u), train_in),
+                mu = as.numeric(sol$beta),
+                lambda = as.numeric(sol$Ve) / as.numeric(sol$Vu)))
+  }
+  lambda <- if (identical(rule, "loo")) .loo_lambda(Ktt, y - mean(y))
+            else as.numeric(cfg$model.lambda_fixed)
+  if (!is.finite(lambda) || lambda <= 0) lambda <- 1
+  .ridge_blup(y, Ktt, lambda, train_in)
+}
+
+# GBLUP at a GIVEN lambda: u = K (K + lambda I)^-1 (y - mean(y)), the kernel-ridge
+# solution. Returns the same shape as the REML branch so predict_test cannot tell them
+# apart.
+.ridge_blup <- function(y, Ktt, lambda, ids) {
+  mu <- mean(y)
+  yc <- y - mu
+  A  <- Ktt + lambda * diag(nrow(Ktt))
+  u  <- tryCatch(as.numeric(Ktt %*% solve(A, yc)),
+                 error = function(e) as.numeric(Ktt %*% MASS::ginv(A) %*% yc))
+  list(kind = "gblup", u = stats::setNames(u, ids), mu = mu, lambda = lambda)
+}
+
+# Choose lambda by leave-one-out predictive MSE over a log-spaced grid -- Prediction4's
+# method (`Prediction4/predict.py::_optimal_lambda_loo`), same grid.
+#
+# No refitting is needed: the fit is the linear smoother yhat = H y with
+# H = K (K + lambda I)^-1, and for a linear smoother the leave-one-out residual is
+# r_i / (1 - h_ii) exactly (the PRESS identity). So one solve per grid point gives the
+# full LOO error. `yc` must already be centred -- the centring is part of the smoother
+# and re-centring inside the loop would break the identity.
+.loo_lambda <- function(Ktt, yc, grid = 10^seq(-4, 4, length.out = 30)) {
+  n <- nrow(Ktt)
+  best_lambda <- 1
+  best_mse    <- Inf
+  for (lam in grid) {
+    H <- tryCatch(Ktt %*% solve(Ktt + lam * diag(n)), error = function(e) NULL)
+    if (is.null(H)) next
+    resid <- yc - as.numeric(H %*% yc)
+    denom <- 1 - diag(H)
+    denom[abs(denom) < 1e-10] <- 1e-10      # a point the smoother interpolates
+    mse <- mean((resid / denom)^2)
+    if (is.finite(mse) && mse < best_mse) { best_mse <- mse; best_lambda <- lam }
+  }
+  best_lambda
 }
 
 .fit_sommer_GE <- function(y_train, K, train_in, train_obs) {

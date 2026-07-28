@@ -32,7 +32,7 @@ canary_config <- function() {
     kernel.maf          = 0.01,
     kernel.max_missing  = 0.80,
     model.method        = "gblup_rrblup",
-    model.lambda_select = "fixed",
+    model.lambda_select = "reml",
     predict_post.method = "direct_blup"
   ))
 }
@@ -41,24 +41,19 @@ canary_config <- function() {
 # FROZEN coverage canary configs (Stage 2 of the calibrate-then-freeze bootstrap).
 #
 # One config per focal trial, assigned from the calibration so that across the
-# canaries every one of the 19 subtask methods AND every behaviour-changing
+# canaries every one of the 18 subtask methods AND every behaviour-changing
 # parameter level is exercised at least once -- so a bug in ANY branch trips the
 # oracle, not just the one a single permissive config happens to take.
 #
-# Coverage is driven by FOUR strong, data-rich trials (all verified feasible +
-# anchor-agreeing during calibration); together they cover everything:
-#   Aurora (10673)        accession_overlap[primary_only=no] · two_stage_blup ·
-#                         focal_plus_onehop · em_combine · gblup_sommer_GE[+E] · direct_blup
-#   Big6   (10675)        top_k_similar · blue_lm[env_gaussian, per_trial_z] ·
-#                         best_single_project · rkhs_gaussian[impute=mean] · rkhs[-E] ·
-#                         cond_expectation[blend>0]
-#   CornellMstr (10676)   same_program · trial_center · all_projects[thin5] ·
-#                         vanRaden_single · gblup_loo_ridge[lambda=loo] · direct_blup
-#   YT_Urb (10677)        accession_overlap[primary_only=yes] · raw_mean ·
-#                         focal_plus_onehop · vanRaden_single · gblup_rrblup[fixed]
-# The remaining trials (strong OHRWW 10679 / TCAP 10680 and the three weak ones)
-# get a light best_single_project filler -- they just confirm "still predictable",
-# they are not needed for coverage. Keyed by studyDbId.
+# Coverage is driven by FOUR strong, data-rich trials -- Aurora 10673, Big6 10675,
+# CornellMaster 10676, YT_Urb 10677 (all verified feasible and anchor-agreeing at
+# calibration) -- which between them carry every demanding branch. The rest (strong OHRWW
+# 10679 / TCAP 10680 and the three weak ones) get a light best_single_project filler: they
+# confirm "still predictable" and are not needed for coverage. Keyed by studyDbId.
+#
+# Which trial exercises which branch is tabulated in EVALUATION.md sec. 9 (kept there rather
+# than duplicated here, since a config edit below must be reflected in the reader's table).
+# `canary_coverage()` is the machine-checkable version and is what to trust.
 canary_configs <- function() {
   mk <- function(...) .make_seed(list(...))
   list(
@@ -67,7 +62,6 @@ canary_configs <- function() {
       train_select.primary_min = 4, train_select.secondary_min = 12,
       pheno_prep.method = "two_stage_blup",
       geno_select.method = "focal_plus_onehop", geno_select.min_bridge = 2,
-      geno_select.marker_thin = "2",
       kernel.method = "em_combine", kernel.impute = "mean_round",
       model.method = "gblup_sommer_GE", model.include_E = "yes",
       predict_post.method = "direct_blup"),
@@ -77,25 +71,24 @@ canary_configs <- function() {
       pheno_prep.method = "blue_lm", pheno_prep.z_thr = 3,
       pheno_prep.ge_weighting = "env_gaussian", pheno_prep.ge_bandwidth = 1,
       pheno_prep.standardize = "per_trial_z",
-      geno_select.method = "best_single_project", geno_select.marker_thin = "1",
+      geno_select.method = "best_single_project",
       kernel.method = "rkhs_gaussian", kernel.rkhs_theta = 1, kernel.impute = "mean",
       model.method = "rkhs", model.include_E = "no",
       predict_post.method = "cond_expectation", predict_post.blend_obs_w = 0.3),
     `10676` = mk(  # CornellMaster (fewest projects -> hosts heavy all_projects)
       train_select.method = "same_program", train_select.prog_cap = 15,
       pheno_prep.method = "trial_center", pheno_prep.z_thr = 3,
-      geno_select.method = "all_projects", geno_select.marker_thin = "5",
+      geno_select.method = "all_projects",
       kernel.method = "vanRaden_single",
-      model.method = "gblup_loo_ridge", model.lambda_select = "loo",
+      model.method = "gblup_rrblup", model.lambda_select = "loo",
       predict_post.method = "direct_blup"),
     `10677` = mk(  # YT_Urb
       train_select.method = "accession_overlap", train_select.primary_only = "yes",
       train_select.primary_min = 2, train_select.secondary_min = 8,
       pheno_prep.method = "raw_mean",
       geno_select.method = "focal_plus_onehop", geno_select.min_bridge = 1,
-      geno_select.marker_thin = "1",
       kernel.method = "vanRaden_single", kernel.impute = "mean_round",
-      model.method = "gblup_rrblup", model.lambda_select = "fixed",
+      model.method = "gblup_rrblup", model.lambda_select = "fixed", model.lambda_fixed = 1,
       predict_post.method = "direct_blup"),
     `10679` = .canary_filler(), # OHRWW (strong filler; best_single_project keeps it light)
     `10680` = .canary_filler(), # TCAP
@@ -112,9 +105,9 @@ canary_configs <- function() {
     train_select.method = "accession_overlap", train_select.primary_only = "yes",
     train_select.primary_min = 2, train_select.secondary_min = 8,
     pheno_prep.method = "blue_lm", pheno_prep.z_thr = 3,
-    geno_select.method = "best_single_project", geno_select.marker_thin = "2",
+    geno_select.method = "best_single_project",
     kernel.method = "vanRaden_single",
-    model.method = "gblup_rrblup", model.lambda_select = "fixed",
+    model.method = "gblup_rrblup", model.lambda_select = "reml",
     predict_post.method = "direct_blup"))
 }
 
@@ -126,7 +119,6 @@ canary_coverage <- function(cfgs = canary_configs()) {
   methods_hit <- function(st) unique(vapply(cfgs, function(c) as.character(c[[paste0(st, ".method")]]), character(1)))
   level_hit   <- function(key, val) any(vapply(cfgs, function(c) identical(as.character(c[[key]]), val), logical(1)))
   num_gt0     <- function(key) any(vapply(cfgs, function(c) { v <- c[[key]]; isTRUE(is.finite(suppressWarnings(as.numeric(v))) && as.numeric(v) > 0) }, logical(1)))
-  thin_gt1    <- any(vapply(cfgs, function(c) { v <- suppressWarnings(as.integer(c[["geno_select.marker_thin"]])); isTRUE(v > 1) }, logical(1)))
 
   method_rows <- purrr::map_dfr(names(SUBTASKS), function(st) {
     hit <- methods_hit(st); all_m <- SUBTASKS[[st]]$methods
@@ -137,14 +129,15 @@ canary_coverage <- function(cfgs = canary_configs()) {
   levels <- tibble::tibble(
     target = c("primary_only=no", "primary_only=yes", "ge_weighting=env_gaussian",
                "standardize=per_trial_z", "include_E=yes", "include_E=no",
-               "lambda_select=loo", "lambda_select=fixed", "impute=mean",
-               "impute=mean_round", "blend_obs_w>0", "marker_thin>1"),
+               "lambda_select=reml", "lambda_select=loo", "lambda_select=fixed", "impute=mean",
+               "impute=mean_round", "blend_obs_w>0"),
     covered = c(level_hit("train_select.primary_only","no"), level_hit("train_select.primary_only","yes"),
                 level_hit("pheno_prep.ge_weighting","env_gaussian"), level_hit("pheno_prep.standardize","per_trial_z"),
                 level_hit("model.include_E","yes"), level_hit("model.include_E","no"),
-                level_hit("model.lambda_select","loo"), level_hit("model.lambda_select","fixed"),
+                level_hit("model.lambda_select","reml"), level_hit("model.lambda_select","loo"),
+                level_hit("model.lambda_select","fixed"),
                 level_hit("kernel.impute","mean"), level_hit("kernel.impute","mean_round"),
-                num_gt0("predict_post.blend_obs_w"), thin_gt1))
+                num_gt0("predict_post.blend_obs_w")))
   list(methods = method_rows, levels = levels)
 }
 
@@ -217,9 +210,9 @@ check_canaries <- function(settings, conn, configs = canary_configs()) {
   list(train_select.method = "accession_overlap", train_select.primary_only = "no",
        train_select.primary_min = 2, train_select.secondary_min = 8,
        pheno_prep.method = "raw_mean",
-       geno_select.method = "all_projects", geno_select.marker_thin = "1",
+       geno_select.method = "all_projects",
        kernel.method = "vanRaden_single",
-       model.method = "gblup_rrblup", model.lambda_select = "fixed",
+       model.method = "gblup_rrblup", model.lambda_select = "reml",
        predict_post.method = "cond_expectation", predict_post.min_overlap = 3)
 
 # One config per method / behaviour-changing branch level (single-field perturbations of the
@@ -243,15 +236,16 @@ check_canaries <- function(settings, conn, configs = canary_configs()) {
     v("pheno_prep.standardize=per_trial_z",       pheno_prep.standardize = "per_trial_z"),
     # -- geno_select
     v("geno_select=focal_plus_onehop",            geno_select.method = "focal_plus_onehop", geno_select.min_bridge = 1),
+    v("geno_select.min_bridge=4",                 geno_select.method = "focal_plus_onehop", geno_select.min_bridge = 4),
     v("geno_select=best_single_project",          geno_select.method = "best_single_project"),
-    v("geno_select.marker_thin=5",                geno_select.marker_thin = "5"),
     # -- kernel
     v("kernel=em_combine",                        kernel.method = "em_combine"),
     v("kernel=rkhs_gaussian",                     kernel.method = "rkhs_gaussian", kernel.rkhs_theta = 1),
     v("kernel.impute=mean",                       kernel.impute = "mean"),
     # -- model
     v("model=gblup_sommer_GE+E",                  model.method = "gblup_sommer_GE", model.include_E = "yes"),
-    v("model=gblup_loo_ridge/loo",                model.method = "gblup_loo_ridge", model.lambda_select = "loo"),
+    v("model=gblup_rrblup[lambda=loo]",           model.method = "gblup_rrblup", model.lambda_select = "loo"),
+    v("model=gblup_rrblup[lambda=fixed]",         model.method = "gblup_rrblup", model.lambda_select = "fixed", model.lambda_fixed = 1),
     v("model=rkhs-E",                             model.method = "rkhs", model.include_E = "no"),
     # -- predict_post
     v("predict_post=direct_blup",                 predict_post.method = "direct_blup"),
@@ -354,9 +348,8 @@ diagnose_trial <- function(study_id, settings, conn,
   # The decisive check for the synonym/name-mismatch class of bug: do the dosage
   # matrix rownames actually intersect the trial's accession names?
   if (length(projs)) {
-    thin <- as.integer(cfg$geno_select.marker_thin)
     for (pid in utils::head(projs, 4)) {
-      d <- tryCatch(get_project_dosage(pid, acc, conn, settings, thin), error = function(e) NULL)
+      d <- tryCatch(get_project_dosage(pid, acc, conn, settings), error = function(e) NULL)
       if (is.null(d)) { cat(sprintf("    project %-7s dosage: NULL (download/parse failed)\n", pid)); next }
       ov <- length(intersect(rownames(d), acc))
       cat(sprintf("    project %-7s dosage: %d samples x %d markers, overlap with accessions = %d%s\n",
@@ -487,7 +480,7 @@ calibrate_canary_trials <- function(settings, conn, anchor = NULL, deep = FALSE)
     geno_dosage <- NA_integer_
     if (deep) {
       dl <- tryCatch(choose_geno_sources(
-        list(geno_select.method = "all_projects", geno_select.marker_thin = "10"),
+        list(geno_select.method = "all_projects"),
         acc, acc, conn, settings), error = function(e) list())
       geno_dosage <- length(intersect(acc, unique(unlist(lapply(dl, rownames),
                                                           use.names = FALSE))))

@@ -37,6 +37,7 @@ EVAL_GROUPS <- list(
                   "feature_schema", "seed_configs", ".make_seed"),
   engine      = c("aggregate_scores", "get_elites", "fresh_random",
                   "propose_candidates", "incumbent_config", "choose_config",
+                  "filter_evals_to_domain", "filter_evals_to_scheme",
                   "fit_surrogate", "predict_surrogate", "expected_improvement"),
   store       = c("open_store", "store_eval", "read_evals", "config_to_json",
                   "config_from_json", "write_report", "method_importance",

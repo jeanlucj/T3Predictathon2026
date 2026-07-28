@@ -53,8 +53,7 @@ library(tidyverse)
 }
 
 # --- BrAPI auth + retry ----------------------------------------------------
-# How many attempts a flaky BrAPI call gets. Single source of the default (was duplicated
-# as `settings$brapi_tries %||% 4L` at every call site).
+# How many attempts a flaky BrAPI call gets. Single source of the default.
 .brapi_tries <- function(settings = NULL) as.integer((settings$brapi_tries %||% 4L))
 
 # Log a connection in from environment credentials (T3_USERNAME / T3_PASSWORD, e.g. from
@@ -136,8 +135,8 @@ t3_connect <- function(settings) {
         message(sprintf("%s: was unauthorized -- logged in, retrying", what))
         attempt <- attempt - 1L; next                         # free retry (fresh token)
       }
-      # Re-login FAILED -- say so LOUDLY (this used to be silent, hiding an unloaded
-      # .Renviron behind cryptic "unauthorized -- retrying" lines).
+      # Re-login FAILED -- say so LOUDLY. Silence here hides an unloaded .Renviron behind
+      # cryptic "unauthorized -- retrying" lines for the length of a run.
       message(sprintf("%s: re-login FAILED: %s", what, conditionMessage(lr)))
       # Missing credentials is a setup error, not transient: retrying re-reads the same
       # empty env, so fail fast with the clear message instead of burning the retry budget.
@@ -222,7 +221,7 @@ restore_cache_from_backup <- function(settings) {
 # data a sub-fetch failed to supply) is returned for the current call but NOT cached --
 # the next call retries instead of serving the bad answer for `max_age_days`. A hard error
 # in `expr` propagates before the write is reached, so it is never cached either. (The
-# default accepts everything, preserving old behaviour.)
+# default `valid` accepts everything.)
 cached <- function(settings, category, identifier = NULL, expr, max_age_days = Inf,
                    valid = function(v) TRUE) {
   hit <- .cache_existing(settings, category, identifier)
@@ -524,11 +523,10 @@ projects_for_accessions <- function(accessions, conn, settings) {
       as.numeric(difftime(Sys.time(), file.info(hit)$mtime, units = "days")) <= 30)
     return(readRDS(hit))
 
-  # Cache ONLY a result assembled from wizard calls that all SUCCEEDED. A transient
-  # server error (HTTP 500 / timeout) used to be swallowed to an empty result and then
-  # cached for 30 days -- permanently hiding a trial's genotype data (its projects read
-  # as zero). Now a failed batch sets `failed`, we still return what we have so the
-  # current run proceeds, but we do NOT persist it, so the next run retries.
+  # Cache ONLY a result assembled from wizard calls that all SUCCEEDED: a transient HTTP
+  # 500 swallowed to an empty result and then cached for 30 days hides a trial's genotype
+  # data entirely (LESSONS.md #7). A failed batch sets `failed` -- we return what we have so
+  # the current run proceeds, but do NOT persist it, so the next run retries.
   batches <- split(acc, ceiling(seq_along(acc) / 500L))
   failed  <- FALSE
   ids <- unlist(purrr::map(batches, function(b) {
@@ -551,16 +549,16 @@ projects_for_accessions <- function(accessions, conn, settings) {
 #
 # Cache files per project (all under settings$cache_dir):
 #   * dosage_<pid>[_thin<e>]_sz<bytes>.rds -- the project's dosage, parsed ONCE at the
-#     densest thin `e` the memory budget allows (see .cache_thin). A config's requested
-#     marker_thin is NOT baked in here; it is applied at read time by column-subsetting
-#     this cache, so a project is never re-downloaded for a different thin. `_thin<e>` is
-#     absent when e == 1 (full markers -- the case for every project that fits the budget).
+#     densest thin `e` the memory budget allows (see .cache_thin). That budget is the only
+#     thing that sets marker density; a `marker_thin` passed here (manual probes only) is
+#     applied at read time by column-subsetting this cache, never by re-downloading.
+#     `_thin<e>` is absent when e == 1 (full markers -- every project that fits the budget).
 #   * stat_<pid>.rds -- {n_samples, n_markers}, written on first extraction.
 #   * unparseable_<pid>.rds -- a negative cache: an archive we found is not a usable VCF
 #     (transposed/non-VCF layout, or no genotypes). Future calls skip it instead of
 #     re-downloading and re-failing every run. Delete it to force a retry.
 #
-# Robustness (a flaky/partial download used to poison the cache permanently):
+# Robustness -- a partial download must never be cached as a valid dosage (LESSONS.md #7):
 #   * .ensure_project_vcf validates the VCF is COMPLETE (not truncated) before use; a
 #     truncated file is re-downloaded once, else an error (retried next run). That is a
 #     TRANSIENT failure -- not negative-cached. A STRUCTURAL failure on a complete file
