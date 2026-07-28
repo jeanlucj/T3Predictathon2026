@@ -16,6 +16,6 @@ settings_override <- list(
   # max_hours           = 23.5,      # self-stop before a 24 h reservation's walltime
   # run_startup_canary  = FALSE,     # skip the heavy startup canary once validated
 
-  # --- custom paths (optional; usually OPTIMIZER_PATH is enough) ----------
-  # cache_dir           = "/workdir/<user>/optimizer_cache"
+  # --- what scheme to optimize -------------------------------------------
+  # optimize_scheme     = "CV00"
 )

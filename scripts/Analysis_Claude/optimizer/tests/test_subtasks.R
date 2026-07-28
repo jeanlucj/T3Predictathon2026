@@ -978,18 +978,24 @@ close_store(con); unlink(dbp)
 # Oracle: a config seen only OUT of the current domain still counts as untried, so
 # choose_config re-offers a seed rather than treating it as done.
 dbp2 <- tempfile(fileext = ".sqlite"); con2 <- open_store(dbp2)
-seed1 <- seed_configs()[[1]]
-store_eval(con2, seed1, "900", "CV0", 0.3, 40L, "ok",
+# Pin the scheme rather than inheriting it: optimizer_settings() layers in settings.local.R,
+# so a machine optimizing CV00 would filter out this CV0 row and the seed would look untried
+# for the wrong reason. The seed must come from the SAME scheme for the hashes to correspond.
+TEST_SCHEME <- "CV0"
+seed1 <- seed_configs(TEST_SCHEME)[[1]]
+store_eval(con2, seed1, "900", TEST_SCHEME, 0.3, 40L, "ok",
            study_name = "elsewhere", program_name = "OSU", location_name = "X", year = 2024)
 # simulate = FALSE so the (real-data) target-domain filter actually engages.
 st <- modifyList(optimizer_settings(),
-                 list(simulate = FALSE, target_domain = list(programs = "Cornell")))
+                 list(simulate = FALSE, optimize_scheme = TEST_SCHEME,
+                      target_domain = list(programs = "Cornell")))
 pick <- choose_config(con2, st)
 check(identical(config_hash(pick$cfg), config_hash(seed1)) && grepl("^seed:", pick$source),
       "choose_config: an out-of-domain seed eval does not count as done in this domain")
 # Control: with NO domain restriction, that same seed eval DOES count as done, so
 # choose_config moves past seed1 to a later unevaluated seed.
-st0  <- modifyList(optimizer_settings(), list(simulate = FALSE, target_domain = NULL))
+st0  <- modifyList(optimizer_settings(),
+                   list(simulate = FALSE, optimize_scheme = TEST_SCHEME, target_domain = NULL))
 pick0 <- choose_config(con2, st0)
 check(!identical(config_hash(pick0$cfg), config_hash(seed1)),
       "choose_config: with no domain, the recorded seed is not re-offered")
@@ -1017,7 +1023,7 @@ close_store(con3); unlink(dbp3)
 # Oracle: a config seen only under the OTHER scheme counts as untried here, so
 # choose_config re-offers a seed; once it exists under this scheme it is done.
 dbp4 <- tempfile(fileext = ".sqlite"); con4 <- open_store(dbp4)
-seedA <- seed_configs()[[1]]
+seedA <- seed_configs("CV00")[[1]]   # same scheme the settings below target
 store_eval(con4, seedA, "900", "CV0", 0.3, 40L, "ok")   # CV0 only; no domain attrs
 stCV00 <- modifyList(optimizer_settings(),
                      list(simulate = FALSE, target_domain = NULL, optimize_scheme = "CV00"))
