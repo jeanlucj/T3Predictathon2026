@@ -520,12 +520,47 @@ build_kernel <- function(cfg, dosage_list, need) {
     if (length(grms) == 1) {
       K <- grms[[1]]
     } else {
-      std  <- lapply(grms, function(g) g / mean(diag(g)))
+      # Standardize each partial covariance to a unit mean diagonal, THEN regularize it.
+      # PITFALL: the ridge must go on HERE, not only on the combined matrix at the end. The EM
+      # combiner inverts these partials, and a raw GRM is easily singular -- identical rows from
+      # clones or synonym-duplicated lines, or fewer surviving markers than accessions
+      # (LESSONS.md #21).
+      # Report WHY a partial is rank-deficient, once per session per panel. Duplicate genotype
+      # rows mean two accession NAMES carrying one genotype -- .merge_markers already removes
+      # same-NAME duplicates, so this is an unresolved synonym pair (LESSONS.md #6) or genuinely
+      # identical lines. Rank < nrow with no duplicates means fewer surviving markers than kept
+      # accessions. Diagnostic only: the ridge above makes either case combinable.
+      for (nm in names(grms)) {
+        g <- grms[[nm]]
+        dup <- sum(duplicated(round(g, 10)))
+        if (nrow(g) > 1 && qr(g)$rank < nrow(g))
+          .note_geno_once(paste0("rankdef_", nm), sprintf(
+            "em_combine: panel %s partial covariance is rank %d of %d (%d duplicate row(s)) -- ridged before combining",
+            nm, qr(g)$rank, nrow(g), dup))
+      }
+      std <- lapply(grms, function(g) {
+        g <- g / mean(diag(g))
+        diag(g) <- diag(g) + max(ridge, 1e-6)
+        g
+      })
       names_all <- unique(unlist(lapply(std, colnames)))
       idx  <- lapply(std, function(g) match(colnames(g), names_all))
-      res  <- T3BrapiHelpers::covariance_combiner(
-        partial_covs = std, var_indices = idx,
-        degrees_freedom = vapply(std, nrow, integer(1)))
+      # A combine that still fails is a property of THIS trial's panels, not a bug: record it
+      # as an infeasibility so the loop moves on rather than surfacing as `status = "error"`.
+      res <- tryCatch(
+        T3BrapiHelpers::covariance_combiner(
+          partial_covs = std, var_indices = idx,
+          degrees_freedom = vapply(std, nrow, integer(1))),
+        error = function(e) e)
+      if (inherits(res, "error"))
+        # Carry each partial's shape and rank into the failure record, so the cause is
+        # readable from the store without re-running anything.
+        infeasible("em_combine_failed",
+                   paste0(conditionMessage(res), " | partials: ",
+                          paste(vapply(std, function(g)
+                            sprintf("%dx%d rank %d", nrow(g), ncol(g), qr(g)$rank),
+                            character(1)), collapse = "; ")),
+                   funnel = c(panels = length(std), accessions = length(names_all)))
       K <- res$psi
       if (nrow(K) == length(names_all) + 1) K <- K[-1, -1]   # drop phantom var
       rownames(K) <- colnames(K) <- names_all
@@ -739,18 +774,36 @@ predict_test <- function(cfg, fit, K, train_in, test_in, targets, scheme, settin
     return(stats::setNames(rep(mean(targets), length(test_in)), test_in))
   }
 
-  if (cfg$predict_post.method == "cond_expectation") {
+  # Conditional expectation through the kernel: mu + K21 K11^-1 u.
+  .cond_exp <- function() {
     Ktt <- K[train_in, train_in, drop = FALSE]
     K21 <- K[test_in, train_in, drop = FALSE]
     Kinv <- tryCatch(solve(Ktt), error = function(e) MASS::ginv(Ktt))
     if (!is.matrix(Kinv)) { dimnames(Kinv) <- dimnames(Ktt) }
-    u_test <- as.numeric(K21 %*% Kinv %*% fit$u[train_in])
-    pred <- stats::setNames(mu + u_test, test_in)
+    stats::setNames(mu + as.numeric(K21 %*% Kinv %*% fit$u[train_in]), test_in)
+  }
+
+  if (cfg$predict_post.method == "cond_expectation") {
+    pred <- .cond_exp()
   } else {
-    # direct BLUP: use the model's own random effect where available.
+    # direct BLUP: the model's own random effect for the focal accessions. Available only when
+    # the fit HAS one -- the sommer G+E path carries every accession in `rownames(K)` as a factor
+    # level; the rrBLUP backbone is fitted on training lines alone and does not.
+    #
+    # PITFALL: without the guard below, fit$u[test_in] is all-NA -> all-zero -> every prediction
+    # equals `mu`, a constant vector that scores NA. Fall back to the kernel, which is what all
+    # five submitted algorithms do for masked lines, and record it -- a method silently changing
+    # meaning is the failure mode here (LESSONS.md #22).
     u_test <- fit$u[test_in]
-    u_test[is.na(u_test)] <- 0
-    pred <- stats::setNames(mu + u_test, test_in)
+    if (all(is.na(u_test))) {
+      .note_geno_once("direct_blup_no_test_effect", paste(
+        "predict: direct_blup has no random effect for the focal accessions (the model was",
+        "fitted on training lines only) -- predicting through the kernel instead"))
+      pred <- .cond_exp()
+    } else {
+      u_test[is.na(u_test)] <- 0
+      pred <- stats::setNames(mu + u_test, test_in)
+    }
   }
 
   # Blend observed BLUE for test accessions that appear in training (CV0 only;

@@ -50,6 +50,15 @@ sample_trial <- function(settings, conn = NULL) {
 # ---------------------------------------------------------------------------
 evaluate_config_on_trial <- function(cfg, trial, scheme, settings, conn = NULL) {
   t0 <- Sys.time()
+  # Bound one evaluation's wall time (Inf = no bound; settings$max_eval_minutes explains why
+  # that is the default). `transient = TRUE` restores the previous limit when this frame exits.
+  # R checks the limit only at interpreter checkpoints, so a long call inside compiled code (a
+  # BLAS crossproduct, a VCF parse) can overshoot it.
+  cap_min <- settings$max_eval_minutes %||% Inf
+  if (is.finite(cap_min) && cap_min > 0) {
+    setTimeLimit(elapsed = cap_min * 60, transient = TRUE)
+    on.exit(setTimeLimit(), add = TRUE)
+  }
   # One error handler that branches on the condition class. (A single handler is
   # deliberate: re-raising a fatal with stop(e) from a multi-handler tryCatch gets
   # caught by that same tryCatch's sibling `error` handler, which would swallow
@@ -74,9 +83,15 @@ evaluate_config_on_trial <- function(cfg, trial, scheme, settings, conn = NULL) 
         return(list(score = NA_real_, n_test = 0L,
                     status = if (isTRUE(e$suspect)) "suspect" else "infeasible",
                     reason = e$code, detail = funnel_string(e$funnel)))
+      # The wall-clock cap fired. Not a bug and not a data verdict -- its own status, so a
+      # run that is merely too slow never hides among genuine crashes in the failure log.
+      msg <- conditionMessage(e)
+      if (grepl("reached elapsed time limit|reached CPU time limit", msg))
+        return(list(score = NA_real_, n_test = 0L, status = "timeout",
+                    reason = sprintf("exceeded max_eval_minutes = %g", cap_min)))
       # Anything unexpected: record it (so a stray bug does not kill a long run)
       # but tag it distinctly so it stands out in the log.
-      list(score = NA_real_, n_test = 0L, status = "error", reason = conditionMessage(e))
+      list(score = NA_real_, n_test = 0L, status = "error", reason = msg)
     })
   res$detail <- res$detail %||% NA_character_
   res$seconds <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
@@ -118,8 +133,7 @@ score_predictions <- function(pred, obs) {
   #    too-broad; k has an interior optimum around 20.
   q <- q + switch(cfg$train_select.method,
     top_k_similar     = 0.22 - 0.00035 * (cfg$train_select.k - 20)^2,
-    # accession_overlap: two-tier (primary_only="no") beats primary-only (the old
-    # all_with_yield, broader/less targeted).
+    # accession_overlap: the two-tier form (primary_only="no") beats primary-only.
     accession_overlap = if (identical(cfg$train_select.primary_only, "yes")) 0.10 else 0.17,
     same_program      = 0.14)
 

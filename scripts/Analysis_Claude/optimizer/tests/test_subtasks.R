@@ -185,10 +185,14 @@ check(all(vapply(ov, function(v) all(vapply(names(SUBTASKS),
         function(st) !is.na(v$cfg[[paste0(st, ".method")]]), logical(1))), logical(1))),
       "every sweep variant is a complete config")
 # Oracle: the degeneracy rule is exactly direct_blup under CV00 (and nothing else).
-check(.oracle_degenerate(list(predict_post.method = "direct_blup"), "CV00") &&
+# Oracle: NOTHING is excused as degenerate. direct_blup x CV00 looks like it should be -- a fit
+# on training lines alone has no random effect for the masked focal lines -- but predict_test()
+# predicts those through the kernel, so it is a real test and excusing it would hide a
+# regression in that guard.
+check(!.oracle_degenerate(list(predict_post.method = "direct_blup"), "CV00") &&
       !.oracle_degenerate(list(predict_post.method = "direct_blup"), "CV0") &&
       !.oracle_degenerate(list(predict_post.method = "cond_expectation"), "CV00"),
-      ".oracle_degenerate: only direct_blup + CV00 is expected-degenerate")
+      ".oracle_degenerate: no cell is excused (direct_blup x CV00 now predicts via the kernel)")
 # Oracle: `only` selects variants by label substring; empty -> all; no match -> error.
 check(length(.select_variants(ov, NULL)) == length(ov), ".select_variants: NULL keeps all")
 sel <- .select_variants(ov, "em_combine")
@@ -677,6 +681,25 @@ Kdrop <- build_kernel(kcfg("em_combine", ridge = 0), list(rich = pRich, poor = p
 check(setequal(rownames(Kdrop), need2) && all(is.finite(Kdrop)),
       "em_combine drops a marker-poor panel instead of failing (too_few_markers no longer sinks it)")
 
+# Oracle: a SINGULAR partial covariance must not crash the combine. Without the pre-combine
+# ridge this raises "Lapack routine dgesv: system is exactly singular"; with it, the combine
+# succeeds.
+#
+# The duplicated rows must be ones that REACH the combiner -- inside `keep` (need + bridges),
+# since .vanraden only builds over those. Duplicating a row outside `keep` tests nothing.
+# Bridges are also the realistic case: lines genotyped in more than one project are exactly
+# where re-called duplicates occur.
+pClA <- pA; pClB <- pB
+pClA["b1", ] <- pClA["b2", ]        # duplicate BRIDGE rows -> rank-deficient partial GRM
+pClB["b1", ] <- pClB["b2", ]
+outcome <- tryCatch(
+  { Kc <- build_kernel(kcfg("em_combine", ridge = 0), list(A = pClA, B = pClB), need2)
+    if (is.matrix(Kc) && all(is.finite(Kc))) "matrix" else "bad-matrix" },
+  optimizer_infeasible = function(e) "infeasible",
+  error = function(e) paste("UNCAUGHT:", conditionMessage(e)))
+check(outcome %in% c("matrix", "infeasible"),
+      paste("em_combine survives a singular partial covariance (got:", outcome, ")"))
+
 # ===========================================================================
 cat(".group_by_panel / .prune_redundant\n")
 gset <- optimizer_settings()
@@ -889,6 +912,23 @@ check(approx(p00["a"], 10), "CV00 blend is a no-op")
 pf <- predict_test(prcfg("cond_expectation", min_overlap = 3), fit, Kp,
                    c("t1", "t2"), "x", targets = c(t1 = 4, t2 = 8), scheme = "CV0")
 check(approx(pf["x"], 6), "fallback below min_overlap -> mean(targets)")
+
+# direct_blup when the fit has NO random effect for the focal lines -- the rrBLUP backbone
+# fitted on training lines only, which is the norm under CV00. Oracle: it must predict through
+# the kernel, giving exactly the conditional expectation, NOT collapse to the intercept.
+# `fit` above carries u for t1/t2 only, so fit$u["x"] is NA.
+pd <- suppressMessages(predict_test(prcfg("direct_blup"), fit, Kp,
+                                    c("t1", "t2"), "x", targets = c(t1 = 0, t2 = 0), "CV00"))
+check(approx(pd["x"], pc["x"]),
+      "direct_blup with no test-line effect falls back to the conditional expectation")
+check(!approx(pd["x"], fit$mu),
+      "...and therefore does NOT collapse to the intercept (the CV00 `constant` bug)")
+# Oracle: when the fit DOES carry the focal lines (the sommer G+E path), direct_blup uses them
+# and is not redirected -- the fallback must be conditional, not unconditional.
+fit_all <- list(kind = "gblup", u = c(t1 = 1, t2 = -0.5, x = 3), mu = 10)
+pk <- predict_test(prcfg("direct_blup"), fit_all, Kp, c("t1", "t2"), "x",
+                   targets = c(t1 = 0, t2 = 0), scheme = "CV00")
+check(approx(pk["x"], 13), "direct_blup uses the model's own effect when it exists")
 
 # ===========================================================================
 cat("mask_cv\n")

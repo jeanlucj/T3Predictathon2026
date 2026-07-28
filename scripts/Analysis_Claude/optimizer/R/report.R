@@ -109,7 +109,7 @@ write_report <- function(con, settings) {
     dplyr::arrange(id) |>
     dplyr::mutate(running_best = cummax(score))
 
-  seed_hashes <- vapply(seed_configs(), config_hash, character(1))
+  seed_hashes <- vapply(seed_configs(settings$optimize_scheme), config_hash, character(1))
   seed_scores <- agg |>
     dplyr::filter(config_hash %in% seed_hashes, is.finite(mean_score)) |>
     dplyr::summarise(best_seed = suppressWarnings(max(mean_score))) |>

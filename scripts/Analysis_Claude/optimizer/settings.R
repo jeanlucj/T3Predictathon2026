@@ -83,8 +83,8 @@ optimizer_settings <- function() {
 
     # ---- CV schemes -------------------------------------------------------
     # `schemes` lists every CV scheme the DIAGNOSTICS sanity-check for code bugs
-    # (check_canaries / sweep_rich_trials / diagnose_trial test all of them, e.g.
-    # to catch the direct_blup+CV00 degeneracy).
+    # (check_canaries / sweep_rich_trials / diagnose_trial test all of them, since a
+    # method can behave differently under masking).
     schemes = c("CV0", "CV00"),
     # The OPTIMIZER targets exactly ONE scheme per run: CV0 and CV00 are distinct
     # prediction tasks with (potentially) different optimal pipelines, so blending
@@ -106,6 +106,20 @@ optimizer_settings <- function() {
     # ---- budget / background control -------------------------------------
     max_iters     = Inf,         # stop after this many evaluations
     max_hours     = Inf,         # ... or this much wall-clock, whichever first
+    # Wall-clock cap on ONE evaluation, in minutes. Inf = no cap, and that is the default.
+    #
+    # PITFALL: a cap CENSORS NON-RANDOMLY. The slow configurations are the thorough ones
+    # (em_combine over many panels, all_projects), which are also the ones that may predict
+    # best. And it costs more than one score: a timeout stores NA, aggregate_scores() averages
+    # only finite scores, so a config that always times out has mean_score = NA and can never
+    # become incumbent however good it is. Set a cap too low and the search will "discover" that
+    # cheap pipelines win -- an artifact of the cap.
+    #
+    # If you set one, derive it from the distribution of SUCCESSFUL run times (report_timing.R),
+    # not from the median over all outcomes: successes run far longer than the median. Over-run
+    # is recorded as status = "timeout" -- its own status, so the censoring stays visible. R can
+    # only interrupt at interpreter checkpoints, so compiled calls may overshoot the cap.
+    max_eval_minutes = Inf,
     checkpoint_every = 1,        # write report snapshot every N iterations
 
     # ---- real-mode trial sampling (ignored when simulate = TRUE) ----------

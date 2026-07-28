@@ -16,6 +16,7 @@ The code cites these by number (`see LESSONS.md #11`). Numbers are stable: appen
 | §2 Genomic methods | #11–#14 |
 | §3 Search space and design | #15–#17 |
 | §4 Testing and validation | #18–#20 |
+| §5 Numerical robustness | #21–#22 |
 
 ---
 
@@ -261,3 +262,41 @@ implausibly clean result.
 **Now.** The comparison script asserts its own arms differ before running. The general rule is the
 one behind every entry here: **trust agreement between two independent derivations; distrust a
 single number** — including one your own analysis produced.
+
+---
+
+## §5. Numerical robustness
+
+### 21. An EM combiner needs positive-definite inputs, and the ridge was added too late
+
+**Trap.** `build_kernel()` built a GRM per panel, scaled each to a unit mean diagonal, handed them
+to `covariance_combiner()`, and added `ridge` to the diagonal of the **combined** result. Reading
+top to bottom it looks regularized.
+**Symptom.** The EM inverts those partials, and a raw GRM is easily singular — identical rows from
+clones or from two names for one line, or fewer surviving markers than kept accessions. Three
+evaluations died with `Lapack routine dgesv: system is exactly singular` and reciprocal condition
+numbers around 1e-16, one of them after 13.4 hours of work. `status = "error"`, so it read as a
+code bug, which it was.
+**Now.** Each partial is ridged (with a floor, so `ridge = 0` is still safe) *before* the combine;
+a combine that fails anyway raises `infeasible` carrying every partial's shape and rank, rather
+than an uncaught exception. Rank-deficient partials are reported once per session with their
+duplicate-row count — a non-zero count is evidence about the synonym tail (#6), so the
+regularization does not hide the data problem it papers over.
+**Lives in.** `R/pipeline.R::build_kernel` (the `em_combine` branch).
+
+### 22. A method that silently changes meaning is worse than one that fails
+
+**Trap.** `predict_test()`'s `direct_blup` took `fit$u[test_in]` and replaced `NA` with 0. Sensible
+defensive coding.
+**Symptom.** The rrBLUP backbone is fitted on the training lines alone, so under CV00 — where the
+focal lines are masked out — it has no effect for them at all. Every prediction became `mu`: a
+constant vector, an `NA` score, and no error anywhere. Nine of sixteen evaluations in one window
+ended this way, some after 100+ minutes. The optimizer was buying guaranteed-unscoreable
+evaluations at an hour each, and four of the five seed configurations were affected, so the CV00
+baseline barely existed.
+**Now.** When the fit carries no effect for the focal lines, prediction goes through the kernel —
+which is what all five submitted algorithms do for masked lines (three by explicit conditional
+expectation, two by carrying the test lines as levels in the fitted model) — and the substitution
+is recorded rather than silent. `.oracle_degenerate()` no longer excuses the cell, so it is a real
+test again.
+**Lives in.** `R/pipeline.R::predict_test`, `R/diagnostics.R::.oracle_degenerate`.

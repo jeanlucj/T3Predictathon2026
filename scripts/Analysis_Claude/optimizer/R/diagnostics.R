@@ -252,11 +252,12 @@ check_canaries <- function(settings, conn, configs = canary_configs()) {
     v("predict_post.blend_obs_w=0.3",             predict_post.blend_obs_w = 0.3))
 }
 
-# Cells that are EXPECTED to be degenerate (not bugs): direct_blup masks the test lines out of
-# training, so under CV00 fit$u has no entry for them and every prediction collapses to the
-# mean -> `constant`. (cond_expectation predicts them from the kernel, so it is NOT degenerate.)
-.oracle_degenerate <- function(cfg, scheme)
-  identical(cfg$predict_post.method, "direct_blup") && identical(scheme, "CV00")
+# Cells EXPECTED to be degenerate (not bugs). There are none.
+#
+# PITFALL: do not re-add `direct_blup` x CV00 here. It looks degenerate -- the focal lines are
+# masked out of training -- but predict_test() predicts them through the kernel (LESSONS.md #22),
+# so it is a real test. Excusing it would hide a regression in exactly that guard.
+.oracle_degenerate <- function(cfg, scheme) FALSE
 
 # Keep the variants whose label matches any `only` pattern (fixed substring, so "em_combine"
 # matches "kernel=em_combine"). NULL/empty -> keep all. Errors if a filter matches nothing.

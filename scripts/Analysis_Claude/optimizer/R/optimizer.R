@@ -141,7 +141,8 @@ choose_config <- function(con, settings) {
   done_hashes <- unique(evals$config_hash)
 
   # Phase 1: seed the five submissions.
-  seeds <- seed_configs()
+  # Prediction5 submitted a different model per scheme, so the seeds are scheme-specific.
+  seeds <- seed_configs(settings$optimize_scheme)
   for (nm in names(seeds)) {
     if (!(config_hash(seeds[[nm]]) %in% done_hashes)) {
       return(list(cfg = seeds[[nm]], source = paste0("seed:", nm)))

@@ -22,7 +22,14 @@
 suppressMessages(library(tidyverse))
 options(width = 200)   # keep the tables from wrapping
 
+# Optional argument: a store to read instead of the live one, so an archived store (e.g. one
+# set aside when a semantic change made its rows incomparable) can still be summarized and
+# compared against the current run.
+#   Rscript report_timing.R                                  # the live store
+#   Rscript report_timing.R state/evals_pre_seedaudit.sqlite  # an archived one
 store_path <- local({
+  arg <- commandArgs(trailingOnly = TRUE)
+  if (length(arg) && nzchar(arg[1])) return(arg[1])
   p <- Sys.getenv("OPTIMIZER_PATH")
   cand <- if (nzchar(p)) file.path(p, "state", "evals.sqlite") else file.path("state", "evals.sqlite")
   if (!file.exists(cand) && file.exists(file.path("state", "evals.sqlite")))
