@@ -101,6 +101,48 @@ hdr("status / reason mix")
 print(table(e$status, useNA = "ifany"))
 if (any(!is.na(e$reason))) print(sort(table(e$reason[!is.na(e$reason)]), decreasing = TRUE))
 
+# The headline number: an hour spent reaching a crash or a guaranteed-NA score is an hour
+# that bought nothing. Ranking outcomes by TIME rather than by count is what shows that.
+hdr("WALL TIME BY OUTCOME -- where the budget actually went")
+by_status <- e |>
+  dplyr::group_by(status) |>
+  dplyr::summarise(n = dplyr::n(),
+                   hours = round(sum(seconds, na.rm = TRUE) / 3600, 2),
+                   median_min = round(median(inside, na.rm = TRUE), 1),
+                   max_min = round(max(inside, na.rm = TRUE), 1), .groups = "drop") |>
+  dplyr::mutate(pct_of_time = round(100 * hours / sum(hours))) |>
+  dplyr::arrange(dplyr::desc(hours))
+print(as.data.frame(by_status), row.names = FALSE)
+wasted <- sum(by_status$hours[by_status$status %in% c("error", "constant")])
+cat(sprintf("\n  %.1f h of %.1f h (%.0f%%) went to `error` or `constant` -- no usable score\n",
+            wasted, sum(by_status$hours), 100 * wasted / sum(by_status$hours)))
+
+# `error` = an uncaught exception, i.e. a code bug rather than a data verdict. The message
+# is stored in `reason`, so the diagnosis is already in hand -- print it in full.
+errs <- dplyr::filter(e, status == "error")
+if (nrow(errs)) {
+  hdr("ERROR rows -- uncaught exceptions, with the message stored at the time")
+  for (i in seq_len(nrow(errs))) {
+    cat(sprintf("\n  id %s  trial %s  %s / %s / %s  %s  (%.0f min)\n",
+                errs$id[i], errs$trial_id[i], errs$kernel[i], errs$geno[i],
+                errs$model[i], errs$scheme[i], errs$inside[i]))
+    cat("    ", gsub("\n", "\n     ", errs$reason[i]), "\n", sep = "")
+  }
+}
+
+# `constant` = predictions with no variance -> correlation undefined -> NA. Under CV00 that
+# is expected for direct_blup (test lines are masked out of training, so every prediction
+# collapses to the intercept). Splitting it out says how much time went to a KNOWN degeneracy.
+cons <- dplyr::filter(e, status == "constant")
+if (nrow(cons)) {
+  cons$predict_post <- fld("predict_post.method")[e$status == "constant"]
+  hdr("CONSTANT rows by predict_post x scheme (direct_blup + CV00 is degenerate by design)")
+  print(table(cons$predict_post, cons$scheme))
+  deg <- sum(cons$seconds[cons$predict_post == "direct_blup" & cons$scheme == "CV00"],
+             na.rm = TRUE) / 3600
+  cat(sprintf("\n  %.1f h spent on direct_blup x CV00 -- predictable before running\n", deg))
+}
+
 hdr("slowest 10 evaluations")
 print(e |>
         dplyr::arrange(dplyr::desc(inside)) |>
