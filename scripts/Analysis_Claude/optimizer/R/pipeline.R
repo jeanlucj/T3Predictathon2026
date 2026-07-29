@@ -366,26 +366,39 @@ build_targets <- function(cfg, train_obs, trial, conn, settings) {
   cap  <- settings$dosage_total_budget_bytes %||% Inf
   if (!is.finite(cap) || cap <= 0) return(plan)
 
+  # Size each project by what is ACTUALLY ON DISK, which is not the same as what this
+  # machine's dosage_budget_bytes would produce. A cache built under a LARGER budget is
+  # reused as-is -- get_project_dosage only ever re-parses to make a cache denser, never
+  # coarser -- so lowering dosage_budget_bytes does not shrink an existing cache. Sizing from
+  # the budget would then under-count by exactly the ratio of the two budgets, and the cap
+  # would fail to fire in the one case it is most needed.
+  thin <- stats::setNames(rep(NA_real_, length(ids)), ids)
   bytes <- vapply(ids, function(pid) {
     st <- tryCatch(readRDS(.cache_existing(settings, "stat", pid)), error = function(e) NULL)
     if (!is.list(st) || is.null(st$n_markers)) return(NA_real_)
-    # As cached: the per-project budget already thinned it by .cache_thin.
     dense <- as.numeric(st$n_samples) * as.numeric(st$n_markers) * 4
-    dense / .cache_thin(st$n_samples, st$n_markers, settings$dosage_budget_bytes)
+    cd <- .find_densest_dosage(settings, pid)
+    # Not cached yet -> it will be parsed at THIS machine's budget when downloaded.
+    e  <- if (!is.null(cd)) cd$thin else
+            .cache_thin(st$n_samples, st$n_markers, settings$dosage_budget_bytes)
+    thin[[pid]] <<- e
+    dense / e
   }, numeric(1))
 
   known <- bytes[is.finite(bytes)]
   total <- sum(known)
   if (!length(known) || total <= cap) return(plan)
 
-  # Scale every measured project by the same factor, rounding up (thin factors are integers,
-  # so the result is at or under the cap, never over).
-  shrink <- total / cap
-  for (pid in names(known)) plan[[pid]] <- max(1L, as.integer(ceiling(shrink)))
-  kept <- sum(known / vapply(names(known), function(p) plan[[p]], numeric(1)))
+  # One extra factor for every project, so panels stay marker-aligned for .merge_markers
+  # (see above). marker_thin is an ABSOLUTE thin, and get_project_dosage serves a cache at
+  # thin e by keeping every floor(marker_thin / e)-th column -- so the target must be
+  # e * factor, not the factor alone, or a project already cached coarse gets no reduction.
+  factor <- max(1L, as.integer(ceiling(total / cap)))
+  for (pid in names(known)) plan[[pid]] <- max(1L, as.integer(thin[[pid]] * factor))
+  kept <- total / factor
   message(sprintf(
-    "geno: %d covering project(s) total %.1f GB > dosage_total_budget_bytes %.1f GB -- serving 1 marker in %d (%.1f GB)",
-    length(known), total / 1e9, cap / 1e9, plan[[names(known)[1]]], kept / 1e9))
+    "geno: %d covering project(s) total %.1f GB > dosage_total_budget_bytes %.1f GB -- keeping 1 marker in %d (%.1f GB)",
+    length(known), total / 1e9, cap / 1e9, factor, kept / 1e9))
   plan
 }
 

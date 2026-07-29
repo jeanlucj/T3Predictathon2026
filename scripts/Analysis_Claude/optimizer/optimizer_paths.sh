@@ -22,6 +22,21 @@
 # Directory containing this script, whether it was sourced or executed.
 _opt_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
+# The `cd "$_opt_dir"` below is LOAD-BEARING, not tidiness. R reads `.Renviron` at the startup
+# of EVERY R process -- there is no "has R run yet" state to worry about, a fresh Rscript
+# reads it itself -- but it looks for `./.Renviron` in the CURRENT WORKING DIRECTORY (then
+# ~/.Renviron). The optimizer's `.Renviron` lives in this directory, so without the cd, running
+# this script from anywhere else silently misses OPTIMIZER_PATH and returns local-mode paths.
+#
+# `.Renviron` also OVERRIDES a variable already exported in the shell, so it is authoritative
+# and cannot conflict with .bashrc.
+#
+# NEVER pass `--vanilla` to any R invocation in this project -- not the call below, and above
+# all not `Rscript run_optimizer.R`. R's help: "--vanilla: Combine --no-save, --no-restore,
+# --no-site-file, --no-init-file and --no-environ", and `--no-environ` means "Don't read the
+# site and user environment files" -- i.e. skip `.Renviron`. That file carries T3_USERNAME and
+# T3_PASSWORD as well as OPTIMIZER_PATH, so `--vanilla` does not merely mislocate the state
+# directory: the optimizer cannot log in to T3 at all.
 _opt_vals="$(cd "$_opt_dir" && Rscript -e '
   here::i_am("run_optimizer.R")
   suppressMessages(source("settings.R"))

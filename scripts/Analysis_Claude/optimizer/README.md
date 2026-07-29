@@ -172,6 +172,10 @@ preserved.
    **startup**, so after creating/editing it, **restart R**; verify with
    `Sys.getenv("OPTIMIZER_PATH")`.
 
+   > **Never run R here with `--vanilla`.** It implies `--no-environ`, which skips
+   > `.Renviron` — so the run loses `OPTIMIZER_PATH` *and* the T3 credentials, and
+   > fails at login as though you had never written the file.
+
 4. **Change any OTHER setting per machine via an untracked `settings.local.R`.** The
    environment handles only the directory split; for anything else you want different
    on the server -- `simulate = FALSE`, a bigger `dosage_budget_bytes`, a `max_hours`

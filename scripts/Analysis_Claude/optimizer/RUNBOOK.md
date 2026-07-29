@@ -63,6 +63,10 @@ Without it the first command occupies the terminal and the rest never run.
       `OPTIMIZER_PATH` is what turns on remote mode — there is no `remote_server` flag to
       edit any more, it is derived from this variable. Confirm with
       `Rscript -e 'Sys.getenv("OPTIMIZER_PATH")'`.
+
+      > **Never run R here with `--vanilla`.** It implies `--no-environ`, which skips
+      > `.Renviron` — you lose `OPTIMIZER_PATH` *and* the T3 credentials, and the run
+      > dies at login looking like a missing `.Renviron`.
 - [ ] **Packages installed** — this takes a while on a fresh machine. Includes the two
       non-CRAN ones: `BrAPI.R` and `T3BrapiHelpers`.
 - [ ] **Tests pass.**
