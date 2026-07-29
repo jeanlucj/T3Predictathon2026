@@ -79,10 +79,33 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
   #
   # Leader only. Workers share one cache_dir, so N of them rsyncing the same tree in parallel
   # buys nothing and fights for the disk; worker 1 does it on everyone's behalf.
+  #
+  # The others must WAIT for it. On a fresh node the restore takes minutes, and a worker that
+  # starts before it finishes sees an empty cache and re-downloads the very projects the rsync
+  # is about to deliver -- correct (the per-project lock sees to that) but a waste of a large
+  # download. The leader signals completion with cache_ready_file.
   leader <- isTRUE(settings$is_leader %||% TRUE)
+  ready_file <- settings$cache_ready_file
   if (leader) {
+    if (!is.null(ready_file)) unlink(ready_file)       # stale flag from a previous run
     restore_cache_from_backup(settings)
+    if (!is.null(ready_file)) {
+      dir.create(dirname(ready_file), showWarnings = FALSE, recursive = TRUE)
+      file.create(ready_file)
+    }
     on.exit(sync_cache_to_backup(settings), add = TRUE)
+  } else if (!is.null(ready_file) && !is.null(settings$cache_backup_dir) &&
+             nzchar(settings$cache_backup_dir)) {
+    # Bounded wait: if the leader is absent or its restore failed, start anyway rather than
+    # stall the whole run. (No backup configured means there is nothing to wait for.)
+    waited <- 0; limit <- 60 * 30
+    while (!file.exists(ready_file) && waited < limit) { Sys.sleep(5); waited <- waited + 5 }
+    if (file.exists(ready_file))
+      message(sprintf("worker %s: cache restored by the leader after %.0f s -- starting",
+                      settings$worker_id %||% "?", waited))
+    else
+      message(sprintf("worker %s: no cache-ready signal after %.0f min -- starting anyway",
+                      settings$worker_id %||% "?", limit / 60))
   }
 
   # Real mode needs a live BrAPI connection (made once, reused), logged in from the

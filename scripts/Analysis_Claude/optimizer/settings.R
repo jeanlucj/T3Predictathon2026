@@ -282,6 +282,10 @@ optimizer_settings <- function() {
     # Durable, resumable state -> perm_dir (home on a remote server; see above).
     db_path     = file.path(perm_dir, "state", "evals.sqlite"),
     stop_file   = file.path(perm_dir, "state", "STOP"),
+    # Written by the leader once the cache has been restored from its backup. Non-leader
+    # workers wait for it before starting, so a fresh node does not have N workers
+    # re-downloading the very projects the leader's rsync is in the middle of delivering.
+    cache_ready_file = file.path(perm_dir, "state", ".cache_ready"),
     report_path = file.path(perm_dir, "state", "report.md"),
     log_dir     = file.path(perm_dir, "logs"),
     # The large, regenerable cache stays on the WORK disk (fast, expendable) even in remote

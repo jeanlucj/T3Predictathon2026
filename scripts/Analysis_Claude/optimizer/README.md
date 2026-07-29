@@ -274,42 +274,143 @@ SLURM caveats specific to this optimizer:
 
 ### Running several workers
 
-One evaluation takes minutes to hours, so throughput comes from running several
-workers at once. They are independent processes against one `evals.sqlite` and one
-cache: each picks its own configuration, and all of them feed the same archive and
-the same surrogate.
+One evaluation takes minutes to hours, so throughput comes from running several at
+once.
+
+**`run_workers.sh` does not replace `run_optimizer.R` — it launches N copies of it.**
+That is the whole of the relationship. There is no separate parallel code path: each
+worker runs the same sequential loop as always (choose a configuration, sample a
+trial, evaluate, store), against one shared `evals.sqlite` and one shared `cache/`.
+What the launcher adds is three environment settings per copy — `OPTIMIZER_WORKER=i`,
+the BLAS thread count, and a separate log file — plus a stagger between starts. You
+could do it by hand:
+
+```bash
+OPTIMIZER_WORKER=1 nohup Rscript run_optimizer.R </dev/null > logs/run_w1.out 2>&1 &
+OPTIMIZER_WORKER=2 nohup Rscript run_optimizer.R </dev/null > logs/run_w2.out 2>&1 &
+```
+
+Because they share the store, they also share progress: each worker reads every
+worker's results when it fits its surrogate, so N workers explore one search, not N
+independent ones.
+
+#### Setup, in order
+
+The order matters — steps 1 and 2 must be done **before** any worker starts.
+
+**1. Put the store on local disk** (`settings.local.R`, untracked):
+
+```r
+settings_override <- list(
+  simulate       = FALSE,
+  db_path        = "/workdir/<user>/optimizer/evals.sqlite",   # local: WAL works
+  db_backup_path = "/home/<user>/t3_optimizer/state/evals_backup.sqlite"
+)
+```
+
+This is the one step you cannot skip. `open_store` puts SQLite in WAL mode, which is
+what lets workers write concurrently, and WAL *cannot* work over NFS — it coordinates
+through an mmap'd `-shm` file. A home directory on a cluster is usually NFS. The
+leader copies the store to `db_backup_path` every `db_backup_minutes` using
+`VACUUM INTO` (safe on a live database), so a wiped `/workdir` costs at most one
+interval.
+
+If you have an existing store on `/home`, copy it to the new path first — the workers
+continue from whatever is there:
+
+```bash
+mkdir -p /workdir/<user>/optimizer
+cp ~/t3_optimizer/state/evals.sqlite /workdir/<user>/optimizer/evals.sqlite
+```
+
+**2. Set the memory budget** for the number of workers you want — see "How many
+workers?" below.
+
+**3. Verify the configuration resolves as you expect**, before committing hours to it:
+
+```r
+Rscript -e 'source("settings.R"); s <- optimizer_settings(); str(s[c("db_path","simulate","dosage_budget_bytes","dosage_total_budget_bytes","stop_file")])'
+```
+
+**4. If the cache is COLD, run one worker on its own for a while first.**
+
+"The cache" is `cache/` — every genotyping project's VCF, downloaded once and stored
+as a parsed dosage matrix (`cache/dosage`), plus phenotypes, accessions and the trial
+catalogue. Once a project is in there, no evaluation ever downloads it again. "Cold"
+means those files do not exist yet; "warm" means they do.
+
+Check before deciding — this step is usually unnecessary:
+
+```bash
+ls cache/dosage | wc -l      # projects already downloaded and parsed
+du -sh cache/dosage
+```
+
+If that count covers most of the projects your `target_domain` touches, skip to step
+5. If it is near zero (a fresh node, a `/workdir` that was purged, a new domain), then
+run a single worker first. There is **no special command for this** — it is the
+ordinary optimizer run:
+
+```bash
+Rscript run_optimizer.R </dev/null > logs/warm.out 2>&1 &
+tail -f logs/warm.out
+```
+
+Let it work through a few evaluations — you are watching for
+`Load project dosages` and download lines to stop dominating the log, and for
+`cache/dosage` to stop growing quickly. Then stop it, clear the flag, and go to step 5:
+
+```bash
+touch "${OPTIMIZER_PATH:-.}/state/STOP"      # it exits after the current evaluation
+rm    "${OPTIMIZER_PATH:-.}/state/STOP"      # or run_workers.sh will refuse to start
+```
+
+Nothing is lost by skipping this: the results go to the same store either way, and the
+per-project lock means two workers never download the same VCF. The reason to do it is
+that the first evaluations on a cold cache are the worst moment to have eight
+processes running — eight first-time VCF downloads at once is both a lot of load on
+the T3 server (see LESSONS.md #10) and the peak memory moment, since parsing a large
+panel is itself memory-heavy. Paying that once, serially, is cheaper than tuning for
+it.
+
+**5. Launch:**
 
 ```bash
 ./run_workers.sh 8        # 8 workers, 2 BLAS threads each
-touch state/STOP          # stops all of them
+./run_workers.sh 4 4      # 4 workers, 4 threads each
+./monitor_memory.sh &     # watch what it actually costs
 ```
 
-Three things make this safe, and one of them is on you:
+**6. Stop them** — all at once, with the stop file. Note the path depends on
+`OPTIMIZER_PATH`, so take it from the settings rather than assuming `state/STOP`:
 
-- **`db_path` must be on local disk.** `open_store` puts SQLite in WAL mode, which is
-  what lets workers write concurrently — and WAL *cannot* work over NFS, because it
-  coordinates through an mmap'd `-shm` file. `open_store` warns if the pragma did not
-  take; heed it. Set this in `settings.local.R`:
-  ```r
-  settings_override <- list(
-    db_path        = "/workdir/<user>/optimizer/evals.sqlite",   # local: WAL works
-    db_backup_path = "~/t3_optimizer/state/evals_backup.sqlite"  # durable copy
-  )
-  ```
-  The leader copies the store to `db_backup_path` every `db_backup_minutes` with
-  `VACUUM INTO`, which is safe on a live database — so a wiped `/workdir` costs at
-  most one interval.
-- **Worker 1 is the leader.** It alone writes `state/report.md`, rsyncs the cache and
-  backs up the store; eight processes doing that to the same files is pure waste.
-  `run_workers.sh` sets `OPTIMIZER_WORKER` to make this so.
+```bash
+touch "${OPTIMIZER_PATH:-.}/state/STOP"
+```
+
+Each worker finishes its current evaluation and exits cleanly. Remove the file before
+launching again — `run_workers.sh` refuses to start if it is still there.
+
+#### What makes it safe
+
+- **Worker 1 is the leader.** It alone writes `state/report.md`, rsyncs the cache,
+  and backs up the store; eight processes doing that to the same files is pure waste.
+  It also restores the cache from backup at startup and signals when it is done, which
+  the other workers wait for. So worker 1 should be running — the others tolerate its
+  absence but nothing will write a report.
 - **The shared cache is locked per project.** Downloading a project's VCF clears any
   existing copy first, so two workers on one project would delete each other's
   in-flight multi-GB file. A worker that loses the lock waits for the winner's result
-  instead of repeating the download.
+  rather than repeating the download.
+- **Cache writes are atomic**, so a reader never sees a half-written file.
 
-**How many workers?** Memory, not cores, is the binding constraint: R's heap is
-per-process, so N workers cost N times the memory of one. Get the number from
-measurement, not arithmetic:
+A worker that dies takes only its current evaluation with it: everything else is
+already in the store. Restart it with the same `OPTIMIZER_WORKER` number.
+
+#### How many workers?
+
+Memory, not cores, is the binding constraint: R's heap is per-process, so N workers
+cost N times the memory of one. Get the number from measurement, not arithmetic:
 
 ```bash
 ./monitor_memory.sh &        # attaches to a RUNNING job; no restart needed
@@ -326,6 +427,9 @@ what `report_memory.R` measures:
 | 256 GB | 8 | 4e9 | 10e9 |
 | 512 GB | 8 | 8e9 | 20e9 |
 | 512 GB | 4 | 16e9 | 40e9 |
+
+Keep `workers x threads` at or under the core count; `run_workers.sh` sets the thread
+count for every BLAS R might be linked against.
 
 Note that changing `dosage_budget_bytes` changes marker density and therefore scores,
 and density is not a configuration parameter — so rows made under different budgets
