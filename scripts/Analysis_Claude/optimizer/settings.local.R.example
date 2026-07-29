@@ -19,20 +19,23 @@ settings_override <- list(
   # dosage_budget_bytes caps ONE project's dense dosage matrix at parse time; it sets marker
   # density. dosage_total_budget_bytes caps the SUM over every project covering a trial,
   # which is what actually bounds a worker's peak -- the pipeline holds them all at once.
-  # A worker peaks at roughly 1.5-2x the total budget, so with N workers:
+  # MEASURED (2026-07-29): one worker at dosage_budget_bytes = 16e9 held 63 GB RSS on a
+  # 128 GB node -- about 2.3 GB of process memory per GB of resident dosage. 16e9 supports
+  # exactly ONE worker. The table below is derived from that anchor:
   #
   #   RAM      workers   dosage_budget_bytes   dosage_total_budget_bytes
-  #   256 GB      8              4e9                    10e9
-  #   512 GB      8              8e9                    20e9
-  #   512 GB      4             16e9                    40e9
+  #   256 GB      4              8e9                    19e9
+  #   256 GB      8              4e9                     9e9
+  #   512 GB      4             16e9                    35e9
+  #   512 GB      8              8e9                    18e9
   #
-  # These are estimates from the cached panel sizes. Replace them with what you MEASURE:
-  # run ./monitor_memory.sh against a live run, then Rscript report_memory.R.
+  # Start at half the worker count you want, then scale up after checking: run
+  # ./monitor_memory.sh against a live run, then Rscript report_memory.R.
   # CAUTION: changing dosage_budget_bytes changes marker density and therefore scores, and
   # density is not a config parameter -- rows made under different budgets are not comparable
   # (each row records its dosage_budget so the mixing is at least visible).
-  # dosage_budget_bytes       = 8e9,
-  # dosage_total_budget_bytes = 20e9,
+  # dosage_budget_bytes       = 8e9,     # 512 GB node, 8 workers
+  # dosage_total_budget_bytes = 18e9,
 
   # --- several workers on one store --------------------------------------
   # Required to run ./run_workers.sh: SQLite's WAL mode cannot work over NFS, so the live

@@ -172,18 +172,21 @@ optimizer_settings <- function() {
     # marker thin (by column-subsetting the cache, so it costs no re-download) until the sum
     # fits, and records that it did so in the evaluation's detail.
     #
-    # Peak per worker runs to roughly 1.5-2x this figure (marker QC and the merge each need a
-    # copy), so size it at about a third of the RAM each worker may have:
+    # MEASURED (2026-07-29): one worker at dosage_budget_bytes = 16e9 held 63 GB RSS on a
+    # 128 GB node -- about 2.3 GB of process memory per GB of resident dosage. So:
     #
-    #     workers x dosage_total_budget_bytes x 2  <  usable RAM
+    #     workers x dosage_total_budget_bytes x 2.3  <  ~0.7 x RAM
     #
     #   RAM     workers   dosage_budget_bytes   dosage_total_budget_bytes
-    #   256 GB     8              4e9                    10e9
-    #   512 GB     8              8e9                    20e9
-    #   512 GB     4             16e9                    40e9
+    #   256 GB     4              8e9                    19e9
+    #   256 GB     8              4e9                     9e9
+    #   512 GB     4             16e9                    35e9
+    #   512 GB     8              8e9                    18e9
     #
-    # These are starting points from the cached panel sizes; replace them with the measured
-    # peak_r_mb distribution once a day of evaluations is in the store (report_memory.R).
+    # 16e9 supports exactly ONE worker -- it is not compatible with parallelism. Start at half
+    # the worker count you want and scale up against the measured peak_r_mb distribution
+    # (report_memory.R): the 2.3x multiplier comes from a single node-hour and is more likely
+    # too low than too high.
     # Inf disables the cap (the pre-existing behaviour: no bound on the sum at all).
     dosage_total_budget_bytes = 12e9,
 

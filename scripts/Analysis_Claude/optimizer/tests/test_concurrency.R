@@ -45,14 +45,31 @@ spawn <- function(n, body, ...) {
             stdout = file.path(tmp, paste0("w", i, ".out")),
             stderr = file.path(tmp, paste0("w", i, ".err"))))
   # No portable way to wait on a detached pid from R, so poll for the sentinel each worker
-  # writes on exit.
-  deadline <- Sys.time() + 180
+  # writes on exit. The budget is deliberately generous: four concurrent R startups each
+  # sourcing tidyverse and the whole R/ tree can take a while on a loaded machine, and a
+  # timeout that fires on slowness rather than on a defect trains you to ignore this test.
+  deadline <- Sys.time() + 600
   repeat {
     done <- length(list.files(tmp, pattern = "^done_"))
     if (done >= n || Sys.time() > deadline) break
     Sys.sleep(0.5)
   }
-  length(list.files(tmp, pattern = "^done_"))
+  done <- length(list.files(tmp, pattern = "^done_"))
+  # On a shortfall, say WHICH workers never finished and show their stderr, so "too slow" is
+  # distinguishable from "crashed" without re-running.
+  if (done < n) {
+    missing <- setdiff(seq_len(n), as.integer(sub("^done_", "",
+                                                 list.files(tmp, pattern = "^done_"))))
+    cat("  worker(s) did not finish within", round(as.numeric(difftime(Sys.time(), deadline,
+        units = "secs")) + 600), "s:", paste(missing, collapse = ", "), "\n")
+    for (i in missing) {
+      ef <- file.path(tmp, paste0("w", i, ".err"))
+      if (file.exists(ef)) cat("   w", i, " stderr: ",
+                               paste(utils::tail(readLines(ef, warn = FALSE), 3),
+                                     collapse = " | "), "\n", sep = "")
+    }
+  }
+  done
 }
 
 cat("1. concurrent writers -----------------------------------------------\n")

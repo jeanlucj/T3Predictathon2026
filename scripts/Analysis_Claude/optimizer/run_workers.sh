@@ -11,10 +11,12 @@
 #
 #   ./run_workers.sh 8                  # 8 workers, 2 BLAS threads each
 #   ./run_workers.sh 4 4                # 4 workers, 4 BLAS threads each
-#   nohup ./run_workers.sh 8 > /dev/null 2>&1 &
+#   nohup ./run_workers.sh 8 > logs/workers.out 2>&1 &
+#   OPTIMIZER_FIRST_WORKER=5 ./run_workers.sh 4   # ADD workers 5-8 to a job already running
 #
-# Stop them ALL with the usual stop-file (they share it):   touch state/STOP
-# Watch them:   tail -f logs/run_w1.out    /   ./monitor_memory.sh &
+# Stop them ALL with the usual stop-file (they share it):
+#   touch "${OPTIMIZER_PATH:-.}/state/STOP"
+# Watch them:   tail -f logs/run_w1.out    /   nohup ./monitor_memory.sh > /dev/null 2>&1 &
 #
 # Two things this script exists to get right:
 #
@@ -45,14 +47,50 @@ export OPENBLAS_NUM_THREADS="$N_THREADS"
 export MKL_NUM_THREADS="$N_THREADS"
 export VECLIB_MAXIMUM_THREADS="$N_THREADS"
 
-STOP_FILE="${OPTIMIZER_PATH:-.}/state/STOP"
+# Resolve the stop file by asking R. OPTIMIZER_PATH is set in .Renviron, which only R reads,
+# so deriving this from the shell environment would check ./state/STOP while the workers watch
+# a different file -- the pre-flight check below would then pass on a run that is about to
+# stop dead. (See optimizer_paths.sh.)
+. "$(dirname "$0")/optimizer_paths.sh"
+STOP_FILE="${STOP_FILE:-./state/STOP}"
 if [ -f "$STOP_FILE" ]; then
   echo "run_workers.sh: $STOP_FILE exists -- the workers would exit at once. Remove it first." >&2
   exit 1
 fi
 
-echo "run_workers.sh: starting $N_WORKERS worker(s), $N_THREADS BLAS thread(s) each"
-for i in $(seq 1 "$N_WORKERS"); do
+# Worker ids run FIRST..FIRST+N-1. The default start of 1 is a fresh launch; set
+# OPTIMIZER_FIRST_WORKER to ADD workers to a run that is already going:
+#
+#   ./run_workers.sh 4                             # workers 1-4 (1 is the leader)
+#   OPTIMIZER_FIRST_WORKER=5 ./run_workers.sh 4    # add workers 5-8, no second leader
+#
+# Running `./run_workers.sh 4` twice would instead start a second worker 1 -- two leaders
+# both writing the report and rsyncing the cache, ambiguous `worker` values in the store,
+# and, because the redirect below truncates, the second batch wiping the first batch's logs.
+FIRST="${OPTIMIZER_FIRST_WORKER:-1}"
+LAST=$((FIRST + N_WORKERS - 1))
+
+already=$(ps -e -o args= 2>/dev/null | grep -c '[r]un_optimizer\.R')
+if [ "$already" -gt 0 ]; then
+  echo "run_workers.sh: note -- $already run_optimizer.R process(es) are already running"
+fi
+
+# Refuse to truncate a log that a live worker is writing to: a log touched in the last two
+# minutes almost certainly belongs to a running worker with this id.
+for i in $(seq "$FIRST" "$LAST"); do
+  if [ -n "$(find "logs/run_w${i}.out" -mmin -2 2>/dev/null)" ]; then
+    # Suggest the next FREE id, taken from the highest run_w<id>.out on disk -- not from the
+    # process count, which says nothing about which ids are in use.
+    max_id=$(ls logs/run_w*.out 2>/dev/null | sed 's/.*run_w\([0-9]*\)\.out/\1/' | sort -n | tail -1)
+    echo "run_workers.sh: logs/run_w${i}.out was written to seconds ago -- worker $i looks" >&2
+    echo "  like it is already running. To ADD workers, start above the running ids:" >&2
+    echo "    OPTIMIZER_FIRST_WORKER=$(( ${max_id:-0} + 1 )) $0 $N_WORKERS $N_THREADS" >&2
+    exit 1
+  fi
+done
+
+echo "run_workers.sh: starting $N_WORKERS worker(s) (ids $FIRST-$LAST), $N_THREADS BLAS thread(s) each"
+for i in $(seq "$FIRST" "$LAST"); do
   # </dev/null so an archived-VCF download can never block on an interactive prompt.
   OPTIMIZER_WORKER="$i" nohup Rscript run_optimizer.R </dev/null > "logs/run_w${i}.out" 2>&1 &
   echo "  worker $i -> pid $! -> logs/run_w${i}.out$([ "$i" = 1 ] && echo '  (leader: writes the report, backs up the store)')"
@@ -64,4 +102,10 @@ done
 
 echo
 echo "all workers launched. stop them with:  touch $STOP_FILE"
+
+# Block until every worker exits. This is for SLURM: a batch script that returns immediately
+# would end the job and tear the allocation down under the workers. The workers are each
+# nohup'd above, so they do NOT depend on this process staying alive -- which is why an
+# interactive launch should be `nohup ./run_workers.sh N > logs/workers.out 2>&1 &`, or the
+# wait below simply occupies your terminal for the length of the run.
 wait

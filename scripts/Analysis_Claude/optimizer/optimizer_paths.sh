@@ -1,0 +1,63 @@
+#!/bin/bash
+# optimizer_paths.sh
+#
+# Resolve the optimizer's paths and export them for use in the shell.
+#
+#   source ./optimizer_paths.sh
+#   touch "$STOP_FILE"          # stops every worker
+#   ls -la "$DB_PATH"
+#
+# WHY THIS EXISTS. `OPTIMIZER_PATH` is set in `.Renviron`, which **only R reads** -- it is not
+# a shell variable unless you also export it from `.bashrc`. So in a plain shell,
+# "$OPTIMIZER_PATH/state/STOP" expands to "/state/STOP": `touch` fails with permission denied,
+# and you conclude you have stopped a run that is in fact still going. That is the failure
+# this file exists to prevent.
+#
+# Asking R is also the only way to be *right*: `settings.local.R` can override `db_path`,
+# `stop_file` and the rest, so reconstructing paths from `OPTIMIZER_PATH` in shell would be
+# wrong on exactly the machines that matter. R applies the same layering the optimizer does.
+#
+# Exports: OPTIMIZER_PATH STOP_FILE DB_PATH REPORT_PATH LOG_DIR CACHE_DIR
+
+# Directory containing this script, whether it was sourced or executed.
+_opt_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+
+_opt_vals="$(cd "$_opt_dir" && Rscript -e '
+  here::i_am("run_optimizer.R")
+  suppressMessages(source("settings.R"))
+  s <- optimizer_settings()
+  cat(Sys.getenv("OPTIMIZER_PATH"), s$stop_file, s$db_path,
+      s$report_path, s$log_dir, s$cache_dir, sep = "\n")
+' 2>/dev/null)"
+
+if [ -z "$_opt_vals" ]; then
+  echo "optimizer_paths.sh: could not read settings from R." >&2
+  echo "  Run from the optimizer directory and check: Rscript -e 'source(\"settings.R\"); optimizer_settings()'" >&2
+else
+  # One path per line, read in the order cat() wrote them.
+  {
+    IFS= read -r OPTIMIZER_PATH
+    IFS= read -r STOP_FILE
+    IFS= read -r DB_PATH
+    IFS= read -r REPORT_PATH
+    IFS= read -r LOG_DIR
+    IFS= read -r CACHE_DIR
+  } <<EOF
+$_opt_vals
+EOF
+  export OPTIMIZER_PATH STOP_FILE DB_PATH REPORT_PATH LOG_DIR CACHE_DIR
+fi
+unset _opt_dir _opt_vals
+
+# Executed rather than sourced? Print what was found -- exporting would be pointless, since
+# the exports die with this process.
+if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
+  echo "OPTIMIZER_PATH=$OPTIMIZER_PATH"
+  echo "STOP_FILE=$STOP_FILE"
+  echo "DB_PATH=$DB_PATH"
+  echo "REPORT_PATH=$REPORT_PATH"
+  echo "LOG_DIR=$LOG_DIR"
+  echo "CACHE_DIR=$CACHE_DIR"
+  echo
+  echo "(these were printed, not exported -- use 'source ${0}' to get them in your shell)"
+fi

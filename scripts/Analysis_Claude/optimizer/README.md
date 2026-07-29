@@ -55,7 +55,7 @@ All knobs live in `optimizer_settings()` in `settings.R`. The ones you will set:
 
 ```bash
 cd scripts/Analysis_Claude/optimizer
-Rscript tests/run_all.R        # expect "2/2 test files passed"
+Rscript tests/run_all.R        # expect "3/3 test files passed"
 ```
 
 **2. Launch the real optimizer.** Set `simulate = FALSE` in `settings.R`, then:
@@ -216,8 +216,9 @@ So a graceful stop, an error, or a hit budget loses nothing.
 `SIGKILL`ed (OOM-killer, node reboot, `scancel`). For that, run an external rsync
 loop in a separate `tmux`/`nohup` shell so at most one interval is ever at risk:
 ```bash
+source ./optimizer_paths.sh          # OPTIMIZER_PATH lives in .Renviron, which only R reads
 while true; do
-  rsync -a --exclude 'raw_project/' /workdir/<user>/.../cache/ "$OPTIMIZER_PATH/cache/"
+  rsync -a --exclude 'raw_project/' "$CACHE_DIR/" "$OPTIMIZER_PATH/cache/"
   sleep 1800
 done
 ```
@@ -361,8 +362,9 @@ Let it work through a few evaluations — you are watching for
 `cache/dosage` to stop growing quickly. Then stop it, clear the flag, and go to step 5:
 
 ```bash
-touch "${OPTIMIZER_PATH:-.}/state/STOP"      # it exits after the current evaluation
-rm    "${OPTIMIZER_PATH:-.}/state/STOP"      # or run_workers.sh will refuse to start
+source ./optimizer_paths.sh
+touch "$STOP_FILE"      # it exits after the current evaluation
+rm    "$STOP_FILE"      # or run_workers.sh will refuse to start
 ```
 
 Nothing is lost by skipping this: the results go to the same store either way, and the
@@ -376,16 +378,24 @@ it.
 **5. Launch:**
 
 ```bash
-./run_workers.sh 8        # 8 workers, 2 BLAS threads each
-./run_workers.sh 4 4      # 4 workers, 4 threads each
-./monitor_memory.sh &     # watch what it actually costs
+nohup ./run_workers.sh 8 > logs/workers.out 2>&1 &    # 8 workers, 2 BLAS threads each
+nohup ./run_workers.sh 4 4 > logs/workers.out 2>&1 &  # 4 workers, 4 threads each
+nohup ./monitor_memory.sh > /dev/null 2>&1 &          # watch what it actually costs
 ```
 
-**6. Stop them** — all at once, with the stop file. Note the path depends on
-`OPTIMIZER_PATH`, so take it from the settings rather than assuming `state/STOP`:
+Launch both with `nohup ... &`. The workers are each `nohup`'d individually, so they
+survive a hangup regardless — but `run_workers.sh` ends in `wait` (needed under SLURM, so
+the batch job does not exit and tear down the allocation), which in an interactive shell
+blocks the terminal for the whole run. `monitor_memory.sh` loops until stopped.
+
+**6. Stop them** — all at once, with the stop file. Get the path from
+`optimizer_paths.sh` rather than building it yourself: `OPTIMIZER_PATH` is set in
+`.Renviron`, which **only R reads**, so in a shell `"$OPTIMIZER_PATH/state/STOP"` expands to
+`"/state/STOP"` — `touch` fails and you believe you stopped a run that is still going.
 
 ```bash
-touch "${OPTIMIZER_PATH:-.}/state/STOP"
+source ./optimizer_paths.sh
+touch "$STOP_FILE"
 ```
 
 Each worker finishes its current evaluation and exits cleanly. Remove the file before
@@ -413,23 +423,41 @@ Memory, not cores, is the binding constraint: R's heap is per-process, so N work
 cost N times the memory of one. Get the number from measurement, not arithmetic:
 
 ```bash
-./monitor_memory.sh &        # attaches to a RUNNING job; no restart needed
-Rscript report_memory.R      # per-evaluation peaks + a "how many workers fit" table
+nohup ./monitor_memory.sh > /dev/null 2>&1 &   # attaches to a RUNNING job; no restart needed
+Rscript report_memory.R                        # per-evaluation peaks + "how many workers fit"
 ```
 
 The setting that bounds a worker's peak is **`dosage_total_budget_bytes`**, not
 `dosage_budget_bytes` — the latter caps one project at parse time, while the pipeline
-holds *every* project covering a trial at once. Starting points, to be replaced by
-what `report_memory.R` measures:
+holds *every* project covering a trial at once.
+
+**Measured anchor (2026-07-29):** one worker at `dosage_budget_bytes = 16e9` held **63 GB
+RSS** on a 128 GB node. That is ~2.3 GB of process memory per GB of resident dosage, which
+the table below is derived from. 16e9 supports exactly one worker — it is not compatible
+with parallelism.
 
 | RAM | workers | `dosage_budget_bytes` | `dosage_total_budget_bytes` |
 |---|---|---|---|
-| 256 GB | 8 | 4e9 | 10e9 |
-| 512 GB | 8 | 8e9 | 20e9 |
-| 512 GB | 4 | 16e9 | 40e9 |
+| 256 GB | 4 | 8e9 | 19e9 |
+| 256 GB | 8 | 4e9 | 9e9 |
+| 512 GB | 4 | 16e9 | 35e9 |
+| 512 GB | 8 | 8e9 | 18e9 |
 
+**Start at half the worker count you want**, confirm with `report_memory.R`, then scale up:
+the 2.3x multiplier comes from a single node-hour and is more likely too low than too high.
 Keep `workers x threads` at or under the core count; `run_workers.sh` sets the thread
 count for every BLAS R might be linked against.
+
+Scaling up needs no restart — add workers *above* the running ids:
+
+```bash
+./run_workers.sh 4                            # workers 1-4
+OPTIMIZER_FIRST_WORKER=5 ./run_workers.sh 4   # later: adds workers 5-8
+```
+
+Running `./run_workers.sh 4` twice instead would start a second worker 1 — two leaders, and
+a truncated `logs/run_w1.out` under the first batch. The script refuses and names the id to
+use.
 
 Note that changing `dosage_budget_bytes` changes marker density and therefore scores,
 and density is not a configuration parameter — so rows made under different budgets
