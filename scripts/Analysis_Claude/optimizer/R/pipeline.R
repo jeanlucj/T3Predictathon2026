@@ -339,6 +339,56 @@ build_targets <- function(cfg, train_obs, trial, conn, settings) {
 # ===========================================================================
 # Subtask C: select genotyping data
 # ===========================================================================
+# Extra marker thinning per project so that all of a trial's covering projects TOGETHER fit
+# settings$dosage_total_budget_bytes. Returns a named list of thin factors (1 = untouched);
+# an empty budget or a set that already fits gives every project 1.
+#
+# Why this exists: dosage_budget_bytes caps one project at parse time, but the pipeline holds
+# all covering projects at once, so the peak is the sum -- which on the T3 wheat archive runs
+# to several times the per-project figure. That sum, times the number of workers, is what has
+# to fit in RAM. This is the only place it is bounded.
+#
+# The thinning is served by column-subsetting the existing cache (get_project_dosage's
+# marker_thin argument), so it costs no re-download.
+#
+# Every project gets the SAME factor, rather than taking the reduction out of the largest
+# ones. Panels in a protocol group are merged on their SHARED markers (.merge_markers
+# intersects colnames), and thinning two near-identical panels by different factors keeps
+# different markers from each -- collapsing the intersection the merge depends on. A common
+# factor keeps the panels aligned; the cost is that small panels are thinned too.
+#
+# Sizes come from the cached stat_<pid> written at parse time. A project with no stat entry
+# is unmeasurable here (it has never been parsed) and is left at 1 -- get_project_dosage
+# applies its own per-project budget when it downloads it.
+.dosage_thin_plan <- function(projs, settings) {
+  ids  <- as.character(projs)
+  plan <- as.list(stats::setNames(rep(1L, length(ids)), ids))
+  cap  <- settings$dosage_total_budget_bytes %||% Inf
+  if (!is.finite(cap) || cap <= 0) return(plan)
+
+  bytes <- vapply(ids, function(pid) {
+    st <- tryCatch(readRDS(.cache_existing(settings, "stat", pid)), error = function(e) NULL)
+    if (!is.list(st) || is.null(st$n_markers)) return(NA_real_)
+    # As cached: the per-project budget already thinned it by .cache_thin.
+    dense <- as.numeric(st$n_samples) * as.numeric(st$n_markers) * 4
+    dense / .cache_thin(st$n_samples, st$n_markers, settings$dosage_budget_bytes)
+  }, numeric(1))
+
+  known <- bytes[is.finite(bytes)]
+  total <- sum(known)
+  if (!length(known) || total <= cap) return(plan)
+
+  # Scale every measured project by the same factor, rounding up (thin factors are integers,
+  # so the result is at or under the cap, never over).
+  shrink <- total / cap
+  for (pid in names(known)) plan[[pid]] <- max(1L, as.integer(ceiling(shrink)))
+  kept <- sum(known / vapply(names(known), function(p) plan[[p]], numeric(1)))
+  message(sprintf(
+    "geno: %d covering project(s) total %.1f GB > dosage_total_budget_bytes %.1f GB -- serving 1 marker in %d (%.1f GB)",
+    length(known), total / 1e9, cap / 1e9, plan[[names(known)[1]]], kept / 1e9))
+  plan
+}
+
 # Returns one dosage matrix per PROTOCOL GROUP, each holding the group's FULL
 # genotyped population (every sample in the constituent projects), not just the
 # accessions this trial needs. Subtask D estimates marker QC and allele frequencies
@@ -354,8 +404,15 @@ choose_geno_sources <- function(cfg, train_acc, test_acc, conn, settings) {
   # density is a budget setting, not a searchable parameter (see config_space.R). This is
   # the heaviest loop in the pipeline -- one VCF download + parse per project on a cold
   # cache -- so it reports progress per project.
+  #
+  # It is also where the process's memory peak is set: EVERY covering project is resident at
+  # once. dosage_budget_bytes bounds each one individually, which is not the same thing --
+  # .dosage_thin_plan bounds the SUM, serving the largest projects coarser when it has to.
+  plan <- .dosage_thin_plan(projs, settings)
   dl <- purrr::map(projs, function(pid) {
-    d <- tryCatch(get_project_dosage(pid, NULL, conn, settings), error = function(e) NULL)
+    d <- tryCatch(get_project_dosage(pid, NULL, conn, settings,
+                                     marker_thin = plan[[as.character(pid)]] %||% 1L),
+                  error = function(e) NULL)
     if (!is.null(d) && nrow(d) > 0 && length(intersect(rownames(d), need))) d else NULL
   }, .progress = "Load project dosages")
   names(dl) <- as.character(projs)
@@ -385,6 +442,10 @@ choose_geno_sources <- function(cfg, train_acc, test_acc, conn, settings) {
     .merge_markers(.prune_redundant(dl[pids], settings))
   })
   names(out) <- vapply(groups, function(pids) paste(pids, collapse = "+"), character(1))
+  # `out` holds merged copies, so the per-project originals are now dead weight -- several GB
+  # of it. Drop the reference and collect, or they stay resident through the whole kernel
+  # build, which is itself the other memory peak.
+  rm(dl); gc(full = TRUE)
 
   # focal_plus_onehop: keep only the panels reachable from the focal trial's own panel.
   # all_projects keeps everything; this is what makes the two methods different.
@@ -649,17 +710,44 @@ build_kernel <- function(cfg, dosage_list, need) {
 }
 
 # MAF and missingness QC + imputation, returning a centered-ready dosage matrix.
+#
+# This is the pipeline's largest allocation, so it is written to make as few copies of X as
+# possible -- X here is a whole genotyped population, which on the big T3 panels is several
+# GB, and every full copy is multiplied by the number of workers on the machine:
+#
+#   * ONE subset, not two. Per-column missingness and allele frequency do not depend on which
+#     other columns survive, so both masks are computed up front and applied together.
+#   * `miss` is reused for the imputation loop rather than recomputing colMeans(is.na(X)),
+#     which would allocate a second full logical matrix.
+#   * INTEGER IS PRESERVED on the mean_round path. A dosage matrix arrives as 4-byte
+#     integers; assigning a double into it (which `mu` and `round(mu)` are) silently coerces
+#     the WHOLE matrix to 8 bytes on the first imputed column, doubling the footprint plus a
+#     full copy at the promotion. mean_round's fill values are whole numbers, so they can be
+#     stored as integers and nothing downstream can tell the difference (.vanraden promotes
+#     only the rows it needs; stats::dist coerces internally). Plain `mean` genuinely needs
+#     doubles -- there the promotion is done once, deliberately, instead of by accident.
 .qc_markers <- function(X, cfg) {
   miss <- colMeans(is.na(X))
-  X <- X[, miss <= cfg$kernel.max_missing, drop = FALSE]
-  af <- colMeans(X, na.rm = TRUE) / 2
-  maf <- pmin(af, 1 - af)
-  X <- X[, maf >= cfg$kernel.maf, drop = FALSE]
-  if (ncol(X) < 50) infeasible("too_few_markers", ncol(X))
+  af   <- colMeans(X, na.rm = TRUE) / 2
+  maf  <- pmin(af, 1 - af)
+  # which() drops the NA that an all-missing column produces in `maf`, so such a column is
+  # excluded rather than becoming an NA index.
+  keep <- which(miss <= cfg$kernel.max_missing & maf >= cfg$kernel.maf)
+  if (length(keep) < 50) infeasible("too_few_markers", length(keep))
+  X    <- X[, keep, drop = FALSE]
+  miss <- miss[keep]
+
   # Impute remaining missing by per-marker mean (rounded for the additive code).
-  for (j in which(colMeans(is.na(X)) > 0)) {
-    mu <- mean(X[, j], na.rm = TRUE)
-    X[is.na(X[, j]), j] <- if (identical(cfg$kernel.impute, "mean_round")) round(mu) else mu
+  na_cols <- which(miss > 0)
+  if (length(na_cols)) {
+    round_impute <- identical(cfg$kernel.impute, "mean_round")
+    keep_integer <- round_impute && is.integer(X)
+    if (!keep_integer && is.integer(X)) storage.mode(X) <- "double"
+    for (j in na_cols) {
+      mu   <- mean(X[, j], na.rm = TRUE)
+      fill <- if (round_impute) round(mu) else mu
+      X[is.na(X[, j]), j] <- if (keep_integer) as.integer(fill) else fill
+    }
   }
   X
 }

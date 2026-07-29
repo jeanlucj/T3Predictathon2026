@@ -23,53 +23,15 @@ The challenge involves:
 
 ## Common Commands
 
-### Prediction1 (R-based GBLUP)
-```bash
-# Run in RStudio: open and source the scripts sequentially
-Rscript Prediction1/00_download_training_phenotypes.R
-Rscript Prediction1/01_vcf_to_snp_matrix_final.R
-Rscript Prediction1/02_prepare_phenotypes_final_1.R
-Rscript Prediction1/03_genomic_prediction.R
-```
+Each algorithm is run by sourcing its scripts in filename order (`Prediction1/00_… → 03_…`)
+or, for the Python ones, `bash Prediction2/run_pipeline.sh` / `python Prediction4/predict.py`.
+Execution-order dependencies are in "Data Dependencies & Execution Order" below.
 
-### Prediction2 (Python pipeline with config)
-```bash
-# Run full end-to-end pipeline
-cd Prediction2 && bash run_pipeline.sh
+Two invocations that are NOT guessable from the file listing:
 
-# Clean rebuild (removes all cached GRMs, models, and predictions)
-cd Prediction2 && bash run_pipeline.sh --clean
-```
-
-### Prediction3 (R workflowr + multi-model)
 ```bash
-# Render R Markdown files in RStudio or via command line
-cd Prediction3
-Rscript -e "rmarkdown::render('Data/T3_trial_import_and_filtering.Rmd')"
-# Run in sequence: Data/ → Analysis/ → Prediction_Models/
-```
-
-### Prediction4 (Python + environmental weighting)
-```bash
-cd Prediction4 && python predict.py
-```
-
-### Prediction5 (R workflowr + GBLUP/RKHS dual models)
-```bash
-# Render analysis scripts in RStudio or via command line
-cd Prediction5
-Rscript -e "rmarkdown::render('analysis/phenotypic_data.Rmd')"
-Rscript -e "rmarkdown::render('analysis/pullGenoTrial.Rmd')"
-Rscript -e "rmarkdown::render('analysis/pullGenoAssociatedTrials.Rmd')"
-Rscript -e "rmarkdown::render('analysis/combine_GRM.Rmd')"
-Rscript -e "rmarkdown::render('analysis/environmental_covariates.Rmd')"
-Rscript -e "rmarkdown::render('analysis/genom_pred.Rmd')"
-# Final predictions written to submission/
-```
-
-Or use workflowr to render all:
-```bash
-cd Prediction5 && Rscript -e "workflowr::wflow_build()"
+cd Prediction2 && bash run_pipeline.sh --clean   # force rebuild: drops cached GRMs/models/predictions
+cd Prediction5 && Rscript -e "workflowr::wflow_build()"   # render the whole workflowr project at once
 ```
 
 ## Architecture Patterns
@@ -90,28 +52,11 @@ cd Prediction5 && Rscript -e "workflowr::wflow_build()"
 
 ### Prediction2: Python Modular Pipeline
 
-**Structure**:
-```
-Prediction2/
-  src/
-    genotypes/          # VCF preprocessing and GRM construction
-    model/              # Training, CV0, CV00, expected accuracy
-    utils/              # Shared helpers
-  config.yaml           # Trial and model settings
-  run_pipeline.sh       # Orchestrates all steps
-  data/processed/       # Unified phenotypes
-  data/predictathon/    # Per-trial genotype and phenotype folders
-  trained_models/       # Saved GRMs (gitignored, large)
-  results/              # CV0, CV00, expected accuracy outputs
-  submission/           # Final Predictathon submission format
-```
+`src/` splits into `genotypes/` (VCF preprocessing, GRM construction), `model/` (training, CV0,
+CV00, expected accuracy) and `utils/`; `config.yaml` holds the focal-trial list and model settings.
 
-**Config** (`config.yaml`):
-- `focal_trials`: list of 9 test trials
-- `model.lambda_factor`: ridge regularization (1e-5 default)
-- `paths`: data directories and output locations
-
-**Pipeline caching**: Skips steps if outputs exist; use `--clean` to force rebuild.
+**Pipeline caching**: steps are skipped when their outputs already exist -- use `--clean` to force
+a rebuild. This is the behaviour that surprises people; nothing else about the layout is.
 
 ### Prediction4: Environmentally-Weighted GBLUP
 
@@ -122,26 +67,11 @@ Prediction2/
 
 ### Prediction5: Multi-Method Genomic Prediction with Environmental Covariates
 
-**Structure** (workflowr-based):
-```
-Prediction5/
-  analysis/               # R Markdown scripts (execution pipeline)
-    phenotypic_data.Rmd           # BrAPI: fetch phenotypes from focal accessions + breeding program trials
-    pullGenoTrial.Rmd             # VCF → imputed numeric genotype matrix (focal trial)
-    pullGenoAssociatedTrials.Rmd  # BrAPI: retrieve genotypes for related trials
-    combine_GRM.Rmd               # Build combined GRM from multiple genotype sources
-    environmental_covariates.Rmd  # NASA POWER: fetch weather (T2M, PRECTOTCORR, ALLSKY_SFC_SW_DWN)
-    genom_pred.Rmd                # GBLUP/RKHS predictions; CV0 and CV00 with environment filtering
-    analyze_genom_pred.Rmd        # Model comparison (not used in final submission)
-  code/                   # Utility functions
-    useful_functions.R            # Custom VCF processing (`format_curate_vcf`), GRM combination, etc.
-    T3Predictathon2026_Functions_to_choose_trials_and_protocols.R
-    T3Predictathon2026_Functions_to_work_with_VCFs.R
-    beagle.27Feb25.75f.jar        # Java imputation tool for VCF phasing
-  data/                   # Input data (phenotypes, genotypes, trial metadata)
-  output/                 # GRM matrices and model objects
-  submission/             # Final CV0 and CV00 predictions
-```
+**Pipeline order** (`analysis/`, workflowr): `phenotypic_data` (BrAPI phenotypes) →
+`pullGenoTrial` (focal VCF → imputed numeric matrix) → `pullGenoAssociatedTrials` (related-trial
+genotypes) → `combine_GRM` → `environmental_covariates` (NASA POWER weather) → `genom_pred`
+(CV0/CV00 predictions). `analyze_genom_pred.Rmd` is model comparison and did NOT feed the
+submission. `code/` holds the VCF helpers (`format_curate_vcf`) and a bundled Beagle jar.
 
 **Key Features**:
 - **Dual-model approach**: 
@@ -223,12 +153,8 @@ Both scenarios submitted to evaluate robustness.
 
 ### Large Files (Gitignored)
 
-- VCF files (`data/predictathon/*/genotypes/*.vcf.gz`, `Prediction5/data/`)
-- Global GRM (`data/processed/global_union/GRM_global_union.npy`, `Prediction2/`)
-- Per-trial GRMs (`trained_models/*/GRM.npy`, `Prediction2/`; `Prediction5/output/`)
-- Combined GRM (`Prediction5/output/GP_GBLUP_CV00_combined-GRM_*.rds`)
-
-These must be regenerated locally; not stored in repository.
+VCFs, GRMs and trained models are gitignored (see `.gitignore` for the patterns) and must be
+regenerated locally -- a fresh clone cannot reproduce results without re-running the genotype steps.
 
 ### Prediction5-Specific Notes
 
@@ -241,7 +167,6 @@ These must be regenerated locally; not stored in repository.
 ## References & External Dependencies
 
 - **T3/Wheat Database**: wheat.triticeaetoolbox.org (BrAPI interface)
-- **R packages** (Prediction1/3): `BrAPI` (GitHub: TriticeaeToolbox/BrAPI.R), `EnvRtype` (GitHub: allogamous/EnvRtype), `CovCombR`
-- **Python packages** (Prediction2/4): numpy, pandas, scipy, scikit-learn
-- **Genomic methods**: VanRaden GRM, GBLUP (mixed-model), conditional expectation for breeding values
+- **Non-CRAN R packages** (not installable without the source): `BrAPI`
+  (GitHub: TriticeaeToolbox/BrAPI.R), `EnvRtype` (GitHub: allogamous/EnvRtype)
 - **Publications**: Jarquin et al. 2017 (cross-validation scenarios), Endelman 2011 (rrBLUP)

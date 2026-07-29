@@ -149,15 +149,43 @@ optimizer_settings <- function() {
     # one with more markers.
     redundant_acc_overlap = 0.90,
 
-    # Memory budget for a single project's dense dosage matrix (samples x markers x 4 B).
+    # Memory budget for a SINGLE PROJECT's dense dosage matrix (samples x markers x 4 B).
     # This is the SOLE control on cached marker density: each project is downloaded and
     # parsed ONCE, at the densest thinning that fits this budget (thin 1 = full markers for
     # anything that fits; a 7.5M-marker GBS panel is thinned to fit). Marker density is NOT a
     # search parameter -- this setting is the whole story (LESSONS.md #16) -- so set it
     # deliberately: a bigger budget caches denser (better GRMs, more disk/RAM per project),
-    # smaller thins large panels harder. Keep it well under total RAM, since
-    # choose_geno_sources loads all covering projects and the GRM needs headroom too.
+    # smaller thins large panels harder.
+    #
+    # PITFALL: this is NOT a cap on the process. choose_geno_sources loads EVERY project
+    # covering a trial at once, so the peak is the SUM over those projects -- on the T3 wheat
+    # archive, roughly 6x this number, and more on a trial covered by many panels. Use
+    # dosage_total_budget_bytes below to bound the sum; use this one to set density.
+    # Changing it changes marker density and therefore SCORES, and since density is not a
+    # config parameter the store cannot tell the difference on its own -- which is why
+    # every row records the budget it was produced under (the dosage_budget column).
     dosage_budget_bytes = 2e9,
+
+    # Cap on the COMBINED dense size of all projects loaded for one trial -- the setting that
+    # actually bounds a worker's peak, and hence how many workers fit in RAM. When the
+    # covering projects exceed it, choose_geno_sources serves the largest ones at a coarser
+    # marker thin (by column-subsetting the cache, so it costs no re-download) until the sum
+    # fits, and records that it did so in the evaluation's detail.
+    #
+    # Peak per worker runs to roughly 1.5-2x this figure (marker QC and the merge each need a
+    # copy), so size it at about a third of the RAM each worker may have:
+    #
+    #     workers x dosage_total_budget_bytes x 2  <  usable RAM
+    #
+    #   RAM     workers   dosage_budget_bytes   dosage_total_budget_bytes
+    #   256 GB     8              4e9                    10e9
+    #   512 GB     8              8e9                    20e9
+    #   512 GB     4             16e9                    40e9
+    #
+    # These are starting points from the cached panel sizes; replace them with the measured
+    # peak_r_mb distribution once a day of evaluations is in the store (report_memory.R).
+    # Inf disables the cap (the pre-existing behaviour: no bound on the sum at all).
+    dosage_total_budget_bytes = 12e9,
 
     # Re-densify a cached dosage when THIS machine's budget affords a denser parse than the
     # cache was thinned to (e.g. a laptop-thinned cache warmed onto a big-memory server): on
@@ -270,7 +298,44 @@ optimizer_settings <- function() {
     cache_backup_dir   = if (remote_server) file.path(Sys.getenv("OPTIMIZER_PATH"), "cache") else NULL,
     # Minimum minutes between in-process cache backups (0 disables). Throttled on wall time,
     # not iterations, so checkpoint_every = 1 doesn't rsync every step.
-    cache_sync_minutes = 120
+    cache_sync_minutes = 120,
+
+    # ---- several workers on one store -------------------------------------
+    # Multiple worker processes may run against ONE db_path and ONE cache_dir, each
+    # evaluating a different configuration and all contributing to the same archive (see
+    # README "Running several workers" and run_workers.sh). SQLite handles this fine here --
+    # one small INSERT per multi-minute evaluation -- given the WAL + busy_timeout that
+    # open_store sets. Two things follow:
+    #
+    #  1. db_path MUST BE ON LOCAL DISK. WAL coordinates through an mmap'd -shm file, which a
+    #     network filesystem does not provide; on NFS the pragma silently fails (open_store
+    #     warns) and concurrent writers risk corruption. So on a cluster point db_path at
+    #     /workdir and set db_backup_path to durable storage.
+    #  2. Only ONE worker does the shared-resource housekeeping (the report, the cache rsync,
+    #     the store backup) -- eight processes rsyncing one tree and overwriting one
+    #     report.md is pure waste. That is the "leader", worker 1.
+    #
+    # worker_id comes from the OPTIMIZER_WORKER environment variable that run_workers.sh
+    # sets, so the same settings.R serves every worker; a lone run is worker "1" (the leader)
+    # with no environment set up at all.
+    worker_id   = { w <- trimws(Sys.getenv("OPTIMIZER_WORKER")); if (nzchar(w)) w else "1" },
+    is_leader   = !nzchar(trimws(Sys.getenv("OPTIMIZER_WORKER"))) ||
+                  identical(trimws(Sys.getenv("OPTIMIZER_WORKER")), "1"),
+    # Where the leader copies the live store (VACUUM INTO; safe on a live database). This is
+    # what makes a local-disk db_path safe to lose. NULL disables it. Defaults to the durable
+    # location the store used to live at, so remote runs keep the same recovery story.
+    db_backup_path    = if (remote_server) file.path(Sys.getenv("OPTIMIZER_PATH"),
+                                                     "state", "evals_backup.sqlite") else NULL,
+    db_backup_minutes = 30,
+
+    # ---- concurrent cache access ------------------------------------------
+    # Workers share cache_dir, so the expensive downloads are shared too -- but only if they
+    # do not race. get_project_dosage holds a per-project lock across download -> parse ->
+    # cache-write (the download deletes any stale copy first, so two workers on one project
+    # would otherwise delete each other's in-flight file). A worker that finds the lock held
+    # waits for the winner's result rather than duplicating a multi-GB download.
+    lock_wait_minutes  = 60,   # how long to wait for another worker's download to finish
+    lock_stale_minutes = 90    # break a lock older than this (its holder died)
   )
   s <- .apply_overrides(defaults, .local_overrides())
   # The optimizer targets exactly one scheme per run (validate the effective value,

@@ -300,3 +300,45 @@ expectation, two by carrying the test lines as levels in the fitted model) — a
 is recorded rather than silent. `.oracle_degenerate()` no longer excuses the cell, so it is a real
 test again.
 **Lives in.** `R/pipeline.R::predict_test`, `R/diagnostics.R::.oracle_degenerate`.
+
+### 23. A per-project budget is not a process budget
+
+**Trap.** `dosage_budget_bytes` reads like a memory cap, and the obvious way to use a big-memory
+server was to raise it — the README's own example suggested `16e9`. But it caps ONE project's
+dense dosage matrix at parse time. `choose_geno_sources` loads *every* project covering a trial at
+once, so the process peak is the SUM. On the T3 wheat archive that is about 6x the per-project
+figure: two panels alone (project 8160 at 683 x 7.47M, 8124 at 811 x 3.04M) are 20.4 GB and 9.9 GB
+dense, and 66 cached projects total 27.9 GB at a 16e9 budget against 11.7 GB at 2e9.
+**Symptom.** Latent, because nothing measured it — there was no `gc()`, `object.size` or RSS call
+anywhere in the package, and no memory column in `evals`. It surfaced only as the question "can I
+run more than one worker?", whose honest answer at `16e9` was no: one worker could hold ~28 GB of
+integer dosage, and `.qc_markers` then doubled it by assigning a `double` (`mu` / `round(mu)`) into
+an integer matrix, silently coercing the whole thing to 8 bytes per cell on the first imputed
+column. Eight of those does not fit in 512 GB.
+**Now.** Three changes. `dosage_total_budget_bytes` bounds the sum, serving the largest panels
+coarser out of the existing cache (`get_project_dosage`'s `marker_thin`, so no re-download);
+`.qc_markers` keeps the matrix integer on the `mean_round` path and subsets once instead of twice,
+halving the dominant allocation with bit-identical GRMs; and every evaluation records `peak_r_mb`
+so the budget is set from measurement (`report_memory.R`) rather than from arithmetic.
+**Lives in.** `R/pipeline.R::.dosage_thin_plan` / `.qc_markers`, `R/memory.R`, `report_memory.R`,
+`monitor_memory.sh`.
+
+### 24. "SQLite allows one writer" is true and was still the wrong conclusion
+
+**Trap.** The README told you not to point parallel jobs at one `evals.sqlite` — lock contention,
+corruption — and the code agreed: `open_store` was a bare `dbConnect` with no WAL and a **zero**
+busy timeout, so a second writer got `SQLITE_BUSY` immediately rather than waiting.
+**Symptom.** Throughput was capped at one evaluation at a time on a machine with cores to spare,
+for a workload that writes one small row per multi-minute evaluation — contention that barely
+exists. The real obstacles were elsewhere and unstated: an unguarded `ALTER TABLE` migration loop
+that kills whichever worker loses the startup race, `.cache_save` writing `saveRDS` straight to the
+final path (so a reader, or the `dosage_*` glob, can hit a half-written file), and
+`.ensure_project_vcf` unlinking every copy before downloading — two workers on one project delete
+each other's in-flight multi-GB VCF and neither finishes.
+**Now.** WAL + a 60 s busy timeout, migrations that tolerate losing the race, atomic
+cache writes (temp + `rename`), and a per-project download lock where the loser waits for the
+winner's result instead of repeating the download. The remaining constraint is real and worth
+stating plainly: **WAL cannot work over NFS**, so the live store must be on local disk with the
+leader worker backing it up via `VACUUM INTO`.
+**Lives in.** `R/store.R`, `R/data_access.R::.with_cache_lock` / `.cache_save`, `run_workers.sh`,
+`tests/test_concurrency.R`.

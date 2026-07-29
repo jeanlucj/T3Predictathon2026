@@ -35,8 +35,31 @@ config_from_json <- function(json) {
 }
 
 # --- store lifecycle -------------------------------------------------------
-open_store <- function(path) {
+# SEVERAL WORKERS MAY SHARE ONE STORE. Three settings make that safe, and they must be
+# issued before anything else touches the database:
+#   journal_mode = WAL  readers never block the writer and vice versa. WAL is a property of
+#                       the FILE (it persists), and it CANNOT work on a network filesystem --
+#                       it coordinates through an mmap'd -shm index, which NFS does not
+#                       provide. That is why the store belongs on local disk (/workdir) with
+#                       a periodic backup to durable storage; see settings$db_backup_path.
+#                       We verify the pragma actually took and warn loudly if it did not,
+#                       because the failure is silent and the consequence is corruption.
+#   busy_timeout        without it SQLite returns SQLITE_BUSY *immediately* on contention
+#                       rather than waiting. 60 s is enormous relative to the workload here
+#                       (one small INSERT per multi-minute evaluation).
+#   synchronous = NORMAL the durable copy is made by the backup, and a fsync per INSERT buys
+#                       nothing against a workload whose unit of loss is one evaluation.
+open_store <- function(path, busy_timeout_ms = 60000) {
   con <- DBI::dbConnect(RSQLite::SQLite(), path)
+  DBI::dbGetQuery(con, sprintf("PRAGMA busy_timeout = %d", as.integer(busy_timeout_ms)))
+  jm <- tryCatch(DBI::dbGetQuery(con, "PRAGMA journal_mode = WAL")$journal_mode[1],
+                 error = function(e) NA_character_)
+  if (!identical(tolower(jm %||% ""), "wal"))
+    warning("could not put the store in WAL mode (got '", jm %||% "?", "') at ", path,
+            ".\nThis is what a network filesystem looks like. ONE worker only, or move ",
+            "db_path to local disk (/workdir) and back it up with db_backup_path.",
+            call. = FALSE)
+  DBI::dbExecute(con, "PRAGMA synchronous = NORMAL")
   DBI::dbExecute(con, "
     CREATE TABLE IF NOT EXISTS evals (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,17 +86,51 @@ open_store <- function(path) {
   # surrogate can be trained on only the in-domain slice of this shared store.
   # They deliberately reuse the catalogue's column names so the exact same
   # target-domain predicate (.apply_target_domain) filters both sampling and evals.
+  # peak_r_mb/rss_mb are this evaluation's memory cost (R/memory.R); `worker` names
+  # which concurrent worker produced the row; dosage_budget records the marker-density
+  # budget in force, WITHOUT which rows made at different densities are silently
+  # incomparable (density is not a config parameter -- see settings$dosage_budget_bytes).
   have <- DBI::dbListFields(con, "evals")
   add <- c(detail = "TEXT", study_name = "TEXT", program_name = "TEXT",
-           location_name = "TEXT", year = "INTEGER")
+           location_name = "TEXT", year = "INTEGER",
+           peak_r_mb = "REAL", rss_mb = "REAL", worker = "TEXT", dosage_budget = "REAL")
   for (col in names(add)) {
-    if (!(col %in% have))
-      DBI::dbExecute(con, sprintf("ALTER TABLE evals ADD COLUMN %s %s", col, add[[col]]))
+    if (col %in% have) next
+    # Two workers starting together both see the column missing and both try to add it.
+    # The loser gets "duplicate column name" and must shrug, not die -- so swallow the
+    # error and confirm the column exists afterwards either way.
+    tryCatch(
+      DBI::dbExecute(con, sprintf("ALTER TABLE evals ADD COLUMN %s %s", col, add[[col]])),
+      error = function(e) {
+        if (!(col %in% DBI::dbListFields(con, "evals"))) stop(e)   # a real failure
+      })
   }
   con
 }
 
 close_store <- function(con) invisible(DBI::dbDisconnect(con))
+
+# Copy the live store to durable storage. Needed because WAL forces the working store onto
+# LOCAL disk (see open_store), which on a cluster is the disk that gets wiped -- the store is
+# the one file whose loss costs real work.
+#
+# `VACUUM INTO` is the right tool: it runs against a live, concurrently-written database and
+# emits a single self-contained file with no WAL sidecar, so the backup is directly usable.
+# It refuses to overwrite, hence the write-to-temp-then-rename (which also means a backup
+# interrupted half-way never replaces a good one).
+backup_store <- function(con, dest) {
+  if (is.null(dest) || !nzchar(dest)) return(invisible(FALSE))
+  dir.create(dirname(dest), showWarnings = FALSE, recursive = TRUE)
+  tmp <- paste0(dest, ".tmp", Sys.getpid())
+  ok <- tryCatch({
+    unlink(tmp)
+    DBI::dbExecute(con, sprintf("VACUUM INTO '%s'", gsub("'", "''", tmp)))
+    file.rename(tmp, dest)
+  }, error = function(e) { message("store backup -> ", dest, " failed: ",
+                                   conditionMessage(e)); FALSE })
+  if (!isTRUE(ok)) unlink(tmp)
+  invisible(isTRUE(ok))
+}
 
 # Append one evaluation. `score` may be NA when the pipeline failed (status
 # records why); failures are recorded too, so the optimizer learns not to revisit
@@ -82,12 +139,15 @@ store_eval <- function(con, cfg, trial_id, scheme, score, n_test, status,
                        reason = NA_character_, detail = NA_character_,
                        seconds = NA_real_,
                        study_name = NA_character_, program_name = NA_character_,
-                       location_name = NA_character_, year = NA_integer_) {
-  invisible(DBI::dbExecute(con,
+                       location_name = NA_character_, year = NA_integer_,
+                       peak_r_mb = NA_real_, rss_mb = NA_real_,
+                       worker = NA_character_, dosage_budget = NA_real_) {
+  invisible(.with_busy_retry(function() DBI::dbExecute(con,
     "INSERT INTO evals
        (config_hash, config_json, trial_id, study_name, program_name, location_name, year,
-        scheme, score, n_test, status, reason, detail, seconds, ts)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        scheme, score, n_test, status, reason, detail, seconds, ts,
+        peak_r_mb, rss_mb, worker, dosage_budget)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     params = list(config_hash(cfg), config_to_json(cfg), trial_id,
                   study_name %||% NA_character_, program_name %||% NA_character_,
                   location_name %||% NA_character_,
@@ -96,7 +156,24 @@ store_eval <- function(con, cfg, trial_id, scheme, score, n_test, status,
                   ifelse(is.finite(score), score, NA_real_),
                   as.integer(n_test), status, reason,
                   detail %||% NA_character_,
-                  as.numeric(seconds), format(Sys.time(), tz = "UTC"))))
+                  as.numeric(seconds), format(Sys.time(), tz = "UTC"),
+                  as.numeric(peak_r_mb %||% NA_real_), as.numeric(rss_mb %||% NA_real_),
+                  as.character(worker %||% NA_character_),
+                  as.numeric(dosage_budget %||% NA_real_)))))
+}
+
+# Belt-and-braces around the busy_timeout set in open_store: retry a write that still comes
+# back locked. An evaluation costs minutes, so losing one to a lock that a few seconds of
+# waiting would clear is a bad trade. Anything that is NOT a lock error is re-raised at once.
+.with_busy_retry <- function(thunk, tries = 5L, base_delay = 1) {
+  for (attempt in seq_len(tries)) {
+    r <- tryCatch(thunk(), error = function(e) e)
+    if (!inherits(r, "error")) return(r)
+    if (!grepl("database is locked|database table is locked|SQLITE_BUSY",
+               conditionMessage(r), ignore.case = TRUE)) stop(r)
+    if (attempt == tries) stop(r)
+    Sys.sleep(base_delay * 2^(attempt - 1L) + stats::runif(1))
+  }
 }
 
 # All evaluations as a tibble (config_json kept as text; parse on demand).

@@ -264,16 +264,73 @@ patterns:
   `evals.sqlite`.
 
 SLURM caveats specific to this optimizer:
-- **One writer per store.** SQLite allows a single writer; do **not** point a
-  SLURM *array* of parallel jobs at the same `evals.sqlite` (lock contention /
-  corruption). The loop is currently sequential, so use one job per store. To
-  use many cores, give one job several `--cpus-per-task` for threaded linear
-  algebra rather than launching concurrent writers. (Parallel evaluation with
-  separate per-worker stores merged afterward is a noted future enhancement.)
+- **Several workers CAN share one store** — see the next section. The one hard
+  requirement is that `db_path` be on **local disk**, which on a cluster means
+  `/workdir`, not an NFS home directory.
 - **Stop cleanly with `max_hours`, not just the STOP file.** The STOP file is for
   interactive use; for batch, `max_hours < --time` is what guarantees a graceful
   final checkpoint.
 - **Confirm internet on the partition you use**, or pre-cache (point 2 above).
+
+### Running several workers
+
+One evaluation takes minutes to hours, so throughput comes from running several
+workers at once. They are independent processes against one `evals.sqlite` and one
+cache: each picks its own configuration, and all of them feed the same archive and
+the same surrogate.
+
+```bash
+./run_workers.sh 8        # 8 workers, 2 BLAS threads each
+touch state/STOP          # stops all of them
+```
+
+Three things make this safe, and one of them is on you:
+
+- **`db_path` must be on local disk.** `open_store` puts SQLite in WAL mode, which is
+  what lets workers write concurrently — and WAL *cannot* work over NFS, because it
+  coordinates through an mmap'd `-shm` file. `open_store` warns if the pragma did not
+  take; heed it. Set this in `settings.local.R`:
+  ```r
+  settings_override <- list(
+    db_path        = "/workdir/<user>/optimizer/evals.sqlite",   # local: WAL works
+    db_backup_path = "~/t3_optimizer/state/evals_backup.sqlite"  # durable copy
+  )
+  ```
+  The leader copies the store to `db_backup_path` every `db_backup_minutes` with
+  `VACUUM INTO`, which is safe on a live database — so a wiped `/workdir` costs at
+  most one interval.
+- **Worker 1 is the leader.** It alone writes `state/report.md`, rsyncs the cache and
+  backs up the store; eight processes doing that to the same files is pure waste.
+  `run_workers.sh` sets `OPTIMIZER_WORKER` to make this so.
+- **The shared cache is locked per project.** Downloading a project's VCF clears any
+  existing copy first, so two workers on one project would delete each other's
+  in-flight multi-GB file. A worker that loses the lock waits for the winner's result
+  instead of repeating the download.
+
+**How many workers?** Memory, not cores, is the binding constraint: R's heap is
+per-process, so N workers cost N times the memory of one. Get the number from
+measurement, not arithmetic:
+
+```bash
+./monitor_memory.sh &        # attaches to a RUNNING job; no restart needed
+Rscript report_memory.R      # per-evaluation peaks + a "how many workers fit" table
+```
+
+The setting that bounds a worker's peak is **`dosage_total_budget_bytes`**, not
+`dosage_budget_bytes` — the latter caps one project at parse time, while the pipeline
+holds *every* project covering a trial at once. Starting points, to be replaced by
+what `report_memory.R` measures:
+
+| RAM | workers | `dosage_budget_bytes` | `dosage_total_budget_bytes` |
+|---|---|---|---|
+| 256 GB | 8 | 4e9 | 10e9 |
+| 512 GB | 8 | 8e9 | 20e9 |
+| 512 GB | 4 | 16e9 | 40e9 |
+
+Note that changing `dosage_budget_bytes` changes marker density and therefore scores,
+and density is not a configuration parameter — so rows made under different budgets
+are not comparable. Every row records the budget it ran under (`dosage_budget`), and
+`report_memory.R` warns when a store mixes them.
 
 The exact module names, queue/partition names, and `/workdir` vs `/home` policy
 vary -- check the current Cornell BioHPC documentation for specifics.

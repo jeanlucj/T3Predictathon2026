@@ -54,10 +54,17 @@ optimizer_step <- function(con, settings, conn = NULL) {
              study_name    = trial$study_name %||% NA_character_,
              program_name  = trial$program    %||% NA_character_,
              location_name = trial$location   %||% NA_character_,
-             year          = trial$year       %||% NA_integer_)
+             year          = trial$year       %||% NA_integer_,
+             # What this evaluation cost in memory, and under which marker-density budget --
+             # the two numbers that decide how many workers this machine can carry.
+             peak_r_mb     = ev$peak_r_mb %||% NA_real_,
+             rss_mb        = ev$rss_mb    %||% NA_real_,
+             worker        = settings$worker_id %||% NA_character_,
+             dosage_budget = settings$dosage_budget_bytes %||% NA_real_)
   # scores/statuses kept as length-1 vectors so the main-loop logging is unchanged.
   list(source = choice$source, trial = trial$id,
-       scores = ev$score, statuses = ev$status, ei = choice$ei %||% NA_real_)
+       scores = ev$score, statuses = ev$status, ei = choice$ei %||% NA_real_,
+       peak_r_mb = ev$peak_r_mb %||% NA_real_)
 }
 
 # The main loop. Reusable from tests with a small max_iters.
@@ -69,8 +76,14 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
   # Warm the work cache from its durable backup if it is empty (fresh node), and flush it back
   # on exit (covers a clean stop and an R-level error; a SIGKILL needs the external safety net
   # in the README). Periodic in-loop backups below bound what an abrupt kill can lose.
-  restore_cache_from_backup(settings)
-  on.exit(sync_cache_to_backup(settings), add = TRUE)
+  #
+  # Leader only. Workers share one cache_dir, so N of them rsyncing the same tree in parallel
+  # buys nothing and fights for the disk; worker 1 does it on everyone's behalf.
+  leader <- isTRUE(settings$is_leader %||% TRUE)
+  if (leader) {
+    restore_cache_from_backup(settings)
+    on.exit(sync_cache_to_backup(settings), add = TRUE)
+  }
 
   # Real mode needs a live BrAPI connection (made once, reused), logged in from the
   # T3_USERNAME/T3_PASSWORD environment credentials. Simulate mode never touches the network.
@@ -92,12 +105,14 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
 
   start <- Sys.time()
   last_cache_sync <- start
+  last_db_backup  <- start
   start_n <- n_evals(con)
   iter <- 0
   consec_sample_fail <- 0L
   fatal_hit <- FALSE
-  message(sprintf("[%s] optimizer start (simulate=%s); %d evaluations already in store",
-                  format(start), settings$simulate, start_n))
+  message(sprintf("[%s] optimizer start (simulate=%s, worker=%s%s); %d evaluations already in store",
+                  format(start), settings$simulate, settings$worker_id %||% "1",
+                  if (leader) ", leader" else "", start_n))
 
   repeat {
     if (file.exists(settings$stop_file)) {
@@ -130,26 +145,40 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
     } else {
       consec_sample_fail <- 0L
       if (!is.null(step)) {
-        message(sprintf("[%s] iter %d  src=%-16s trial=%s  scores=%s  status=%s",
+        message(sprintf("[%s] iter %d  src=%-16s trial=%s  scores=%s  status=%s  peak=%s",
                         format(Sys.time()), iter, step$source, step$trial,
                         paste(sprintf("%.3f", step$scores), collapse = "/"),
-                        paste(step$statuses, collapse = "/")))
+                        paste(step$statuses, collapse = "/"),
+                        fmt_mb(step$peak_r_mb)))
       }
     }
-    if (iter %% settings$checkpoint_every == 0) {
+    # The report summarizes the WHOLE store, so every worker would write the same file from
+    # the same data -- leader only, and it covers all workers' evaluations either way.
+    if (leader && iter %% settings$checkpoint_every == 0) {
       tryCatch(write_report(con, settings),
                error = function(e) message("report error: ", conditionMessage(e)))
     }
     # Time-throttled cache backup (additive rsync; cheap). Bounds what an abrupt kill loses to
     # roughly one interval of freshly-downloaded cache.
     sync_min <- settings$cache_sync_minutes %||% 0
-    if (sync_min > 0 &&
+    if (leader && sync_min > 0 &&
         as.numeric(difftime(Sys.time(), last_cache_sync, units = "mins")) >= sync_min) {
       sync_cache_to_backup(settings); last_cache_sync <- Sys.time()
     }
+    # Copy the store to durable storage. Needed because running several workers puts db_path
+    # on local disk (WAL cannot work over NFS -- see settings$worker_id), and the store is the
+    # one file whose loss costs real work.
+    db_min <- settings$db_backup_minutes %||% 0
+    if (leader && db_min > 0 && !is.null(settings$db_backup_path) &&
+        as.numeric(difftime(Sys.time(), last_db_backup, units = "mins")) >= db_min) {
+      backup_store(con, settings$db_backup_path); last_db_backup <- Sys.time()
+    }
   }
 
-  write_report(con, settings)
+  if (leader) {
+    write_report(con, settings)
+    backup_store(con, settings$db_backup_path)
+  }
   message(sprintf("[%s] optimizer stop; %d evaluations in store (this run: %d)",
                   format(Sys.time()), n_evals(con), n_evals(con) - start_n))
   invisible(con)

@@ -46,10 +46,99 @@ library(tidyverse)
 }
 
 # Write `value` to the nested cache path, creating the category subfolder. Returns the path.
+#
+# ATOMIC: written to a temporary name in the same directory and renamed into place, so a
+# cache file never exists in a half-written state. rename(2) within one filesystem is atomic,
+# so a reader either sees the previous file or the complete new one -- never a truncated RDS.
+# This matters in two places even with the download lock: several workers share cache_dir and
+# may write the same key concurrently, and .find_densest_dosage GLOBS for dosage files, so a
+# partially-written one would otherwise be matched and read.
 .cache_save <- function(settings, category, identifier = NULL, value, ext = "rds") {
   p <- .cache_path(settings, category, identifier, ext)
   dir.create(dirname(p), showWarnings = FALSE, recursive = TRUE)
-  saveRDS(value, p); invisible(p)
+  # The pid keeps two writers' temporaries apart; the leading dot keeps them out of the
+  # dosage_*.rds glob. Cleaned up on failure so a dead write leaves nothing behind.
+  tmp <- file.path(dirname(p), sprintf(".tmp%d_%s", Sys.getpid(), basename(p)))
+  ok <- tryCatch({ saveRDS(value, tmp); file.rename(tmp, p) }, error = function(e) e)
+  if (inherits(ok, "error") || !isTRUE(ok)) {
+    unlink(tmp)
+    if (inherits(ok, "error")) stop(ok)
+    stop("could not write cache file ", p)
+  }
+  invisible(p)
+}
+
+# --- cross-worker locking --------------------------------------------------
+# Several workers share one cache_dir (see settings$worker_id). Downloading a project's VCF
+# is the one operation they must not do at the same time: .ensure_project_vcf deletes any
+# existing copy before it downloads, and get_project_dosage deletes the VCF once parsed, so
+# two workers on one project delete each other's in-flight multi-GB file. Neither finishes.
+#
+# dir.create() is the lock primitive: it is atomic on POSIX and reports FALSE (with a warning)
+# rather than succeeding when the directory already exists, so exactly one caller can win.
+#
+# A worker that does NOT get the lock does not queue up to repeat the work -- it waits for the
+# winner's result, then re-checks the cache (`ready`), which is normally already there.
+.lock_dir <- function(settings, key)
+  file.path(settings$cache_dir, "locks", paste0(key, ".lock"))
+
+.acquire_lock <- function(settings, key) {
+  p <- .lock_dir(settings, key)
+  dir.create(dirname(p), showWarnings = FALSE, recursive = TRUE)
+  # A lock whose holder died (SIGKILL, node reboot) would otherwise block the key forever.
+  # Age is judged on the lock's own mtime, so a live holder that is merely slow is safe as
+  # long as lock_stale_minutes exceeds a realistic download+parse.
+  stale <- as.numeric(settings$lock_stale_minutes %||% 90)
+  if (dir.exists(p)) {
+    age <- as.numeric(difftime(Sys.time(), file.info(p)$mtime, units = "mins"))
+    if (is.finite(age) && age > stale) {
+      message(sprintf("lock %s is %.0f min old (> %g) -- assuming its holder died, breaking it",
+                      key, age, stale))
+      unlink(p, recursive = TRUE)
+    }
+  }
+  if (!suppressWarnings(dir.create(p, showWarnings = FALSE))) return(FALSE)
+  writeLines(sprintf("host=%s pid=%d worker=%s time=%s", Sys.info()[["nodename"]],
+                     Sys.getpid(), settings$worker_id %||% "1", format(Sys.time())),
+             file.path(p, "owner"))
+  TRUE
+}
+
+.release_lock <- function(settings, key) invisible(unlink(.lock_dir(settings, key), recursive = TRUE))
+
+# Run `expr` under the lock for `key`. If another worker holds it, wait for `ready()` to
+# become TRUE (its result landing in the cache) rather than duplicating the work, and return
+# `on_ready()`. Falls through to doing the work itself if the wait times out -- a slow peer
+# must not mean this worker never makes progress.
+.with_cache_lock <- function(settings, key, expr, ready = function() FALSE,
+                             on_ready = function() NULL) {
+  held <- .acquire_lock(settings, key)
+  if (!held) {
+    wait_s <- 60 * as.numeric(settings$lock_wait_minutes %||% 60)
+    message(sprintf("waiting for another worker to finish %s (up to %.0f min)", key, wait_s / 60))
+    waited <- 0
+    while (waited < wait_s && !held) {
+      Sys.sleep(15); waited <- waited + 15
+      # The good case: the holder finished and its result is in the cache.
+      if (isTRUE(ready())) {
+        message(sprintf("%s: another worker produced it after %.0f min -- using that",
+                        key, waited / 60))
+        return(on_ready())
+      }
+      # Otherwise keep trying for the lock: it becomes free when the holder releases it, or
+      # when .acquire_lock breaks it as stale. Either way this worker then does the work.
+      held <- .acquire_lock(settings, key)
+    }
+    if (!held) {
+      # Timed out with the lock still held elsewhere. Proceed WITHOUT it rather than fail:
+      # duplicated work is wasteful, never wrong (.cache_save is atomic).
+      message(sprintf("%s: gave up waiting -- proceeding without the lock", key))
+      return(force(expr))
+    }
+    message(sprintf("%s: took the lock after %.0f min of waiting", key, waited / 60))
+  }
+  on.exit(.release_lock(settings, key), add = TRUE)
+  force(expr)
 }
 
 # --- BrAPI auth + retry ----------------------------------------------------
@@ -633,22 +722,51 @@ get_project_dosage <- function(project_id, keep_samples, conn, settings,
   # The check is cheap (from stat_<pid>); acting costs a one-time re-download (the VCF was
   # deleted), and only ever fires for projects that were thinned (thin > 1). Disable with
   # settings$dosage_redensify = FALSE.
-  cd <- .find_densest_dosage(settings, pid)
-  if (!is.null(cd)) {
+  #
+  # The cached dosage IF it is already as dense as this machine's budget wants, else NULL.
+  # Used three times: the fast path below, the "has another worker produced it?" test while
+  # waiting on the lock, and the re-check after taking the lock.
+  dense_enough <- function() {
+    cd <- .find_densest_dosage(settings, pid)
+    if (is.null(cd)) return(NULL)
     e_ideal <- cd$thin
     if (!isFALSE(settings$dosage_redensify) && cd$thin > 1L) {
       st <- tryCatch(readRDS(.cache_existing(settings, "stat", pid)), error = function(e) NULL)
       if (is.list(st))
         e_ideal <- .cache_thin(st$n_samples, st$n_markers, settings$dosage_budget_bytes)
     }
-    if (e_ideal >= cd$thin) return(serve(readRDS(cd$path), cd$thin))   # cache is dense enough
-    message(sprintf(
-      "project %s: cached at every %dth marker, but this budget affords every %dth -- re-downloading to re-densify",
-      pid, cd$thin, e_ideal))
-    unlink(cd$path)                                                    # supersede the coarse cache
+    if (e_ideal >= cd$thin) cd else NULL
   }
+  serve_cached <- function(cd) if (is.null(cd)) NULL else serve(readRDS(cd$path), cd$thin)
 
-  # Miss -> fetch, measure, and parse ONCE at the densest thin the budget allows.
+  hit <- dense_enough()
+  if (!is.null(hit)) return(serve_cached(hit))                 # cache is dense enough
+
+  coarse <- .find_densest_dosage(settings, pid)                # present but too coarse?
+  if (!is.null(coarse))
+    message(sprintf(
+      "project %s: cached at every %dth marker, but this budget affords denser -- re-downloading to re-densify",
+      pid, coarse$thin))
+
+  # Miss (or too coarse) -> download and parse, which is what must not happen twice at once:
+  # .ensure_project_vcf clears any existing copy before downloading and the VCF is deleted
+  # after parsing, so two workers on one project destroy each other's in-flight file. A
+  # worker that loses the lock waits for the winner's cache rather than repeating a
+  # multi-GB download.
+  .with_cache_lock(settings, paste0("dosage_", pid),
+    ready    = function() !is.null(dense_enough()),
+    on_ready = function() serve_cached(dense_enough()),
+    expr     = {
+      # Re-check under the lock: a worker may have finished between the fast path and here.
+      hit <- dense_enough()
+      if (!is.null(hit)) serve_cached(hit)
+      else .fetch_and_cache_dosage(pid, project_id, conn, settings, serve)
+    })
+}
+
+# Download, measure and parse a project ONCE at the densest thin the budget allows, cache it,
+# and return it served at the caller's requested thin. Callers hold the project's lock.
+.fetch_and_cache_dosage <- function(pid, project_id, conn, settings, serve) {
   path <- .ensure_project_vcf(project_id, conn, settings)      # download + integrity check
   rm_raw <- function() { base <- sub("[.]gz$", "", path); unlink(c(base, paste0(base, ".gz"))) }
   st <- tryCatch(.vcf_stat(path), error = function(e) e)
@@ -668,13 +786,20 @@ get_project_dosage <- function(project_id, keep_samples, conn, settings,
       "project %s: %d markers x %d samples exceeds the %.1f GB dosage budget; caching at every %dth marker",
       pid, st$n_markers, st$n_samples, (settings$dosage_budget_bytes %||% 2e9) / 1e9, e))
   sz <- file.info(path)$size
+  # Any coarser cache this parse supersedes. Removed only AFTER the new one is safely in
+  # place (the two have different filenames), so there is never a moment with no cache --
+  # which a concurrent reader would otherwise see as a cache miss and re-download.
+  old <- .find_densest_dosage(settings, pid)
   d  <- .vcf_to_dosage(path, NULL, e)
   if (is.null(d)) {                                            # complete VCF, no genotypes
     .cache_save(settings, "unparseable", pid, list(reason = "no usable genotypes", when = Sys.time()))
     rm_raw(); return(NULL)
   }
   tag <- if (e > 1L) paste0("_thin", e) else ""
-  .cache_save(settings, "dosage", paste0(pid, tag, "_sz", sz), d)
+  new_path <- .cache_save(settings, "dosage", paste0(pid, tag, "_sz", sz), d)
+  if (!is.null(old) && !identical(normalizePath(old$path, mustWork = FALSE),
+                                  normalizePath(new_path, mustWork = FALSE)))
+    unlink(old$path)
   rm_raw()                                                     # cache written; raw redundant
   serve(d, e)
 }

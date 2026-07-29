@@ -50,6 +50,10 @@ sample_trial <- function(settings, conn = NULL) {
 # ---------------------------------------------------------------------------
 evaluate_config_on_trial <- function(cfg, trial, scheme, settings, conn = NULL) {
   t0 <- Sys.time()
+  # Bracket this evaluation's memory peak (R/memory.R). Done before the pipeline runs and
+  # read after it -- including after a failure, since an evaluation that dies of memory
+  # pressure is exactly the one whose footprint we want on record.
+  mem_reset()
   # Bound one evaluation's wall time (Inf = no bound; settings$max_eval_minutes explains why
   # that is the default). `transient = TRUE` restores the previous limit when this frame exits.
   # R checks the limit only at interpreter checkpoints, so a long call inside compiled code (a
@@ -95,6 +99,8 @@ evaluate_config_on_trial <- function(cfg, trial, scheme, settings, conn = NULL) 
     })
   res$detail <- res$detail %||% NA_character_
   res$seconds <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+  res$peak_r_mb <- mem_peak_mb()
+  res$rss_mb    <- proc_rss_mb()
   res
 }
 
