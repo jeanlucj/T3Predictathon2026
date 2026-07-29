@@ -172,8 +172,9 @@ optimizer_settings <- function() {
     # marker thin (by column-subsetting the cache, so it costs no re-download) until the sum
     # fits, and records that it did so in the evaluation's detail.
     #
-    # MEASURED (2026-07-29): one worker at dosage_budget_bytes = 16e9 held 63 GB RSS on a
-    # 128 GB node -- about 2.3 GB of process memory per GB of resident dosage. So:
+    # MEASURED (2026-07-29): one worker at dosage_budget_bytes = 16e9, with NO total cap set,
+    # held 63 GB RSS on a 128 GB node -- about 2.3 GB of process memory per GB of resident
+    # dosage. So:
     #
     #     workers x dosage_total_budget_bytes x 2.3  <  ~0.7 x RAM
     #
@@ -183,10 +184,16 @@ optimizer_settings <- function() {
     #   512 GB     4             16e9                    35e9
     #   512 GB     8              8e9                    18e9
     #
-    # 16e9 supports exactly ONE worker -- it is not compatible with parallelism. Start at half
-    # the worker count you want and scale up against the measured peak_r_mb distribution
-    # (report_memory.R): the 2.3x multiplier comes from a single node-hour and is more likely
-    # too low than too high.
+    # That table is for building a FRESH cache. With a cache already on disk, do NOT lower
+    # dosage_budget_bytes: get_project_dosage only ever re-parses to make a cache DENSER, so
+    # lowering re-thins nothing and costs a full re-download for worse density. Leave it where
+    # the cache was built and let this cap do the bounding -- it thins at serve time by
+    # column-subsetting the cache, for free. An existing 16e9 cache runs 8 workers on a 512 GB
+    # node at ~24 GB of dosage each with this set to 18e9.
+    #
+    # Start at half the worker count you want and scale up against the measured peak_r_mb
+    # distribution (report_memory.R): the 2.3x multiplier comes from a single node-hour and is
+    # more likely too low than too high.
     # Inf disables the cap (the pre-existing behaviour: no bound on the sum at all).
     dosage_total_budget_bytes = 12e9,
 

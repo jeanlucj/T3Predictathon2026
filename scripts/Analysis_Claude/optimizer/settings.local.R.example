@@ -19,9 +19,11 @@ settings_override <- list(
   # dosage_budget_bytes caps ONE project's dense dosage matrix at parse time; it sets marker
   # density. dosage_total_budget_bytes caps the SUM over every project covering a trial,
   # which is what actually bounds a worker's peak -- the pipeline holds them all at once.
-  # MEASURED (2026-07-29): one worker at dosage_budget_bytes = 16e9 held 63 GB RSS on a
-  # 128 GB node -- about 2.3 GB of process memory per GB of resident dosage. 16e9 supports
-  # exactly ONE worker. The table below is derived from that anchor:
+  # MEASURED (2026-07-29): one worker at dosage_budget_bytes = 16e9, with NO total cap set,
+  # held 63 GB RSS on a 128 GB node -- about 2.3 GB of process memory per GB of resident
+  # dosage. Uncapped, 16e9 therefore supports exactly ONE worker. WITH the cap it is fine at
+  # 8 (see below): the cap, not the per-project budget, is what bounds a worker.
+  # This table is for building a FRESH cache:
   #
   #   RAM      workers   dosage_budget_bytes   dosage_total_budget_bytes
   #   256 GB      4              8e9                    19e9
@@ -29,13 +31,20 @@ settings_override <- list(
   #   512 GB      4             16e9                    35e9
   #   512 GB      8              8e9                    18e9
   #
+  # With a cache ALREADY on disk, do NOT lower dosage_budget_bytes: get_project_dosage only
+  # ever re-parses to make a cache denser, so lowering re-thins nothing and you would pay a
+  # full re-download to get WORSE density. Leave it at whatever the cache was built with and
+  # let dosage_total_budget_bytes bound memory -- the cap thins at serve time by
+  # column-subsetting the cache, which costs nothing. E.g. an existing 16e9 cache on a 512 GB
+  # node runs 8 workers at ~24 GB of dosage each (~193 GB total) with the cap at 18e9.
+  #
   # Start at half the worker count you want, then scale up after checking: run
   # ./monitor_memory.sh against a live run, then Rscript report_memory.R.
   # CAUTION: changing dosage_budget_bytes changes marker density and therefore scores, and
   # density is not a config parameter -- rows made under different budgets are not comparable
   # (each row records its dosage_budget so the mixing is at least visible).
-  # dosage_budget_bytes       = 8e9,     # 512 GB node, 8 workers
-  # dosage_total_budget_bytes = 18e9,
+  # dosage_budget_bytes       = 16e9,    # keep at whatever the CACHE was built with
+  # dosage_total_budget_bytes = 18e9,    # 512 GB, 8 workers -- this is what bounds memory
 
   # --- several workers on one store --------------------------------------
   # Required to run ./run_workers.sh: SQLite's WAL mode cannot work over NFS, so the live

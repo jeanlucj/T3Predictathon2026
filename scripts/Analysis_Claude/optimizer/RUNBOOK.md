@@ -32,7 +32,7 @@ Stopping:
 touch "$STOP_FILE"                           # halts all workers, and the monitor
 ```
 
-Two things that bite here:
+Two things that matter here:
 
 **`source ./optimizer_paths.sh` first.** `OPTIMIZER_PATH` is set in `.Renviron`, which **only
 R reads** — in a shell it is empty, so `"$OPTIMIZER_PATH/state/STOP"` expands to
@@ -68,7 +68,9 @@ Without it the first command occupies the terminal and the rest never run.
       > `.Renviron` — you lose `OPTIMIZER_PATH` *and* the T3 credentials, and the run
       > dies at login looking like a missing `.Renviron`.
 - [ ] **Packages installed** — this takes a while on a fresh machine. Includes the two
-      non-CRAN ones: `BrAPI.R` and `T3BrapiHelpers`.
+      non-CRAN ones: `BrAPI.R` and `T3BrapiHelpers`. Confirm with
+      `Rscript -e 'ip <- installed.packages(); which(ip[,1] == "BrAPI")'`.
+      
 - [ ] **Tests pass.**
       ```bash
       cd scripts/Analysis_Claude/optimizer
@@ -105,8 +107,8 @@ settings_override <- list(
   simulate                  = FALSE,
   optimize_scheme           = "CV00",
   max_hours                 = 23.5,
-  dosage_budget_bytes       = 8e9,      # 512 GB node, 8 workers
-  dosage_total_budget_bytes = 18e9,
+  dosage_budget_bytes       = 16e9,     # keep at whatever the CACHE was built with
+  dosage_total_budget_bytes = 18e9,     # 512 GB, 8 workers -- this is what bounds memory
   db_path        = "/workdir/jj332/T3optimizer/evals.sqlite",
   db_backup_path = "/home/jj332/T3optimizer/state/evals_backup.sqlite"
 )
@@ -118,11 +120,11 @@ settings_override <- list(
 `dosage_total_budget_bytes` caps the **sum over every project covering a trial**, which is
 what actually bounds a worker's peak.
 
-**Measured anchor (2026-07-29):** one worker at `dosage_budget_bytes = 16e9` held
-**63 GB RSS** on a 128 GB node — half the machine for a single process. That works out to
-about **2.3 GB of process memory per GB of resident dosage**, which is what the table below
-is derived from. At 16e9 you can run *one* worker; it is not a setting compatible with
-parallelism.
+**Measured anchor (2026-07-29):** one worker at `dosage_budget_bytes = 16e9`, with **no total
+cap set**, held **63 GB RSS** on a 128 GB node — half the machine for a single process. That
+works out to about **2.3 GB of process memory per GB of resident dosage**, which is what the
+table below is derived from. *Uncapped*, 16e9 supports exactly one worker; **with**
+`dosage_total_budget_bytes` set it runs eight fine, because the cap is what bounds a worker.
 
 | RAM | workers | `dosage_budget_bytes` | `dosage_total_budget_bytes` |
 |---|---|---|---|
@@ -130,6 +132,22 @@ parallelism.
 | 256 GB | 8 | 4e9 | 9e9 |
 | 512 GB | 4 | 16e9 | 35e9 |
 | 512 GB | 8 | 8e9 | 18e9 |
+
+The `dosage_budget_bytes` column is for building a **fresh** cache. **If you already have a
+cache, do not lower it** — lowering it re-thins nothing (`get_project_dosage` only ever
+re-parses to make a cache *denser*), so you would pay for a full re-download to get *worse*
+density. Leave it at whatever the cache was built with and let
+`dosage_total_budget_bytes` bound the memory; the cap thins at serve time by
+column-subsetting the cached matrix, which is free.
+
+> **Existing 16e9 cache, 512 GB, 8 workers:** keep `dosage_budget_bytes = 16e9` and set
+> `dosage_total_budget_bytes = 18e9`. ~24 GB of dosage per worker, ~193 GB across all
+> eight (38% of the machine). Fine. Rebuilding at 8e9 would save ~3.4 GB per worker —
+> not worth the re-download.
+
+The one residual cost of the denser cache is a **transient floor**: `readRDS` loads a cached
+file whole before the cap subsets it, so the largest single project (10.2 GB at 16e9, 6.8 GB
+at 8e9) is briefly resident on top of everything retained. README has the full table.
 
 **Start at half the worker count you want**, confirm with `report_memory.R` and
 `monitor_memory.sh`, then scale up. The 2.3× multiplier is derived from a single node-hour

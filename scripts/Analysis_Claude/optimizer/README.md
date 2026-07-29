@@ -435,10 +435,11 @@ The setting that bounds a worker's peak is **`dosage_total_budget_bytes`**, not
 `dosage_budget_bytes` — the latter caps one project at parse time, while the pipeline
 holds *every* project covering a trial at once.
 
-**Measured anchor (2026-07-29):** one worker at `dosage_budget_bytes = 16e9` held **63 GB
-RSS** on a 128 GB node. That is ~2.3 GB of process memory per GB of resident dosage, which
-the table below is derived from. 16e9 supports exactly one worker — it is not compatible
-with parallelism.
+**Measured anchor (2026-07-29):** one worker at `dosage_budget_bytes = 16e9`, with **no total
+cap set**, held **63 GB RSS** on a 128 GB node. That is ~2.3 GB of process memory per GB of
+resident dosage, which the table below is derived from. *Uncapped*, 16e9 therefore supports
+exactly one worker — but with `dosage_total_budget_bytes` set it is fine at eight, because
+the cap is what bounds a worker, not the per-project budget.
 
 | RAM | workers | `dosage_budget_bytes` | `dosage_total_budget_bytes` |
 |---|---|---|---|
@@ -451,6 +452,36 @@ with parallelism.
 the 2.3x multiplier comes from a single node-hour and is more likely too low than too high.
 Keep `workers x threads` at or under the core count; `run_workers.sh` sets the thread
 count for every BLAS R might be linked against.
+
+The `dosage_budget_bytes` column applies when you are building a **fresh** cache. If you
+already have one, see the next section — you probably should not change it.
+
+### Reusing a cache built at a different budget
+
+`dosage_budget_bytes` is a **parse-time** setting: it fixes a project's marker density when
+that project is first downloaded. Lowering it later does **not** re-thin an existing cache —
+`get_project_dosage` only ever re-parses to make a cache *denser*, never coarser.
+
+So if your cache was built at 16e9, **leave `dosage_budget_bytes = 16e9` and control memory
+with `dosage_total_budget_bytes` alone.** The cap thins at serve time by column-subsetting
+the cached matrix: no re-download, and you keep the denser markers. Lowering the budget would
+take effect only after deleting `cache/dosage` and re-downloading everything — many GB of T3
+traffic, for *worse* density.
+
+What the higher budget does still cost is a **transient floor**. `serve_cached()` calls
+`readRDS()` on the whole cached file and only then subsets it, so the largest single cached
+project is briefly resident in full. Across the T3 wheat archive, under an 18e9 cap:
+
+| cache built at | retained after the cap | + largest file (transient) | dosage peak per worker |
+|---|---|---|---|
+| 16e9 | 14.0 GB | 10.2 GB | **24.2 GB** |
+| 8e9 | 9.8 GB | 6.8 GB | **16.6 GB** |
+
+**Worked example — 512 GB, 8 workers, an existing 16e9 cache:** keep
+`dosage_budget_bytes = 16e9`, set `dosage_total_budget_bytes = 18e9`. That is ~24 GB of
+dosage per worker (~193 GB across all eight, 38% of the machine), or ~330 GB of RSS at the
+measured 2.3x — within the 70% guideline either way. Rebuilding the cache at 8e9 would save
+about 3.4 GB per worker, which is not worth the re-download.
 
 Scaling up needs no restart — add workers *above* the running ids:
 
