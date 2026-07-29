@@ -48,7 +48,11 @@ remote_server <- .detect_remote_server()
   modifyList(defaults, ov)
 }
 
-optimizer_settings <- function() {
+# `local_overrides = FALSE` returns the TRACKED defaults only, ignoring settings.local.R.
+# Tests use it: a test that asserts on a derived path (db_path under OPTIMIZER_PATH, say) is
+# otherwise checking the machine's untracked config rather than the derivation, and fails on
+# exactly the machines that legitimately override that path. Production always leaves it TRUE.
+optimizer_settings <- function(local_overrides = TRUE) {
   # Permanent, resumable state (sqlite store, report, logs, STOP flag) goes under `perm_dir`:
   # durable HOME storage in remote mode, else the work dir. Fail loudly if remote mode is on but
   # OPTIMIZER_PATH is unset (only possible via an explicit OPTIMIZER_REMOTE=true) -- otherwise the
@@ -351,7 +355,7 @@ optimizer_settings <- function() {
     lock_wait_minutes  = 60,   # how long to wait for another worker's download to finish
     lock_stale_minutes = 90    # break a lock older than this (its holder died)
   )
-  s <- .apply_overrides(defaults, .local_overrides())
+  s <- .apply_overrides(defaults, if (isTRUE(local_overrides)) .local_overrides() else list())
   # The optimizer targets exactly one scheme per run (validate the effective value,
   # so a settings.local.R override is checked too).
   if (length(s$optimize_scheme) != 1L || !is.character(s$optimize_scheme) ||

@@ -71,14 +71,6 @@ Without it the first command occupies the terminal and the rest never run.
       non-CRAN ones: `BrAPI.R` and `T3BrapiHelpers`. Confirm with
       `Rscript -e 'ip <- installed.packages(); which(ip[,1] == "BrAPI")'`.
       
-- [ ] **Tests pass.**
-      ```bash
-      cd scripts/Analysis_Claude/optimizer
-      Rscript tests/run_all.R          # expect "3/3 test files passed"
-      Rscript tests/run_all.R --all    # adds the slow sim loop: "4/4"
-      ```
-      A missing or wrong `.Renviron` usually shows up here first.
-
 ## 2. Settings
 
 Put these in **`settings.local.R`** (untracked, gitignored), never in the tracked
@@ -173,11 +165,23 @@ config parameter, so old and new rows are not strictly comparable; each row reco
 
 ### Checks
 
+These come **after** the settings, not before. `optimizer_settings()` *throws* on an
+`optimize_scheme` that is not in `schemes`, and on remote mode with no `OPTIMIZER_PATH`; a
+typo'd key warns rather than throws, but surfaces in the same run. `test_subtasks.R` and
+`test_sim_loop.R` both call it, so the suite is a settings check as much as a code check —
+running it before you have set the settings only tells you the code was fine yesterday.
+
 - [ ] **Verify it all resolved** before committing hours to it:
       ```bash
       Rscript -e 'source("settings.R"); str(optimizer_settings()[c("db_path","simulate",
         "optimize_scheme","max_hours","dosage_budget_bytes","dosage_total_budget_bytes","stop_file")])'
       ```
+- [ ] **Tests pass.**
+      ```bash
+      Rscript tests/run_all.R          # expect "3/3 test files passed"
+      Rscript tests/run_all.R --all    # adds the slow sim loop: "4/4"
+      ```
+      A missing or wrong `.Renviron`, or a typo in `settings.local.R`, usually surfaces here.
 - [ ] **⑂ Move an existing store to the new `db_path`** — the workers continue from whatever
       is at that path, so it must be the store you care about:
       ```bash

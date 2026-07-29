@@ -240,21 +240,31 @@ remote_server <<- FALSE
 check({ v <- optimizer_settings()$run_startup_canary; is.logical(v) && length(v) == 1 && !is.na(v) },
       "run_startup_canary is a single logical (TRUE/FALSE opt-out flag)")
 
-sl <- optimizer_settings()
+# local_overrides = FALSE throughout this block: these assertions are about how paths are
+# DERIVED from remote_server/OPTIMIZER_PATH, and a settings.local.R that legitimately moves
+# db_path (e.g. onto /workdir so WAL works for parallel workers) would otherwise fail them.
+# The override MECHANISM is tested separately, just below.
+sl <- optimizer_settings(local_overrides = FALSE)
 check(sl$db_path == file.path(here::here(), "state", "evals.sqlite") && is.null(sl$cache_backup_dir),
       "local mode: state under project dir, cache backup disabled")
 
 remote_server <<- TRUE
 Sys.setenv(OPTIMIZER_PATH = "/tmp/opt_perm_test")
-sr <- optimizer_settings()
+sr <- optimizer_settings(local_overrides = FALSE)
 check(sr$db_path == "/tmp/opt_perm_test/state/evals.sqlite" &&
       sr$log_dir == "/tmp/opt_perm_test/logs" &&
       sr$cache_backup_dir == "/tmp/opt_perm_test/cache",
       "remote mode: state + backup under OPTIMIZER_PATH")
 check(sr$cache_dir == here::here("cache"), "remote mode: cache still on the work disk")
+# The store backup that makes a local-disk db_path safe to lose (parallel workers require it).
+check(sr$db_backup_path == "/tmp/opt_perm_test/state/evals_backup.sqlite",
+      "remote mode: db_backup_path under OPTIMIZER_PATH")
 Sys.unsetenv("OPTIMIZER_PATH")
-check(inherits(try(optimizer_settings(), silent = TRUE), "try-error"),
+check(inherits(try(optimizer_settings(local_overrides = FALSE), silent = TRUE), "try-error"),
       "remote_server = TRUE with OPTIMIZER_PATH unset -> loud error (not root paths)")
+
+# (The override MECHANISM itself -- .apply_overrides layering and .local_overrides parsing --
+# is covered by the "settings.local.R overrides" block below, using temp files.)
 
 remote_server <<- old_rs                                          # restore the global and env vars
 if (is.na(old_op)) Sys.unsetenv("OPTIMIZER_PATH")   else Sys.setenv(OPTIMIZER_PATH   = old_op)
