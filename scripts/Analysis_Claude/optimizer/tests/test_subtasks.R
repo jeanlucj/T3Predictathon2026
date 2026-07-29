@@ -266,6 +266,55 @@ check(inherits(try(optimizer_settings(local_overrides = FALSE), silent = TRUE), 
 # (The override MECHANISM itself -- .apply_overrides layering and .local_overrides parsing --
 # is covered by the "settings.local.R overrides" block below, using temp files.)
 
+# Oracle: *_path / *_file name a FILE, *_dir names a DIRECTORY, and giving the wrong KIND is
+# rejected at settings time. The mistake that motivated this is db_backup_path set to a
+# directory: file.rename() then returns FALSE (it does NOT error), so the backup silently
+# never happened. Shape only -- a file whose parent does not exist yet is normal.
+local({
+  base <- list(db_path = "/a/evals.sqlite", db_backup_path = NULL,
+               report_path = "/a/report.md", stop_file = "/a/STOP",
+               cache_ready_file = "/a/.cache_ready", cache_dir = "/a/cache",
+               log_dir = "/a/logs", cache_backup_dir = NULL)
+  bad <- function(...) inherits(try(.validate_paths(modifyList(base, list(...))), silent = TRUE),
+                                "try-error")
+  adir <- tempfile("vdir_"); dir.create(adir)
+  afile <- tempfile("vfile_"); writeLines("x", afile)
+
+  check(!bad(),                            ".validate_paths: file paths whose parents do not exist are fine")
+  check(bad(db_path = adir),               ".validate_paths: db_path as a directory errors")
+  check(bad(db_backup_path = adir),        ".validate_paths: db_backup_path as a directory errors")
+  check(bad(db_path = "/a/b/"),            ".validate_paths: a trailing separator errors (basename() hides it)")
+  check(bad(cache_dir = afile),            ".validate_paths: cache_dir as a file errors (the mirror mistake)")
+  check(!bad(db_backup_path = NULL, cache_backup_dir = NULL),
+                                           ".validate_paths: NULL backup paths are fine (local mode)")
+  check(!bad(cache_dir = adir, log_dir = adir),
+                                           ".validate_paths: existing directories for *_dir are fine")
+  unlink(c(adir, afile), recursive = TRUE)
+})
+
+# Oracle: backup_store REPORTS a failed backup. file.rename returns FALSE (with a warning)
+# rather than erroring when dest is a directory, so a tryCatch on `error` alone saw nothing and
+# the run reported a healthy backup that never happened.
+local({
+  dbf <- tempfile(fileext = ".sqlite")
+  con <- open_store(dbf)
+  store_eval(con, sample_config(), "t1", "CV0", 0.5, 10L, "ok")
+  good <- tempfile(fileext = ".sqlite")
+  check(isTRUE(backup_store(con, good)) && file.exists(good),
+        "backup_store: writes the backup file and returns TRUE")
+  adir <- tempfile("bdir_"); dir.create(adir)
+  msgs <- character()
+  res <- withCallingHandlers(backup_store(con, adir),
+           message = function(m) { msgs <<- c(msgs, conditionMessage(m))
+                                   invokeRestart("muffleMessage") })
+  check(isFALSE(res), "backup_store: returns FALSE when dest is a directory")
+  check(any(grepl("FAILED", msgs)) && any(grepl("DIRECTORY", msgs)),
+        "backup_store: SAYS SO -- a failed backup is never silent")
+  check(length(list.files(dirname(adir), pattern = "[.]tmp[0-9]+$")) == 0,
+        "backup_store: cleans up its temp file on failure")
+  close_store(con); unlink(c(dbf, good)); unlink(adir, recursive = TRUE)
+})
+
 remote_server <<- old_rs                                          # restore the global and env vars
 if (is.na(old_op)) Sys.unsetenv("OPTIMIZER_PATH")   else Sys.setenv(OPTIMIZER_PATH   = old_op)
 if (is.na(old_or)) Sys.unsetenv("OPTIMIZER_REMOTE") else Sys.setenv(OPTIMIZER_REMOTE = old_or)

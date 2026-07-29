@@ -38,6 +38,44 @@ remote_server <- .detect_remote_server()
   ov
 }
 
+# Reject a path setting given the wrong KIND of thing -- a directory where a file belongs, or
+# vice versa. Checked at settings time so it fires for every caller (the optimizer,
+# optimizer_paths.sh, the report scripts), not only when a run reaches the point of using it.
+#
+# Only the SHAPE is validated, never writability: a file whose parent directory does not exist
+# yet is normal and fine (run_optimizer() and backup_store() both dir.create(dirname(...))).
+# NULL is a legitimate value -- db_backup_path and cache_backup_dir are NULL in local mode.
+.validate_paths <- function(s) {
+  file_settings <- c("db_path", "db_backup_path", "report_path", "stop_file", "cache_ready_file")
+  dir_settings  <- c("cache_dir", "log_dir", "cache_backup_dir")
+  for (k in file_settings) {
+    v <- s[[k]]
+    if (is.null(v) || !nzchar(v)) next
+    if (dir.exists(v))
+      stop(sprintf(paste0("%s must name a FILE, not a directory -- got \"%s\".\n",
+                          "  Append a filename, e.g. \"%s\"."),
+                   k, v, file.path(v, basename(.default_basename(k)))), call. = FALSE)
+    # Tested on the raw string: basename() strips a trailing separator ("/a/b/" -> "b"), so it
+    # cannot detect this.
+    if (grepl("[/\\\\]$", v))
+      stop(sprintf(paste0("%s must name a FILE, but \"%s\" ends in a path separator.\n",
+                          "  Append a filename, e.g. \"%s%s\"."),
+                   k, v, v, .default_basename(k)), call. = FALSE)
+  }
+  for (k in dir_settings) {
+    v <- s[[k]]
+    if (is.null(v) || !nzchar(v)) next
+    if (file.exists(v) && !dir.exists(v))
+      stop(sprintf("%s must name a DIRECTORY, not a file -- got \"%s\".", k, v), call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
+# The filename each file setting defaults to, used only to make the error message actionable.
+.default_basename <- function(k)
+  switch(k, db_path = "evals.sqlite", db_backup_path = "evals_backup.sqlite",
+         report_path = "report.md", stop_file = "STOP", cache_ready_file = ".cache_ready", "file")
+
 # Layer overrides on top of the defaults; warn on an unknown key (usually a typo, since it
 # would otherwise be silently added and never read).
 .apply_overrides <- function(defaults, ov) {
@@ -293,6 +331,16 @@ optimizer_settings <- function(local_overrides = TRUE) {
     ),
 
     # ---- paths ------------------------------------------------------------
+    # NAMING CONVENTION, since the two kinds sit next to each other and read alike:
+    #   *_dir              names a DIRECTORY  (cache_dir, log_dir, cache_backup_dir)
+    #   *_file and *_path  name a FILE, filename included
+    #                      (db_path, db_backup_path, report_path, stop_file, cache_ready_file)
+    # So `db_path` is ".../state/evals.sqlite", NOT ".../state". Watch the near-rhyme:
+    # cache_backup_dir is a directory but db_backup_path is a file, and both are things you set
+    # by hand in settings.local.R for a parallel run. .validate_paths() below rejects either
+    # mistake at startup rather than letting it surface as a cryptic SQLite error or, worse, a
+    # backup that silently never happens.
+    #
     # Durable, resumable state -> perm_dir (home on a remote server; see above).
     db_path     = file.path(perm_dir, "state", "evals.sqlite"),
     stop_file   = file.path(perm_dir, "state", "STOP"),
@@ -363,5 +411,6 @@ optimizer_settings <- function(local_overrides = TRUE) {
     stop("optimize_scheme must be a single scheme that is one of `schemes` (",
          paste(s$schemes, collapse = ", "), "); got: ",
          paste(s$optimize_scheme, collapse = ", "))
+  .validate_paths(s)     # a directory where a file belongs, or vice versa
   s
 }

@@ -49,6 +49,11 @@ settings_override <- list(
   # --- several workers on one store --------------------------------------
   # Required to run ./run_workers.sh: SQLite's WAL mode cannot work over NFS, so the live
   # store must be on LOCAL disk, with the leader copying it to durable storage.
+  #
+  # BOTH ARE FILE PATHS, filename included -- not directories. (The convention: *_dir names a
+  # directory, *_file and *_path name a file. Note that cache_backup_dir IS a directory while
+  # db_backup_path is a file.) Giving a directory is rejected at startup with a message saying
+  # what to append.
   # db_path        = "/workdir/<user>/optimizer/evals.sqlite",
   # db_backup_path = "/home/<user>/t3_optimizer/state/evals_backup.sqlite",
 

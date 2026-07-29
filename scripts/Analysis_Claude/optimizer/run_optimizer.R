@@ -194,13 +194,24 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
     db_min <- settings$db_backup_minutes %||% 0
     if (leader && db_min > 0 && !is.null(settings$db_backup_path) &&
         as.numeric(difftime(Sys.time(), last_db_backup, units = "mins")) >= db_min) {
-      backup_store(con, settings$db_backup_path); last_db_backup <- Sys.time()
+      # backup_store reports its own failure; note the consequence here so a run whose backups
+      # are all failing says so in the log rather than only at the moment /workdir is wiped.
+      if (!backup_store(con, settings$db_backup_path))
+        message("  the store is NOT being backed up -- a loss of ", dirname(settings$db_path),
+                " would lose this run")
+      last_db_backup <- Sys.time()
     }
   }
 
   if (leader) {
     write_report(con, settings)
-    backup_store(con, settings$db_backup_path)
+    # The final backup is the one that matters most -- say plainly whether it happened.
+    if (!is.null(settings$db_backup_path)) {
+      if (backup_store(con, settings$db_backup_path))
+        message("store backed up to ", settings$db_backup_path)
+      else
+        message("FINAL STORE BACKUP FAILED -- copy ", settings$db_path, " off this disk by hand")
+    }
   }
   message(sprintf("[%s] optimizer stop; %d evaluations in store (this run: %d)",
                   format(Sys.time()), n_evals(con), n_evals(con) - start_n))

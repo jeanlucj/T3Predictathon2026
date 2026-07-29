@@ -118,17 +118,31 @@ close_store <- function(con) invisible(DBI::dbDisconnect(con))
 # emits a single self-contained file with no WAL sidecar, so the backup is directly usable.
 # It refuses to overwrite, hence the write-to-temp-then-rename (which also means a backup
 # interrupted half-way never replaces a good one).
+# `dest` is a FILE path, filename included (e.g. .../state/evals_backup.sqlite), not a
+# directory -- see the paths block in settings.R.
 backup_store <- function(con, dest) {
   if (is.null(dest) || !nzchar(dest)) return(invisible(FALSE))
   dir.create(dirname(dest), showWarnings = FALSE, recursive = TRUE)
   tmp <- paste0(dest, ".tmp", Sys.getpid())
+  # PITFALL: file.rename does NOT raise an error when it fails -- it returns FALSE and signals
+  # a warning. Handling only `error` here (as this once did) meant a backup that never happened
+  # reported nothing at all, for the length of a run, and the whole reason db_path may sit on a
+  # wipeable /workdir was quietly void. So the FALSE is checked explicitly.
+  err <- NULL
   ok <- tryCatch({
     unlink(tmp)
     DBI::dbExecute(con, sprintf("VACUUM INTO '%s'", gsub("'", "''", tmp)))
-    file.rename(tmp, dest)
-  }, error = function(e) { message("store backup -> ", dest, " failed: ",
-                                   conditionMessage(e)); FALSE })
-  if (!isTRUE(ok)) unlink(tmp)
+    isTRUE(file.rename(tmp, dest))
+  }, error = function(e) { err <<- conditionMessage(e); FALSE })
+  if (!isTRUE(ok)) {
+    unlink(tmp)
+    message("store backup -> ", dest, " FAILED",
+            if (!is.null(err)) paste0(": ", err) else "",
+            # The likeliest cause of a bare rename failure, and worth naming outright.
+            if (dir.exists(dest))
+              " -- it is a DIRECTORY; db_backup_path must name a FILE, e.g. <dir>/evals_backup.sqlite"
+            else "")
+  }
   invisible(isTRUE(ok))
 }
 
