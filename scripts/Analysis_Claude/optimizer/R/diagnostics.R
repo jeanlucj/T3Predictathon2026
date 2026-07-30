@@ -331,10 +331,39 @@ sweep_rich_trials <- function(settings, conn,
 # independent re-derivation of the raw counts straight from T3. The pipeline's
 # numbers and the independent numbers should agree; where they diverge -- or
 # where a stage cliffs to ~zero despite plentiful input -- is the bug.
+# The configs a trial actually FAILED under, recovered from the store, ready to hand back to
+# diagnose_trial(). A failure is a property of (trial x config), not of the trial alone: the
+# default canary_config() is deliberately permissive and uses geno_select = "all_projects", so
+# diagnosing with it does not reproduce (say) a focal_plus_onehop failure and can return a false
+# clean bill of health. Recover the real thing:
+#
+#   con <- open_store(settings$db_path)
+#   bad <- failed_configs(con, "10260")
+#   diagnose_trial("10260", settings, conn, cfg = bad$cfg[[1]], scheme = bad$scheme[1])
+#
+# `status = NULL` returns every stored eval for the trial (useful to contrast a config that
+# failed against one that succeeded on the same trial).
+failed_configs <- function(con, trial_id,
+                           status = c("suspect", "infeasible", "error", "too_few_overlap")) {
+  e <- read_evals(con)
+  e <- e[as.character(e$trial_id) == as.character(trial_id), , drop = FALSE]
+  if (!is.null(status)) e <- e[e$status %in% status, , drop = FALSE]
+  if (!nrow(e)) { message("no stored evals for trial ", trial_id,
+                          if (!is.null(status)) paste0(" with status in {", paste(status, collapse = ", "), "}")
+                          else ""); return(invisible(NULL)) }
+  tibble::tibble(id = e$id, status = e$status, reason = e$reason, scheme = e$scheme,
+                 detail = e$detail, cfg = lapply(e$config_json, config_from_json))
+}
+
 diagnose_trial <- function(study_id, settings, conn,
                            cfg = canary_config(), scheme = settings$schemes[1]) {
   id <- as.character(study_id)
   cat("=== diagnose trial ", id, " (scheme ", scheme, ") ===\n", sep = "")
+  # Print the config being diagnosed. Which one it is decides what the output means, and the
+  # default is NOT the one that failed -- see failed_configs() above.
+  cat("  config under test", if (identical(cfg, canary_config()))
+        " (DEFAULT canary_config -- permissive, may NOT reproduce a stored failure)" else "", ":\n", sep = "")
+  cat(format_config(cfg), sep = "\n")
 
   # --- independent ground-truth probes (a DIFFERENT path than run_pipeline) ---
   acc <- tryCatch(get_trial_accessions(id, conn, settings), error = function(e) character())
