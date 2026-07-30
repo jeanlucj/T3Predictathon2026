@@ -24,7 +24,7 @@
 #    workers x N cores oversubscribe the machine and everything slows down together. The
 #    product (workers x threads) should be at most the core count.
 #  * WORKER IDENTITY. OPTIMIZER_WORKER tells settings.R which worker this is. Worker 1 is
-#    the "leader" and is the only one that writes the report, rsyncs the cache, and backs up
+#    the "leader" and is the only one that rsyncs the cache and backs up
 #    the store -- see settings$is_leader.
 #
 # PREREQUISITE: db_path must be on LOCAL disk. SQLite's WAL mode, which is what makes
@@ -93,7 +93,7 @@ echo "run_workers.sh: starting $N_WORKERS worker(s) (ids $FIRST-$LAST), $N_THREA
 for i in $(seq "$FIRST" "$LAST"); do
   # </dev/null so an archived-VCF download can never block on an interactive prompt.
   OPTIMIZER_WORKER="$i" nohup Rscript run_optimizer.R </dev/null > "logs/run_w${i}.out" 2>&1 &
-  echo "  worker $i -> pid $! -> logs/run_w${i}.out$([ "$i" = 1 ] && echo '  (leader: writes the report, backs up the store)')"
+  echo "  worker $i -> pid $! -> logs/run_w${i}.out$([ "$i" = 1 ] && echo '  (leader: backs up the store, rsyncs the cache)')"
   # Stagger the starts. The workers would otherwise hit the trial catalogue and the same
   # uncached genotyping projects simultaneously; the download lock makes that correct but
   # waiting is still wasted time, and a thundering herd on the T3 server is worth avoiding.

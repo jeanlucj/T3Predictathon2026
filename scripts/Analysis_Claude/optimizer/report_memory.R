@@ -4,9 +4,10 @@
 # reasoned out from the code: how big `dosage_budget_bytes` can be on this machine, and how
 # many workers fit in its RAM.
 #
-# Reads peak_r_mb (peak R heap for that evaluation, from R/memory.R) and rss_mb off the
-# store. Both are NA for rows written before the instrumentation existed -- those are
-# reported as a count, not silently dropped.
+# Sizes from peak_rss_mb -- the evaluation's true peak RSS (R/memory.R). peak_r_mb, R's own
+# heap peak, is ALSO reported but must not be sized from: gc() cannot see BLAS, sommer or dist
+# allocations, and on one real run it understated the requirement by 2.7x. Rows written before
+# either column existed are reported as a count, not silently dropped.
 #
 # The headline is the "workers that fit" table at the end. It is deliberately driven by the
 # MAXIMUM observed peak rather than the median: a worker that dies of an out-of-memory kill
@@ -23,10 +24,16 @@
 suppressMessages(library(tidyverse))
 options(width = 200)
 
+# The live store is settings$db_path -- ASK SETTINGS, do not rebuild it from OPTIMIZER_PATH.
+# settings.local.R commonly moves db_path onto /workdir (so WAL works for parallel workers),
+# and guessing would silently report on a stale copy no worker is writing to.
 store_path <- local({
   arg <- commandArgs(trailingOnly = TRUE)
   if (length(arg) && nzchar(arg[1])) return(arg[1])
-  p <- Sys.getenv("OPTIMIZER_PATH")
+  s <- tryCatch({ source(here::here("settings.R")); optimizer_settings()$db_path },
+                error = function(e) NULL)
+  if (!is.null(s) && nzchar(s)) return(s)
+  p <- Sys.getenv("OPTIMIZER_PATH")                      # fallback: pre-settings behaviour
   cand <- if (nzchar(p)) file.path(p, "state", "evals.sqlite") else file.path("state", "evals.sqlite")
   if (!file.exists(cand) && file.exists(file.path("state", "evals.sqlite")))
     cand <- file.path("state", "evals.sqlite")
@@ -45,9 +52,13 @@ if (!("peak_r_mb" %in% have)) {
        "Run the optimizer once with the current code (open_store migrates the table in ",
        "place), then re-run this report.")
 }
-e <- DBI::dbGetQuery(con, "SELECT id, config_json, trial_id, scheme, status, score, seconds,
-                                  peak_r_mb, rss_mb, worker, dosage_budget, ts
-                           FROM evals ORDER BY id")
+# peak_rss_mb postdates peak_r_mb, so a store may have one and not the other.
+has_rss_peak <- "peak_rss_mb" %in% have
+e <- DBI::dbGetQuery(con, sprintf("SELECT id, config_json, trial_id, scheme, status, score,
+                                          seconds, peak_r_mb, rss_mb, worker, dosage_budget, ts%s
+                                   FROM evals ORDER BY id",
+                                  if (has_rss_peak) ", peak_rss_mb" else ""))
+if (!has_rss_peak) e$peak_rss_mb <- NA_real_
 DBI::dbDisconnect(con)
 if (!nrow(e)) stop("the store is empty: ", store_path)
 
@@ -61,14 +72,26 @@ fld <- function(field) {
 e$kernel <- fld("kernel.method")
 e$geno   <- fld("geno_select.method")
 e$ts     <- as.POSIXct(e$ts, tz = "UTC")
-e$peak_gb <- e$peak_r_mb / 1024
 
 hdr <- function(x) cat("\n", x, "\n", strrep("-", nchar(x)), "\n", sep = "")
 
-m <- dplyr::filter(e, is.finite(peak_r_mb))
+# SIZE FROM RSS. peak_r_mb is R's heap peak and cannot see BLAS/sommer/dist allocations, so it
+# UNDER-states the requirement -- measured at 2.7x on one real run. Use it only when the honest
+# figure is absent, and say so loudly, because this is the number a machine gets sized from.
+use_rss  <- any(is.finite(e$peak_rss_mb))
+e$peak_gb <- if (use_rss) e$peak_rss_mb / 1024 else e$peak_r_mb / 1024
+peak_src <- if (use_rss) "peak_rss_mb (true process peak)" else "peak_r_mb (R heap -- AN UNDER-ESTIMATE)"
+
+m <- dplyr::filter(e, is.finite(peak_gb))
 n_missing <- nrow(e) - nrow(m)
-cat(sprintf("store: %s\nrows: %d   with memory recorded: %d   span: %s -> %s\n",
-            store_path, nrow(e), nrow(m), format(min(e$ts)), format(max(e$ts))))
+cat(sprintf("store: %s\nrows: %d   with memory recorded: %d   span: %s -> %s\nsizing from: %s\n",
+            store_path, nrow(e), nrow(m), format(min(e$ts)), format(max(e$ts)), peak_src))
+if (!use_rss)
+  cat("\n!! No peak_rss_mb in this store, so every figure below comes from R's heap peak and\n",
+      "   UNDERSTATES real memory use -- by 2.7x on the one run where both were measured.\n",
+      "   Do NOT size a worker count from this. Re-run the optimizer with current code on\n",
+      "   Linux to record peak_rss_mb, and meanwhile use rss_max_mb from monitor_memory.sh.\n",
+      sep = "")
 if (n_missing > 0)
   cat(sprintf("  [%d row(s) predate the instrumentation and carry no memory figure]\n",
               n_missing))
@@ -91,7 +114,7 @@ if (length(buds) > 1) {
       "  from the rows matching the budget you intend to RUN at.\n", sep = "")
 }
 
-hdr("PEAK R HEAP PER EVALUATION (GB)")
+hdr(if (use_rss) "PEAK RSS PER EVALUATION (GB) -- the sizing figure" else "PEAK R HEAP PER EVALUATION (GB) -- an under-estimate")
 print(round(quantile(m$peak_gb, c(0, .5, .75, .9, .95, .99, 1)), 2))
 
 hdr("peak GB by kernel x geno_select (median / max)")
@@ -108,12 +131,17 @@ print(m |>
         dplyr::arrange(dplyr::desc(max_gb)) |>
         as.data.frame(), row.names = FALSE)
 
-if (any(is.finite(m$rss_mb))) {
-  hdr("process RSS at end of evaluation (GB) -- heap plus what R has not returned to the OS")
-  r <- m$rss_mb[is.finite(m$rss_mb)] / 1024
-  print(round(quantile(r, c(0.5, 0.9, 1)), 2))
-  cat(sprintf("\n  RSS/heap ratio at the median: %.2fx\n",
-              median(r) / median(m$peak_gb)))
+# The blind spot, quantified: how much of an evaluation's real footprint gc() cannot account
+# for. A large ratio means the cost is in compiled code (GRM/BLAS/sommer), which
+# dosage_total_budget_bytes does NOT bound -- that setting caps dosage bytes only.
+both <- dplyr::filter(m, is.finite(peak_rss_mb), is.finite(peak_r_mb), peak_r_mb > 0)
+if (nrow(both)) {
+  hdr("what gc() CANNOT see: peak RSS / peak R heap")
+  rr <- both$peak_rss_mb / both$peak_r_mb
+  print(round(quantile(rr, c(0, .5, .9, 1)), 2))
+  cat(sprintf("\n  median %.1fx -- of a %.1f GB evaluation, ~%.1f GB is invisible to peak_r_mb\n",
+              median(rr), max(both$peak_rss_mb) / 1024,
+              (max(both$peak_rss_mb) - max(both$peak_r_mb)) / 1024))
 }
 
 if (length(unique(m$worker[!is.na(m$worker)])) > 1) {

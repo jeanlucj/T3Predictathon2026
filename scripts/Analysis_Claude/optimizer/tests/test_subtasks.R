@@ -292,6 +292,31 @@ local({
   unlink(c(adir, afile), recursive = TRUE)
 })
 
+# Oracle: the per-evaluation RSS peak is only trusted when the kernel PROVES it reset the
+# high-water mark. VmHWM is monotonic, so a kernel that ignores the clear_refs write would
+# otherwise have every row record the whole worker's high-water mark -- a plausible-looking
+# number that is not a per-evaluation peak. Verified by shadowing the /proc readers, so this
+# runs on any platform (the real reset only exists on Linux).
+local({
+  keep <- list(r = .rss_peak_reset, h = proc_peak_rss_mb, s = proc_rss_mb)
+  on.exit({ .rss_peak_reset <<- keep$r; proc_peak_rss_mb <<- keep$h; proc_rss_mb <<- keep$s
+            rm(list = ls(.mem_env), envir = .mem_env) }, add = TRUE)
+  probe <- function(reset_ok, hwm, rss) {
+    rm(list = ls(.mem_env), envir = .mem_env)          # clear the cached answer
+    .rss_peak_reset  <<- function() reset_ok
+    proc_peak_rss_mb <<- function() hwm
+    proc_rss_mb      <<- function() rss
+    suppressMessages(.rss_peak_resettable())
+  }
+  check(isTRUE(probe(TRUE, 2000, 1990)),        "rss peak: reset honoured (VmHWM fell to VmRSS) -> usable")
+  check(isFALSE(probe(TRUE, 9000, 1990)),       "rss peak: VmHWM stayed high -> NOT usable (the dangerous case)")
+  check(isFALSE(probe(FALSE, 2000, 1990)),      "rss peak: clear_refs write failed -> not usable")
+  check(isFALSE(probe(TRUE, NA_real_, 1990)),   "rss peak: /proc unreadable -> not usable")
+  # And the NA propagates rather than a stale number reaching the store.
+  invisible(probe(TRUE, 9000, 1990))
+  check(is.na(mem_peak_rss_mb()), "rss peak: mem_peak_rss_mb() is NA when the reset is unusable")
+})
+
 # Oracle: backup_store REPORTS a failed backup. file.rename returns FALSE (with a warning)
 # rather than erroring when dest is a directory, so a tryCatch on `error` alone saw nothing and
 # the run reported a healthy backup that never happened.

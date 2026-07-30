@@ -233,7 +233,12 @@ optimizer_settings <- function(local_overrides = TRUE) {
     # column-subsetting the cache, for free. An existing 16e9 cache runs 8 workers on a 512 GB
     # node at ~24 GB of dosage each with this set to 18e9.
     #
-    # Start at half the worker count you want and scale up against the measured peak_r_mb
+    # NOTE this cap bounds DOSAGE bytes only. The kernel stage (per-panel GRMs and their copies
+    # in em_combine, the RKHS distance matrices, a sommer fit) is unbounded by it, and on the
+    # measured run it was the larger cost: 89 GB of RSS against a ~41 GB dosage ceiling. Size
+    # from peak_rss_mb in report_memory.R, not from this setting alone.
+    #
+    # Start at half the worker count you want and scale up against the measured peak_rss_mb
     # distribution (report_memory.R): the 2.3x multiplier comes from a single node-hour and is
     # more likely too low than too high.
     # Inf disables the cap (the pre-existing behaviour: no bound on the sum at all).
@@ -379,7 +384,9 @@ optimizer_settings <- function(local_overrides = TRUE) {
     #     /workdir and set db_backup_path to durable storage.
     #  2. Only ONE worker does the shared-resource housekeeping (the report, the cache rsync,
     #     the store backup) -- eight processes rsyncing one tree and overwriting one
-    #     report.md is pure waste. That is the "leader", worker 1.
+    #     the store backup is pure waste. That is the "leader", worker 1. (report.md is NOT
+    #     leader-only: every worker writes it atomically, because a worker can only write it
+    #     between evaluations and worker 1's alone went stale for hours.)
     #
     # worker_id comes from the OPTIMIZER_WORKER environment variable that run_workers.sh
     # sets, so the same settings.R serves every worker; a lone run is worker "1" (the leader)

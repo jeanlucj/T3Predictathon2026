@@ -99,8 +99,11 @@ evaluate_config_on_trial <- function(cfg, trial, scheme, settings, conn = NULL) 
     })
   res$detail <- res$detail %||% NA_character_
   res$seconds <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
-  res$peak_r_mb <- mem_peak_mb()
-  res$rss_mb    <- proc_rss_mb()
+  # peak_rss_mb is the honest cost (it includes BLAS/sommer allocations gc() cannot see);
+  # peak_r_mb is kept because the ratio between them measures exactly that blind spot.
+  res$peak_rss_mb <- mem_peak_rss_mb()
+  res$peak_r_mb   <- mem_peak_mb()
+  res$rss_mb      <- proc_rss_mb()
   res
 }
 

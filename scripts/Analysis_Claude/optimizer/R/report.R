@@ -202,6 +202,16 @@ write_report <- function(con, settings) {
                "```")
   }
 
-  writeLines(lines, settings$report_path)
+  # ATOMIC: every worker writes this file (see run_optimizer.R -- keying it to the leader's
+  # iteration count meant the report only refreshed when worker 1 finished an evaluation,
+  # which with 8 workers is an eighth of the activity and can be hours apart). Concurrent
+  # writeLines() to one path would interleave, and a `cat report.md` could catch a half-written
+  # file, so render to a sibling temp and rename into place.
+  tmp <- paste0(settings$report_path, ".tmp", Sys.getpid())
+  writeLines(lines, tmp)
+  if (!isTRUE(file.rename(tmp, settings$report_path))) {
+    unlink(tmp)
+    message("report write -> ", settings$report_path, " FAILED")
+  }
   invisible(settings$report_path)
 }

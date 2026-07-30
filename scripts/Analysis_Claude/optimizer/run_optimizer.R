@@ -57,14 +57,19 @@ optimizer_step <- function(con, settings, conn = NULL) {
              year          = trial$year       %||% NA_integer_,
              # What this evaluation cost in memory, and under which marker-density budget --
              # the two numbers that decide how many workers this machine can carry.
-             peak_r_mb     = ev$peak_r_mb %||% NA_real_,
-             rss_mb        = ev$rss_mb    %||% NA_real_,
+             peak_rss_mb   = ev$peak_rss_mb %||% NA_real_,
+             peak_r_mb     = ev$peak_r_mb   %||% NA_real_,
+             rss_mb        = ev$rss_mb      %||% NA_real_,
              worker        = settings$worker_id %||% NA_character_,
              dosage_budget = settings$dosage_budget_bytes %||% NA_real_)
   # scores/statuses kept as length-1 vectors so the main-loop logging is unchanged.
   list(source = choice$source, trial = trial$id,
        scores = ev$score, statuses = ev$status, ei = choice$ei %||% NA_real_,
-       peak_r_mb = ev$peak_r_mb %||% NA_real_)
+       # Prefer the true RSS peak for the log; the heap peak understates it (R/memory.R).
+       # Must test is.finite, not %||%: off Linux peak_rss_mb is NA rather than NULL, and
+       # %||% only falls back on NULL -- which logged "peak=NA" instead of the heap figure.
+       peak_mb = local({ p <- ev$peak_rss_mb %||% NA_real_
+                         if (is.finite(p)) p else ev$peak_r_mb %||% NA_real_ }))
 }
 
 # The main loop. Reusable from tests with a small max_iters.
@@ -172,12 +177,15 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
                         format(Sys.time()), iter, step$source, step$trial,
                         paste(sprintf("%.3f", step$scores), collapse = "/"),
                         paste(step$statuses, collapse = "/"),
-                        fmt_mb(step$peak_r_mb)))
+                        fmt_mb(step$peak_mb)))
       }
     }
-    # The report summarizes the WHOLE store, so every worker would write the same file from
-    # the same data -- leader only, and it covers all workers' evaluations either way.
-    if (leader && iter %% settings$checkpoint_every == 0) {
+    # EVERY worker writes the report (write_report renders to a temp file and renames, so
+    # concurrent writes cannot interleave). Deliberately NOT leader-only: the report
+    # summarizes the whole store, and a worker can only write it between evaluations, so
+    # restricting it to worker 1 meant the file went stale for as long as worker 1's current
+    # evaluation ran -- hours, while the other seven kept adding rows nobody could see.
+    if (iter %% settings$checkpoint_every == 0) {
       tryCatch(write_report(con, settings),
                error = function(e) message("report error: ", conditionMessage(e)))
     }
@@ -203,8 +211,8 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
     }
   }
 
+  write_report(con, settings)          # every worker, as in the loop
   if (leader) {
-    write_report(con, settings)
     # The final backup is the one that matters most -- say plainly whether it happened.
     if (!is.null(settings$db_backup_path)) {
       if (backup_store(con, settings$db_backup_path))

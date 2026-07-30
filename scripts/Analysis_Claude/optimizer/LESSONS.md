@@ -282,6 +282,11 @@ a combine that fails anyway raises `infeasible` carrying every partial's shape a
 than an uncaught exception. Rank-deficient partials are reported once per session with their
 duplicate-row count — a non-zero count is evidence about the synonym tail (#6), so the
 regularization does not hide the data problem it papers over.
+**See also.** `EM_COMBINE_COMPARISON.md` — the sibling `Brapi_pipeline_for_selection` also
+regularizes *inside* the E-step (`psi_aa + diag(1e-5)`), which `T3BrapiHelpers` does not, so the
+one place we cannot ridge from outside is exactly where it does. That document also covers the
+degrees-of-freedom difference (this pipeline weights panels by accession count; the sibling by an
+LD-aware effective n) and pedigree bridging, which bears directly on #13.
 **Lives in.** `R/pipeline.R::build_kernel` (the `em_combine` branch).
 
 ### 22. A method that silently changes meaning is worse than one that fails

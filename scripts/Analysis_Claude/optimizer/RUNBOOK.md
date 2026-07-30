@@ -141,6 +141,10 @@ The one residual cost of the denser cache is a **transient floor**: `readRDS` lo
 file whole before the cap subsets it, so the largest single project (10.2 GB at 16e9, 6.8 GB
 at 8e9) is briefly resident on top of everything retained. README has the full table.
 
+`report_memory.R` sizes from **`peak_rss_mb`** (true peak RSS), not `peak_r_mb` (R's heap
+peak, which cannot see BLAS/`sommer`/`dist` and understated the real figure by 2.7x). The RSS
+peak needs Linux; elsewhere it is `NA` and the report says its numbers understate.
+
 **Start at half the worker count you want**, confirm with `report_memory.R` and
 `monitor_memory.sh`, then scale up. The 2.3× multiplier is derived from a single node-hour
 and is more likely too low than too high — it assumed every cached project covered that
@@ -155,7 +159,7 @@ OPTIMIZER_FIRST_WORKER=5 ./run_workers.sh 4     # adds workers 5-8
 ```
 
 Do **not** just run `./run_workers.sh 4` a second time: it always starts at id 1, so you
-would get two leaders both writing the report and rsyncing the cache, ambiguous `worker`
+would get two leaders both rsyncing the cache and backing up the store, ambiguous `worker`
 values in the store, and — because the log redirect truncates — the second batch wiping the
 first batch's logs. The script now refuses to do this and tells you the right id to use.
 
@@ -273,6 +277,8 @@ tail -f logs/run_w1.out                   # live log (one per worker)
 Rscript report_memory.R                   # peak per evaluation, workers-that-fit table
 Rscript report_timing.R                   # where the wall time goes
 tail logs/memory_*.tsv                    # whole-machine RSS over time
+sort -k3 -n logs/memory_*.tsv | tail -5   # most memory-intensive moments
+find cache -type f | wc -l                # number of files in cache
 ```
 
 Red flags:
@@ -282,9 +288,10 @@ Red flags:
 | WAL warning at startup | store is on NFS; concurrent writes unsafe | stop, move `db_path` to `/workdir`, restart |
 | `rss_total_mb` approaching RAM | too many workers for the budget | fewer workers, or lower `dosage_total_budget_bytes` |
 | only worker 1's rows in the store | the others died | check `logs/run_w*.out` |
-| `report.md` not updating | worker 1 is not running | restart it — it is the leader |
+| `report.md` not updating | no worker has finished an evaluation since the last write | normal if evaluations are long; check `logs/run_w*.out` for progress |
 | every evaluation `infeasible` | usually a data/name bug, not the configs | run the `EVALUATION_CHECKLIST.md` diagnostics |
 | `serving 1 marker in N` messages | the aggregate cap is binding | fine if deliberate; else raise `dosage_total_budget_bytes` |
+| `peak_rss_mb` ≫ `peak_r_mb` in `report_memory.R` | the cost is in compiled code (GRM/BLAS/sommer), which `dosage_total_budget_bytes` does **not** bound | size from `peak_rss_mb`; to cap it you must bound the kernel stage, not the dosage budget |
 
 ## 6. Stop and save
 

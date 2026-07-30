@@ -407,8 +407,10 @@ launching again — `run_workers.sh` refuses to start if it is still there.
 
 #### What makes it safe
 
-- **Worker 1 is the leader.** It alone writes `state/report.md`, rsyncs the cache,
-  and backs up the store; eight processes doing that to the same files is pure waste.
+- **Worker 1 is the leader.** It alone rsyncs the cache and backs up the store; eight
+  processes doing that to the same files is pure waste. (`state/report.md` is written by
+  *every* worker, atomically — a worker can only write it between evaluations, so leaving it
+  to worker 1 alone left it stale for hours at a time.)
   It also restores the cache from backup at startup and signals when it is done, which
   the other workers wait for. So worker 1 should be running — the others tolerate its
   absence but nothing will write a report.
@@ -447,6 +449,17 @@ the cap is what bounds a worker, not the per-project budget.
 | 256 GB | 8 | 4e9 | 9e9 |
 | 512 GB | 4 | 16e9 | 35e9 |
 | 512 GB | 8 | 8e9 | 18e9 |
+
+`report_memory.R` sizes from **`peak_rss_mb`** — the evaluation's true peak RSS. Do not size
+from `peak_r_mb`: that is R's own heap peak, and `gc()` cannot see BLAS, `sommer` or `dist`
+allocations, so it understated the real requirement by **2.7x** on the run measured above (33.6
+GB of heap against 89.4 GB of RSS). `peak_rss_mb` needs Linux (it resets the kernel's `VmHWM`
+via `/proc/self/clear_refs`); elsewhere it is `NA` and the report says loudly that its figures
+understate.
+
+A large `peak_rss_mb / peak_r_mb` ratio means the cost is in compiled code — the GRM copies in
+`em_combine`, the RKHS distance matrices, a `sommer` fit — and **`dosage_total_budget_bytes`
+does not bound any of that**; it caps dosage bytes only.
 
 **Start at half the worker count you want**, confirm with `report_memory.R`, then scale up:
 the 2.3x multiplier comes from a single node-hour and is more likely too low than too high.

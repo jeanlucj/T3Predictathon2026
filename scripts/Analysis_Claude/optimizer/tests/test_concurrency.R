@@ -80,7 +80,8 @@ n_done <- spawn(N_W, c(
   'set.seed(as.integer(ARG[1]))',
   sprintf('for (i in seq_len(%d)) {', N_ROWS),
   '  store_eval(con, sample_config(), paste0("t", i), "CV0", runif(1), 100L, "ok",',
-  '             worker = ARG[1], peak_r_mb = 100 * as.integer(ARG[1]), dosage_budget = 2e9)',
+  '             worker = ARG[1], peak_r_mb = 100 * as.integer(ARG[1]),',
+  '             peak_rss_mb = 300 * as.integer(ARG[1]), dosage_budget = 2e9)',
   '}',
   'close_store(con)',
   'file.create(file.path(TMP, paste0("done_", ARG[1])))'))
@@ -97,7 +98,8 @@ check(identical(tolower(DBI::dbGetQuery(con, "PRAGMA journal_mode")$journal_mode
       "store is in WAL mode")
 e <- read_evals(con)
 check(length(unique(e$worker)) == N_W, "every worker's rows are attributed to it")
-check(all(is.finite(e$peak_r_mb)), "memory column round-trips")
+check(all(is.finite(e$peak_r_mb)) && all(is.finite(e$peak_rss_mb)),
+      "both memory columns round-trip (heap peak and true RSS peak)")
 close_store(con)
 
 cat("2. concurrent migration of a pre-migration store ---------------------\n")
@@ -124,7 +126,8 @@ check(length(merrs) == 0, paste("no worker died in the migration race:",
                                 paste(head(merrs, 3), collapse = " | ")))
 oc <- open_store(old_db)
 have <- DBI::dbListFields(oc, "evals")
-check(all(c("detail", "study_name", "peak_r_mb", "rss_mb", "worker", "dosage_budget") %in% have),
+check(all(c("detail", "study_name", "peak_r_mb", "rss_mb", "worker", "dosage_budget",
+            "peak_rss_mb") %in% have),
       "every migrated column exists exactly once")
 check(DBI::dbGetQuery(oc, "SELECT COUNT(*) n FROM evals")$n == 4, "all 4 rows landed")
 DBI::dbDisconnect(oc)

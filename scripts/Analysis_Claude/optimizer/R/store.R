@@ -86,14 +86,16 @@ open_store <- function(path, busy_timeout_ms = 60000) {
   # surrogate can be trained on only the in-domain slice of this shared store.
   # They deliberately reuse the catalogue's column names so the exact same
   # target-domain predicate (.apply_target_domain) filters both sampling and evals.
-  # peak_r_mb/rss_mb are this evaluation's memory cost (R/memory.R); `worker` names
+  # peak_rss_mb is this evaluation's true peak RSS and the figure to size a machine from;
+  # peak_r_mb is R's heap peak, an UNDER-estimate kept for the ratio (R/memory.R). `worker` names
   # which concurrent worker produced the row; dosage_budget records the marker-density
   # budget in force, WITHOUT which rows made at different densities are silently
   # incomparable (density is not a config parameter -- see settings$dosage_budget_bytes).
   have <- DBI::dbListFields(con, "evals")
   add <- c(detail = "TEXT", study_name = "TEXT", program_name = "TEXT",
            location_name = "TEXT", year = "INTEGER",
-           peak_r_mb = "REAL", rss_mb = "REAL", worker = "TEXT", dosage_budget = "REAL")
+           peak_r_mb = "REAL", rss_mb = "REAL", worker = "TEXT", dosage_budget = "REAL",
+           peak_rss_mb = "REAL")
   for (col in names(add)) {
     if (col %in% have) next
     # Two workers starting together both see the column missing and both try to add it.
@@ -154,14 +156,14 @@ store_eval <- function(con, cfg, trial_id, scheme, score, n_test, status,
                        seconds = NA_real_,
                        study_name = NA_character_, program_name = NA_character_,
                        location_name = NA_character_, year = NA_integer_,
-                       peak_r_mb = NA_real_, rss_mb = NA_real_,
+                       peak_r_mb = NA_real_, rss_mb = NA_real_, peak_rss_mb = NA_real_,
                        worker = NA_character_, dosage_budget = NA_real_) {
   invisible(.with_busy_retry(function() DBI::dbExecute(con,
     "INSERT INTO evals
        (config_hash, config_json, trial_id, study_name, program_name, location_name, year,
         scheme, score, n_test, status, reason, detail, seconds, ts,
-        peak_r_mb, rss_mb, worker, dosage_budget)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        peak_r_mb, rss_mb, worker, dosage_budget, peak_rss_mb)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     params = list(config_hash(cfg), config_to_json(cfg), trial_id,
                   study_name %||% NA_character_, program_name %||% NA_character_,
                   location_name %||% NA_character_,
@@ -173,7 +175,8 @@ store_eval <- function(con, cfg, trial_id, scheme, score, n_test, status,
                   as.numeric(seconds), format(Sys.time(), tz = "UTC"),
                   as.numeric(peak_r_mb %||% NA_real_), as.numeric(rss_mb %||% NA_real_),
                   as.character(worker %||% NA_character_),
-                  as.numeric(dosage_budget %||% NA_real_)))))
+                  as.numeric(dosage_budget %||% NA_real_),
+                  as.numeric(peak_rss_mb %||% NA_real_)))))
 }
 
 # Belt-and-braces around the busy_timeout set in open_store: retry a write that still comes

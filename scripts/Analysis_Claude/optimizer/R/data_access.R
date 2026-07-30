@@ -112,6 +112,12 @@ library(tidyverse)
 # must not mean this worker never makes progress.
 .with_cache_lock <- function(settings, key, expr, ready = function() FALSE,
                              on_ready = function() NULL) {
+  # Check BEFORE taking the lock. A worker that arrives after the winner has finished and
+  # released finds the lock free, and would otherwise redo work whose result is already on
+  # disk -- the lock being free says nothing about whether the work is still needed.
+  # (get_project_dosage happens to check its own cache before calling in, so this is
+  # belt-and-braces there; without it the helper is only correct under contention.)
+  if (isTRUE(ready())) return(on_ready())
   held <- .acquire_lock(settings, key)
   if (!held) {
     wait_s <- 60 * as.numeric(settings$lock_wait_minutes %||% 60)
