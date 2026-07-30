@@ -355,8 +355,17 @@ failed_configs <- function(con, trial_id,
                  detail = e$detail, cfg = lapply(e$config_json, config_from_json))
 }
 
+# COST. Two parts of this are expensive, and both are optional because the panel table is the
+# part that actually discriminates a name problem from a panel-selection problem:
+#   max_projects  the per-project attribution loop loads each project's WHOLE dosage matrix
+#                 (there is no project -> sample-name lookup), which on a 16e9 cache is up to
+#                 ~10 GB apiece. It only attributes a cliff to individual projects; the panel
+#                 probe below already answers whether ANY panel covers the focal lines. Capped.
+#   replay        the final run_pipeline() is a COMPLETE evaluation -- hours on a big trial --
+#                 and only confirms an outcome the store already recorded. FALSE skips it.
 diagnose_trial <- function(study_id, settings, conn,
-                           cfg = canary_config(), scheme = settings$schemes[1]) {
+                           cfg = canary_config(), scheme = settings$schemes[1],
+                           max_projects = 8L, replay = TRUE) {
   id <- as.character(study_id)
   cat("=== diagnose trial ", id, " (scheme ", scheme, ") ===\n", sep = "")
   # Print the config being diagnosed. Which one it is decides what the output means, and the
@@ -384,8 +393,13 @@ diagnose_trial <- function(study_id, settings, conn,
   # `ov == nrow(d) > 0` by construction, so the CLIFF line could not fire either way. Load the
   # project's WHOLE population and intersect here instead.
   n_cover <- 0L; best_ov <- 0L
-  if (length(projs)) {
-    for (pid in projs) {
+  probe <- utils::head(projs, max(0L, as.integer(max_projects)))
+  if (length(probe) < length(projs))
+    cat(sprintf("  (probing %d of %d projects individually -- max_projects; the panel table below\n",
+                length(probe), length(projs)),
+        "   is the authoritative coverage answer)\n", sep = "")
+  if (length(probe)) {
+    for (pid in probe) {
       d <- tryCatch(get_project_dosage(pid, NULL, conn, settings), error = function(e) NULL)
       if (is.null(d)) { cat(sprintf("    project %-7s dosage: NULL (download/parse failed)\n", pid)); next }
       ov <- length(intersect(rownames(d), acc))
@@ -395,10 +409,15 @@ diagnose_trial <- function(study_id, settings, conn,
                   pid, nrow(d), ncol(d), ov,
                   if (nrow(d) > 0 && ov == 0) "   <-- no name overlap in THIS project" else ""))
     }
-    cat(sprintf("  projects containing >=1 focal accession: %d of %d (best single project: %d)%s\n",
-                n_cover, length(projs), best_ov,
+    # Denominator is what was PROBED, not what covers: with max_projects < length(projs) this is
+    # a sample, so it can suggest a cliff but cannot establish one. The panel table does that.
+    partial <- length(probe) < length(projs)
+    cat(sprintf("  projects containing >=1 focal accession: %d of %d probed (best single: %d)%s\n",
+                n_cover, length(probe), best_ov,
                 if (n_cover == 0 && length(acc) > 0)
-                  "   <-- CLIFF: the focal lines are genotyped NOWHERE under these names" else ""))
+                  if (partial) "   <-- no overlap in the PROBED projects; check the panel table below"
+                  else "   <-- CLIFF: the focal lines are genotyped NOWHERE under these names"
+                else ""))
   }
 
   # What subtask C hands to the kernel, and what .best_panel picks out of it. This separates the
@@ -443,6 +462,10 @@ diagnose_trial <- function(study_id, settings, conn,
   # --- run the pipeline and report where it lands -----------------------------
   # `trial` was built above for the panel probe.
   if (is.null(trial)) { cat("  could not build descriptor; stopping.\n"); return(invisible(NULL)) }
+  if (!isTRUE(replay)) {
+    cat("  (pipeline replay skipped -- replay = FALSE; the stored eval already records the outcome)\n")
+    return(invisible(NULL))
+  }
   res <- tryCatch(
     { po <- run_pipeline(cfg, trial, scheme, settings, conn)
       sc <- score_predictions(po$pred, po$obs)
