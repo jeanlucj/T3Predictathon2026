@@ -348,19 +348,71 @@ diagnose_trial <- function(study_id, settings, conn,
               length(projs), paste(utils::head(projs, 8), collapse = ", ")))
   # The decisive check for the synonym/name-mismatch class of bug: do the dosage
   # matrix rownames actually intersect the trial's accession names?
+  #
+  # PITFALL this check was blind to until 2026-07-30: it passed `keep_samples = acc`, and
+  # get_project_dosage's subset_samples returns NULL when NOTHING matches. So the cliff it exists
+  # to catch was swallowed and printed as "download/parse failed", and on the non-NULL branch
+  # `ov == nrow(d) > 0` by construction, so the CLIFF line could not fire either way. Load the
+  # project's WHOLE population and intersect here instead.
+  n_cover <- 0L; best_ov <- 0L
   if (length(projs)) {
-    for (pid in utils::head(projs, 4)) {
-      d <- tryCatch(get_project_dosage(pid, acc, conn, settings), error = function(e) NULL)
+    for (pid in projs) {
+      d <- tryCatch(get_project_dosage(pid, NULL, conn, settings), error = function(e) NULL)
       if (is.null(d)) { cat(sprintf("    project %-7s dosage: NULL (download/parse failed)\n", pid)); next }
       ov <- length(intersect(rownames(d), acc))
+      if (ov > 0) n_cover <- n_cover + 1L
+      best_ov <- max(best_ov, ov)
       cat(sprintf("    project %-7s dosage: %d samples x %d markers, overlap with accessions = %d%s\n",
                   pid, nrow(d), ncol(d), ov,
-                  if (nrow(d) > 0 && ov == 0) "   <-- CLIFF: names do not match (likely a bug)" else ""))
+                  if (nrow(d) > 0 && ov == 0) "   <-- no name overlap in THIS project" else ""))
+    }
+    cat(sprintf("  projects containing >=1 focal accession: %d of %d (best single project: %d)%s\n",
+                n_cover, length(projs), best_ov,
+                if (n_cover == 0 && length(acc) > 0)
+                  "   <-- CLIFF: the focal lines are genotyped NOWHERE under these names" else ""))
+  }
+
+  # What subtask C hands to the kernel, and what .best_panel picks out of it. This separates the
+  # two causes of test_in = 0: no panel covers the focal lines (a name/data problem) versus a
+  # covering panel existing but being passed over (.best_panel maximizes coverage of
+  # union(train, focal), which large training sets dominate).
+  # `trial` is built once here and reused by the pipeline replay below.
+  trial <- tryCatch(build_trial_descriptor(id, conn, settings), error = function(e) NULL)
+  if (!is.null(trial)) {
+    # Replay run_pipeline's own route to train_acc (select trials -> observations -> CV mask ->
+    # targets), so the panels reported are the ones the pipeline would actually see.
+    panels <- tryCatch({
+      focal_acc <- trial$accessions
+      train_ids <- setdiff(select_training_trials(cfg, trial, conn, settings), id)
+      train_obs <- mask_cv(get_observations(train_ids, conn, settings), focal_acc, scheme)
+      train_acc <- names(build_targets(cfg, train_obs, trial, conn, settings))
+      list(p = choose_geno_sources(cfg, train_acc, focal_acc, conn, settings),
+           train_acc = train_acc, focal_acc = focal_acc)
+    }, error = function(e) { cat("  (panel probe unavailable: ", conditionMessage(e), ")\n", sep = ""); NULL })
+
+    if (!is.null(panels) && length(panels$p)) {
+      pl <- panels$p; f_acc <- panels$focal_acc; t_acc <- panels$train_acc
+      cat(sprintf("  panels from subtask C (%d), focal / train overlap:\n", length(pl)))
+      fo <- vapply(pl, function(d) length(intersect(rownames(d), f_acc)), integer(1))
+      to <- vapply(pl, function(d) length(intersect(rownames(d), t_acc)), integer(1))
+      # Exactly .best_panel's criterion: coverage of union(train, focal), counted once.
+      need <- union(t_acc, f_acc)
+      cov  <- vapply(pl, function(d) length(intersect(rownames(d), need)), integer(1))
+      for (i in seq_along(pl))
+        cat(sprintf("    panel %-20s %6d rows   focal %5d   train %6d   union %6d\n",
+                    names(pl)[i] %||% i, nrow(pl[[i]]), fo[i], to[i], cov[i]))
+      picked <- which.max(cov)
+      cat(sprintf("  .best_panel picks %s -- focal coverage %d%s\n",
+                  names(pl)[picked] %||% picked, fo[picked],
+                  if (fo[picked] == 0 && any(fo > 0))
+                    "   <-- PASSED OVER a focal-covering panel: .best_panel, not the data"
+                  else if (fo[picked] == 0)
+                    "   <-- no panel covers the focal lines: a data/name problem" else ""))
     }
   }
 
   # --- run the pipeline and report where it lands -----------------------------
-  trial <- tryCatch(build_trial_descriptor(id, conn, settings), error = function(e) NULL)
+  # `trial` was built above for the panel probe.
   if (is.null(trial)) { cat("  could not build descriptor; stopping.\n"); return(invisible(NULL)) }
   res <- tryCatch(
     { po <- run_pipeline(cfg, trial, scheme, settings, conn)
