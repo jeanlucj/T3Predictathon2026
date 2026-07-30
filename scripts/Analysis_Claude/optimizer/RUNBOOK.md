@@ -15,7 +15,7 @@ single worker is the same list minus the parallel-only items, marked **⑂** bel
 Once the drill is familiar, the whole thing is:
 
 ```bash
-cd /workdir/jj332/T3Predictathon2026/scripts/Analysis_Claude/optimizer
+cd /workdir/<user>/T3Predictathon2026/scripts/Analysis_Claude/optimizer
 git pull && loadR
 source ./optimizer_paths.sh                  # $STOP_FILE, $DB_PATH, $REPORT_PATH, ...
 Rscript tests/run_all.R                      # expect 3/3
@@ -58,7 +58,7 @@ Without it the first command occupies the terminal and the rest never run.
       ```
       T3_USERNAME=<your-t3-username>
       T3_PASSWORD=<your-t3-password>
-      OPTIMIZER_PATH=/home/jj332/T3optimizer
+      OPTIMIZER_PATH=/home/<user>/T3optimizer
       ```
       `OPTIMIZER_PATH` is what turns on remote mode — there is no `remote_server` flag to
       edit any more, it is derived from this variable. Confirm with
@@ -101,8 +101,8 @@ settings_override <- list(
   max_hours                 = 23.5,
   dosage_budget_bytes       = 16e9,     # keep at whatever the CACHE was built with
   dosage_total_budget_bytes = 18e9,     # 512 GB, 8 workers -- this is what bounds memory
-  db_path        = "/workdir/jj332/T3optimizer/evals.sqlite",
-  db_backup_path = "/home/jj332/T3optimizer/state/evals_backup.sqlite"
+  db_path        = "/workdir/<user>/T3optimizer/evals.sqlite",
+  db_backup_path = "/home/<user>/T3optimizer/state/evals_backup.sqlite"
 )
 ```
 
@@ -189,8 +189,8 @@ running it before you have set the settings only tells you the code was fine yes
 - [ ] **⑂ Move an existing store to the new `db_path`** — the workers continue from whatever
       is at that path, so it must be the store you care about:
       ```bash
-      mkdir -p /workdir/jj332/T3optimizer
-      cp $HOME/T3optimizer/state/evals.sqlite /workdir/jj332/T3optimizer/evals.sqlite
+      mkdir -p /workdir/<user>/T3optimizer
+      cp $HOME/T3optimizer/state/evals.sqlite /workdir/<user>/T3optimizer/evals.sqlite
       ```
 
 ## 3. Cache
@@ -208,7 +208,7 @@ disk and is backed up to `$HOME/T3optimizer/cache`. It is large but regenerable.
 - [ ] **Restore it** if you have just copied the repo to a fresh node — the checkout brings
       no cache, because it lives under `$HOME/T3optimizer/cache/`.
       ```bash
-      rsync -a $HOME/T3optimizer/cache/ /workdir/jj332/T3Predictathon2026/scripts/Analysis_Claude/optimizer/cache/
+      rsync -a $HOME/T3optimizer/cache/ /workdir/<user>/T3Predictathon2026/scripts/Analysis_Claude/optimizer/cache/
       ```
       **The trailing slashes are load-bearing.** Without the one on the source, rsync
       *creates a nested directory* instead of merging. This takes a while; drop `-v` unless
@@ -304,16 +304,16 @@ Red flags:
 - [ ] **Save the store — this is the essential one.** The run *is* that file: the incumbent,
       the surrogate's training data, and what to try next are all recomputed from it.
       ```bash
-      cp /workdir/jj332/T3optimizer/evals.sqlite $HOME/T3optimizer/state/
+      cp /workdir/<user>/T3optimizer/evals.sqlite $HOME/T3optimizer/state/
       ```
       (With `db_backup_path` set, the leader has been doing this every 30 min anyway.)
 - [ ] **Save the cache — optional, large, regenerable.** Keeping it lets the next run skip
       re-downloading. Note this is the **opposite direction** from the restore in step 3:
       ```bash
-      rsync -a /workdir/jj332/T3Predictathon2026/scripts/Analysis_Claude/optimizer/cache/ $HOME/T3optimizer/cache/
+      rsync -a /workdir/<user>/T3Predictathon2026/scripts/Analysis_Claude/optimizer/cache/ $HOME/T3optimizer/cache/
       ```
 - [ ] **Pull to the laptop** if the reservation is ending — FileZilla, or
-      `rsync -av biohpc:/home/jj332/T3optimizer/state/ ./state/`.
+      `rsync -av biohpc:/home/<user>/T3optimizer/state/ ./state/`.
 
 To **resume** later — same server, new reservation, or laptop — put `evals.sqlite` (and
 `cache/` if you kept it) back at the paths the settings name, and launch again.
