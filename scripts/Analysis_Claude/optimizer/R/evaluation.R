@@ -32,47 +32,47 @@ library(tidyverse)
 # ---------------------------------------------------------------------------
 EVAL_GROUPS <- list(
   # ---- offline, instant -------------------------------------------------
-  genome      = c("sample_config", "sample_block", "crossover", "mutate_config",
-                  "repair_config", "config_hash", "configs_to_features",
-                  "feature_schema", "seed_configs", ".make_seed"),
-  engine      = c("aggregate_scores", "get_elites", "fresh_random",
-                  "propose_candidates", "incumbent_config", "choose_config",
-                  "filter_evals_to_domain", "filter_evals_to_scheme",
-                  "fit_surrogate", "predict_surrogate", "expected_improvement"),
-  store       = c("open_store", "store_eval", "read_evals", "config_to_json",
-                  "config_from_json", "write_report", "method_importance",
-                  "failure_summary"),
-  scoring     = c("sample_trial", "evaluate_config_on_trial", "score_predictions",
-                  ".sim_true", ".sim_evaluate", "mask_cv"),
+  config_space = c("sample_config", "sample_block", "crossover", "mutate_config",
+                   "repair_config", "config_hash", "configs_to_features",
+                   "feature_schema", "seed_configs", ".make_seed"),
+  engine       = c("aggregate_scores", "get_elites", "fresh_random",
+                   "propose_candidates", "incumbent_config", "choose_config",
+                   "filter_evals_to_domain", "filter_evals_to_scheme",
+                   "fit_surrogate", "predict_surrogate", "expected_improvement"),
+  store        = c("open_store", "store_eval", "read_evals", "config_to_json",
+                   "config_from_json", "write_report", "method_importance",
+                   "failure_summary"),
+  scoring      = c("sample_trial", "evaluate_config_on_trial", "score_predictions",
+                   ".sim_true", ".sim_evaluate", "mask_cv"),
 
   # ---- online (live BrAPI); slow ---------------------------------------
-  data        = c("cached", "t3_connect", "t3_login", ".brapi_try", "trial_catalog",
-                  "sample_real_trial", "build_trial_descriptor", "get_trial_accessions",
-                  "get_observations", ".obs_tibble", ".obsunits_tibble",
-                  "projects_for_accessions", "get_project_dosage",
-                  ".ensure_project_vcf", ".vcf_complete", ".vcf_to_dosage",
-                  "restore_cache_from_backup", "sync_cache_to_backup"),
+  data         = c("cached", "t3_connect", "t3_login", ".brapi_try", "trial_catalog",
+                   "sample_real_trial", "build_trial_descriptor", "get_trial_accessions",
+                   "get_observations", ".obs_tibble", ".obsunits_tibble",
+                   "projects_for_accessions", "get_project_dosage",
+                   ".ensure_project_vcf", ".vcf_complete", ".vcf_to_dosage",
+                   "restore_cache_from_backup", "sync_cache_to_backup"),
 
   # ---- the six subtasks (arm ONE at a time) ----------------------------
-  subtaskA    = c("select_training_trials", ".find_related", ".germ_overlap",
-                  ".trial_similarity"),
-  subtaskB    = c("mask_cv", "build_targets", ".blue_per_trial", ".per_acc_blue"),
-  subtaskC    = c("choose_geno_sources", "projects_for_accessions",
-                  "get_project_dosage",".ensure_project_vcf", ".vcf_to_dosage",
-                  ".vcf_stat", ".group_by_panel", ".prune_redundant"),
-  subtaskD    = c("build_kernel", ".merge_markers", ".qc_markers", ".vanraden",
-                  ".best_panel", ".bridge_accessions"),
-  subtaskE    = c("train_model", ".fit_sommer_GE", "score_predictions"),
-  subtaskF    = c("predict_test"),
+  subtaskA     = c("select_training_trials", ".find_related", ".germ_overlap",
+                   ".trial_similarity"),
+  subtaskB     = c("mask_cv", "build_targets", ".blue_per_trial", ".per_acc_blue"),
+  subtaskC     = c("choose_geno_sources", "projects_for_accessions",
+                   "get_project_dosage",".ensure_project_vcf", ".vcf_to_dosage",
+                   ".vcf_stat", ".group_by_panel", ".prune_redundant"),
+  subtaskD     = c("build_kernel", ".merge_markers", ".qc_markers", ".vanraden",
+                   ".best_panel", ".bridge_accessions"),
+  subtaskE     = c("train_model", ".fit_sommer_GE", "score_predictions"),
+  subtaskF     = c("predict_test"),
 
   # ---- orchestration / flow glue (its OWN group -> no double-break) -----
-  flow        = c("run_pipeline", "optimizer_step"),
+  flow         = c("run_pipeline", "optimizer_step"),
 
   # ---- validation -------------------------------------------------------
-  diagnostics = c("check_canaries", "diagnose_trial", "canary_anchor",
-                  "calibrate_canary_trials", "print_calibration",
-                  "canary_coverage", "canary_config", "canary_configs",
-                  "sweep_rich_trials", ".oracle_variants", ".select_variants")
+  diagnostics  = c("check_canaries", "diagnose_trial", "canary_anchor",
+                   "calibrate_canary_trials", "print_calibration",
+                   "canary_coverage", "canary_config", "canary_configs",
+                   "sweep_rich_trials", ".oracle_variants", ".select_variants")
 )
 
 # Convenience aggregate: the whole inner pipeline (all six subtasks, but NOT
@@ -84,7 +84,7 @@ EVAL_GROUPS$pipeline <- unique(unlist(
 
 # Recommended evaluation order: fast/offline first so cheap bugs surface before
 # you spend a download. Drives EVALUATION.md and EVALUATION_CHECKLIST.md.
-EVAL_ORDER <- c("genome", "engine", "store", "scoring",
+EVAL_ORDER <- c("config_space", "engine", "store", "scoring",
                 "data", "subtaskA", "subtaskB", "subtaskC", "subtaskD",
                 "subtaskE", "subtaskF", "flow", "diagnostics")
 

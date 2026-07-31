@@ -1,6 +1,6 @@
 # seeds.R
 #
-# The five Predictathon submissions, expressed in the six-subtask genome. These
+# The five Predictathon submissions, expressed as six-subtask configurations. These
 # seed the optimizer so the submitted algorithms are an explicit baseline the
 # search must beat, and so crossover has good building blocks from iteration one.
 # Each seed sets the methods and the parameters that apply to them, plus the

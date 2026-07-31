@@ -141,7 +141,7 @@ prescribes. Trees also handle the conditional parameters for free — an
 inapplicable parameter is `NA`, and `rpart` routes `NA` through surrogate splits
 rather than requiring imputation.
 
-### Genome representation: a flat list of per-subtask blocks
+### Configuration representation: a flat list of per-subtask blocks
 A configuration is a flat named list where each subtask contributes a
 `<subtask>.method` key plus its parameter keys. This makes the three operations
 the search needs trivial and readable: **crossover** swaps whole subtask blocks

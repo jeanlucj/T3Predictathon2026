@@ -84,7 +84,12 @@ check(!.response_auth_failed(ok_wizard) &&
 old_u <- Sys.getenv("T3_USERNAME"); old_p <- Sys.getenv("T3_PASSWORD")
 Sys.setenv(T3_USERNAME = "u", T3_PASSWORD = "p")
 logged_in <- FALSE
-fake_conn <- list(login = function(username, password) { logged_in <<- TRUE; invisible(NULL) })
+# The fake conn must behave like a real BrAPI connection: login() mutates it IN PLACE,
+# storing the token t3_login() then verifies. An environment, not a list, so it can.
+fake_conn <- new.env(parent = emptyenv())
+fake_conn$auth_token <- NULL
+fake_conn$login <- function(username, password) {
+  logged_in <<- TRUE; fake_conn$auth_token <- "tok"; invisible(NULL) }
 tries_seen <- 0L
 th_auth <- function() {
   tries_seen <<- tries_seen + 1L
@@ -96,6 +101,28 @@ res <- suppressMessages(.brapi_try(th_auth, conn = fake_conn, settings = list(br
                                    base_delay = 0))
 check(identical(res, "DATA") && logged_in && tries_seen == 2L,
       "401 -> t3_login() once -> retry succeeds")
+
+# Oracle: BrAPI's login() assigns resp$content$access_token UNCONDITIONALLY, so a rejected
+# password leaves auth_token NULL and returns NORMALLY -- no error, no exception. Unchecked,
+# every later call goes out anonymous and the run reports data-shaped failures (empty
+# searches, "no descriptor") for what is a credentials problem. t3_login must catch it.
+mute_conn <- new.env(parent = emptyenv())
+mute_conn$auth_token <- NULL
+mute_conn$login <- function(username, password) invisible(NULL)   # no token, no error
+bc <- tryCatch(t3_login(mute_conn), error = function(e) e)
+check(inherits(bc, "t3_bad_credentials"), "login issuing no token -> t3_bad_credentials")
+check(grepl("REJECTED", conditionMessage(bc)), "the message says the login was REJECTED")
+
+# Oracle: .brapi_try fails FAST on bad creds, as it does on missing ones -- retrying just
+# re-sends the same rejected password.
+n_bad <- 0L
+th_bad <- function() { n_bad <<- n_bad + 1L; warning("Unauthorized (HTTP 401).")
+                       list(status = list(reason = "Unauthorized")) }
+res_bad <- suppressMessages(tryCatch(
+  .brapi_try(th_bad, conn = mute_conn, settings = list(brapi_tries = 4), base_delay = 0),
+  error = function(e) e))
+check(inherits(res_bad, "t3_bad_credentials") && n_bad == 1L,
+      "bad creds: .brapi_try fails fast (1 attempt, no retry storm)")
 
 # Oracle: absent credentials -> a t3_missing_credentials condition (not a generic error), so
 # .brapi_try can fail fast on it rather than retry.
@@ -122,10 +149,12 @@ check(any(grepl("re-login FAILED", msgs)), "re-login failure is reported LOUDLY,
 # across attempts; here it succeeds on the 2nd try and the call then returns.
 Sys.setenv(T3_USERNAME = "u", T3_PASSWORD = "p")
 login_calls <- 0L; authed <- FALSE
-flaky_conn <- list(login = function(username, password) {
+flaky_conn <- new.env(parent = emptyenv())
+flaky_conn$auth_token <- NULL
+flaky_conn$login <- function(username, password) {
   login_calls <<- login_calls + 1L
   if (login_calls < 2L) stop("Timeout was reached")   # first login attempt fails transiently
-  authed <<- TRUE; invisible(NULL) })
+  authed <<- TRUE; flaky_conn$auth_token <- "tok"; invisible(NULL) }
 th_recover <- function() { if (!authed) { warning("Unauthorized (HTTP 401).")
                            list(status = list(reason = "Unauthorized")) } else "DATA" }
 check(identical(suppressMessages(.brapi_try(th_recover, conn = flaky_conn,
@@ -783,6 +812,53 @@ outcome <- tryCatch(
   error = function(e) paste("UNCAUGHT:", conditionMessage(e)))
 check(outcome %in% c("matrix", "infeasible"),
       paste("em_combine survives a singular partial covariance (got:", outcome, ")"))
+
+# ===========================================================================
+cat(".effective_n / .center_dfs (em_combine degrees of freedom)\n")
+# Oracle: df is a partial's relative WEIGHT in the Wishart-EM likelihood. .effective_n is the
+# Galwey (2009) effective number of independent samples; it must not move when the matrix is
+# rescaled, because the combiner is fed unit-mean-diagonal partials.
+In <- diag(20)
+check(abs(.effective_n(In) - 20) < 1e-8, ".effective_n(I_n) == n (a fully independent panel)")
+check(abs(.effective_n(In) - .effective_n(2 * In)) < 1e-8, ".effective_n is scale-invariant")
+
+set.seed(101)
+# Rank-deficient panel: fewer markers than accessions -> effective_n well below nrow. This is
+# the case the accession count overstates, and the reason for the switch.
+Mrd <- matrix(rbinom(60 * 15, 2, 0.3), 60, 15)
+prd <- colMeans(Mrd) / 2; Wrd <- sweep(Mrd, 2, 2 * prd, "-")
+Grd <- tcrossprod(Wrd) / (2 * sum(prd * (1 - prd))); Grd <- Grd / mean(diag(Grd))
+check(.effective_n(Grd) < 0.5 * nrow(Grd),
+      ".effective_n is far below nrow on a rank-deficient panel (nrow overstates it)")
+check(.effective_n(Grd) >= 1, ".effective_n is bounded below by 1")
+
+# Oracle: .center_dfs keeps the ORDERING but re-centres and caps the spread -- that cap is
+# what stops a big panel outweighting a small one 10:1.
+d <- .center_dfs(c(2000, 200, 600), 60, 15)
+check(identical(order(d), order(c(2000, 200, 600))), ".center_dfs preserves the ordering of m_eff")
+check(abs(mean(d) - 60) < 1e-8, ".center_dfs re-centres on mean_df")
+check(stats::sd(d) <= 15 + 1e-8, ".center_dfs caps the spread at sd_df")
+check(max(d) / min(d) < 2, ".center_dfs keeps the weight ratio well under the 10:1 nrow gives")
+check(all(.center_dfs(c(5, 5, 5), 60, 15) == 60), "identical m_eff -> all dfs == mean_df")
+check(all(.center_dfs(c(1, 1e6), 60, 15) >= 1), ".center_dfs floors dfs at 1")
+
+# Oracle (the deviation from the sibling): df is measured BEFORE the ridge, so the searchable
+# kernel.ridge cannot move the panel weights. Same two panels, ridge at both ends of the
+# config-space range -> identical dfs.
+dfs_at <- function(r) {
+  gl <- list(A = .vanraden(.qc_markers(pA, kcfg("em_combine")), union(need2, bridge3)),
+             B = .vanraden(.qc_markers(pB, kcfg("em_combine")), union(need2, bridge3)))
+  unridged <- lapply(gl, function(g) g / mean(diag(g)))
+  .center_dfs(vapply(unridged, .effective_n, numeric(1)), 60, 15)
+}
+check(isTRUE(all.equal(dfs_at(1e-5), dfs_at(1e-2))),
+      "em_combine dfs are independent of kernel.ridge (measured pre-ridge)")
+
+# Oracle: equal dfs are an unweighted average, so the combined result must be identical
+# whatever the common value is -- only the RATIO between partials reaches the M-step.
+eqA <- build_kernel(kcfg("em_combine", ridge = 0), list(A = pA, B = pB), need2)
+check(all(is.finite(eqA)) && setequal(rownames(eqA), need2),
+      "em_combine still produces a finite need x need kernel under effective-n dfs")
 
 # ===========================================================================
 cat(".group_by_panel / .prune_redundant\n")

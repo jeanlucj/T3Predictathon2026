@@ -1,6 +1,6 @@
 # config_space.R
 #
-# The "genome" of a genomic-prediction pipeline: the six subtasks, the methods
+# The configuration space of a genomic-prediction pipeline: the six subtasks, the methods
 # each can use (drawn from the five Predictathon submissions and the literature),
 # and the tunable parameters of each method. This file is the single source of
 # truth for the search space. Everything the optimizer does -- sample a random

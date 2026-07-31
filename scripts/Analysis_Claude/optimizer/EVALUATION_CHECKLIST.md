@@ -6,7 +6,7 @@ Bootstrap once (see EVALUATION.md §3), then:
 
 ## Offline — `simulate = TRUE`, no network, do these first
 
-- [x] **L1 `genome`** — `sample_config()` / `crossover()` / `mutate_config()` produce well-formed configs; `config_hash()` stable; inapplicable params are `NA`, applicable ones are not; a mutation changes ≥1 block.
+- [x] **L1 `config_space`** — `sample_config()` / `crossover()` / `mutate_config()` produce well-formed configs; `config_hash()` stable; inapplicable params are `NA`, applicable ones are not; a mutation changes ≥1 block.
 - [x] **L2 `engine`** — `choose_config()` moves through phases seed → `random_init` → `acquisition` at the right counts; `expected_improvement()` ≥ 0; on the sim world the surrogate phase beats random search; incumbent honours `incumbent_min_reps`.
 - [x] **L3 `store`** — `store_eval` ↔ `read_evals` round-trip (incl. `NA` score & `detail`); `config_from_json(config_to_json(cfg))` == `cfg` including `NA` params; `write_report()` renders `state/report.md`.
 - [x] **L4 `scoring`** — `score_predictions(x, a·x+b)` = +1 (a\>0); \<5 overlap or constant → `NA` with a reason; `mask_cv` under CV00 drops **exactly** the focal accessions CV0 keeps; no leakage (score not ≈1).

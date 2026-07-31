@@ -13,7 +13,7 @@ nine trials used in the Predictathon.
 
 ---
 
-## 1. The six subtasks (the "genome")
+## 1. The six subtasks (the configuration space)
 
 Every submission, however it is written, does these six things. Each submission
 does each one somewhat differently, and each has tunable knobs. We catalogue the
@@ -142,7 +142,7 @@ Two verification layers, because the failure modes differ:
   choices are genuinely better than others. `tests/test_sim_loop.R` runs the full
   optimizer against it offline in seconds and checks the incumbent rises above the
   random/seed baseline. The Tier-1 unit tests (`tests/test_subtasks.R`,
-  `test_config_space.R`) cover the deterministic subtask and genome logic.
+  `test_config_space.R`) cover the deterministic subtask and configuration-space logic.
 - **The plumbing (real data).** Because the optimizer *skips and continues* past a
   trial it cannot evaluate, a bug that hides real data looks identical to a trial
   that is genuinely infeasible. Two mechanisms surface that: the **failure-log
@@ -165,7 +165,7 @@ optimizer/
   run_optimizer.R      <- background entry point (budget, stop-file, checkpoint, canary startup)
   settings.R           <- one place for all knobs (budgets, paths, simulate, canary trials)
   R/
-    config_space.R     <- the six-subtask genome: sample / encode / crossover / mutate
+    config_space.R     <- the six-subtask config space: sample / encode / crossover / mutate
     pipeline.R         <- parameterized pipeline: run a config's six subtasks on a trial
     data_access.R      <- BrAPI + caching: sample trials, pull phenotypes & dosages
     evaluate.R         <- run a config on a trial under CV0/CV00 -> score (+ SIMULATE)
@@ -179,7 +179,7 @@ optimizer/
   tests/
     run_all.R          <- run all fast test files (--all also runs the sim loop)
     test_subtasks.R    <- Tier 1 deterministic core (subtask oracles)
-    test_config_space.R<- genome invariants (sample/encode/crossover round-trips)
+    test_config_space.R<- config-space invariants (sample/encode/crossover round-trips)
     test_sim_loop.R    <- end-to-end optimizer run in SIMULATE mode (offline)
   cache/   state/   logs/   <- generated at runtime (see §8)
 ```
@@ -194,7 +194,7 @@ One line per function, grouped by file. `.name` = file-private helper.
 checkpoint, startup canary); `optimizer_step()`: pick config → sample trial →
 evaluate under each scheme → store.
 
-**`R/config_space.R`** (the genome) — `SUBTASKS` (the search-space spec);
+**`R/config_space.R`** (the configuration space) — `SUBTASKS` (the search-space spec);
 `sample_block()`/`sample_config()`: draw a random config; `crossover()`,
 `mutate_config()`: evolutionary operators; `repair_config()`: enforce
 param-applies-to-method invariant; `canonical_keys()`, `config_hash()`;

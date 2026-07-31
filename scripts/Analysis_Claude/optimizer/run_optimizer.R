@@ -61,7 +61,11 @@ optimizer_step <- function(con, settings, conn = NULL) {
              peak_r_mb     = ev$peak_r_mb   %||% NA_real_,
              rss_mb        = ev$rss_mb      %||% NA_real_,
              worker        = settings$worker_id %||% NA_character_,
-             dosage_budget = settings$dosage_budget_bytes %||% NA_real_)
+             dosage_budget = settings$dosage_budget_bytes %||% NA_real_,
+             # How em_combine derived each partial's EM weight. Like dosage_budget, this is
+             # not a config parameter, so without it rows from before and after the
+             # 2026-07-31 switch would be averaged together (EM_COMBINE_COMPARISON.md item 1).
+             em_df_method  = "effective_n")
   # scores/statuses kept as length-1 vectors so the main-loop logging is unchanged.
   list(source = choice$source, trial = trial$id,
        scores = ev$score, statuses = ev$status, ei = choice$ei %||% NA_real_,

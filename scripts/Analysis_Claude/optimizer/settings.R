@@ -191,6 +191,15 @@ optimizer_settings <- function(local_overrides = TRUE) {
     # one with more markers.
     redundant_acc_overlap = 0.90,
 
+    # em_combine degrees of freedom. In the Wishart-EM likelihood a partial covariance's df
+    # is its relative WEIGHT, so only the ratios between panels matter. Each panel's effective
+    # sample size (.effective_n) sets the ORDERING; the values are then re-centred on
+    # em_df_mean with the spread capped at em_df_stdev, which is what bounds how far apart two
+    # panels' weights may get. Keep em_df_mean comfortably above em_df_stdev so all dfs stay
+    # positive. Matches the sibling pipeline's GRM_DF_MEAN / GRM_DF_STDEV.
+    em_df_mean  = 60,
+    em_df_stdev = 15,
+
     # Memory budget for a SINGLE PROJECT's dense dosage matrix (samples x markers x 4 B).
     # This is the SOLE control on cached marker density: each project is downloaded and
     # parsed ONCE, at the densest thinning that fits this budget (thin 1 = full markers for

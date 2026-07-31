@@ -1,6 +1,6 @@
 # test_config_space.R
 #
-# Invariants of the genome: sampling produces well-formed configs, encoding is
+# Invariants of the configuration space: sampling produces well-formed configs, encoding is
 # schema-stable, JSON round-trips preserve NA, and crossover/mutation keep
 # configs valid. Run: Rscript tests/test_config_space.R
 

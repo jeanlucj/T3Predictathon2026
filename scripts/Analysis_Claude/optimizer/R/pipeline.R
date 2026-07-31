@@ -59,7 +59,7 @@ run_pipeline <- function(cfg, trial, scheme, settings, conn) {
   # --- D. build relationship / kernel --------------------------------------
   # QC + allele frequencies come from each panel's full population; the GRM itself
   # covers only the accessions we need to relate.
-  K <- build_kernel(cfg, dosage_list, union(train_acc, focal_acc))
+  K <- build_kernel(cfg, dosage_list, union(train_acc, focal_acc), settings)
   geno_acc <- rownames(K)
   train_in <- intersect(train_acc, geno_acc)
   test_in  <- intersect(focal_acc, geno_acc)
@@ -560,7 +560,7 @@ choose_geno_sources <- function(cfg, train_acc, test_acc, conn, settings) {
 # `dosage_list` holds one FULL-population matrix per protocol group; `need` is the
 # accession set the pipeline actually has to relate (training + focal). Marker QC and
 # allele frequencies come from the population; the GRM is then formed over `need`.
-build_kernel <- function(cfg, dosage_list, need) {
+build_kernel <- function(cfg, dosage_list, need, settings = NULL) {
   ridge <- cfg$kernel.ridge
   m <- cfg$kernel.method
 
@@ -612,19 +612,27 @@ build_kernel <- function(cfg, dosage_list, need) {
             "em_combine: panel %s partial covariance is rank %d of %d (%d duplicate row(s)) -- ridged before combining",
             nm, qr(g)$rank, nrow(g), dup))
       }
-      std <- lapply(grms, function(g) {
-        g <- g / mean(diag(g))
-        diag(g) <- diag(g) + max(ridge, 1e-6)
-        g
-      })
+      # Standardize, MEASURE, then ridge -- in that order. The df below is measured on the
+      # unridged matrix on purpose: our ridge is a searchable parameter (1e-5..1e-2), and a
+      # ridge that large lifts a rank-deficient panel's near-zero eigenvalues enough to
+      # inflate its effective_n (27.6 -> 35.2 on a 100x30 panel). Measuring first keeps df a
+      # property of the panel rather than of a tuning knob.
+      unridged <- lapply(grms, function(g) g / mean(diag(g)))
+      std <- lapply(unridged, function(g) { diag(g) <- diag(g) + max(ridge, 1e-6); g })
       names_all <- unique(unlist(lapply(std, colnames)))
       idx  <- lapply(std, function(g) match(colnames(g), names_all))
+      # df is each partial's RELATIVE WEIGHT in the Wishart-EM likelihood, so what matters is
+      # the ratio between panels, not the scale. Accession count would weight a 2000-line
+      # panel 10:1 over a 200-line one; markers are in LD, so that overstates the independent
+      # information it carries. The effective-sample-size measure re-centred by .center_dfs
+      # brings that to ~1.4:1 (EM_COMBINE_COMPARISON.md item 1).
+      dfs <- .center_dfs(vapply(unridged, .effective_n, numeric(1)),
+                         settings$em_df_mean %||% 60, settings$em_df_stdev %||% 15)
       # A combine that still fails is a property of THIS trial's panels, not a bug: record it
       # as an infeasibility so the loop moves on rather than surfacing as `status = "error"`.
       res <- tryCatch(
         T3BrapiHelpers::covariance_combiner(
-          partial_covs = std, var_indices = idx,
-          degrees_freedom = vapply(std, nrow, integer(1))),
+          partial_covs = std, var_indices = idx, degrees_freedom = dfs),
         error = function(e) e)
       if (inherits(res, "error"))
         # Carry each partial's shape and rank into the failure record, so the cause is
@@ -663,6 +671,31 @@ build_kernel <- function(cfg, dosage_list, need) {
   }
   diag(K) <- diag(K) + ridge
   K
+}
+
+# --- em_combine degrees of freedom -----------------------------------------
+# Effective number of INDEPENDENT samples behind a relationship matrix: Galwey (2009)'s
+# "effective number of independent tests", (sum sqrt(lambda))^2 / sum(lambda) over the
+# positive eigenvalues. Scale-invariant (so standardizing to a unit mean diagonal does not
+# move it) and bounded [1, rank]. Used instead of the accession count because markers are in
+# LD: a 2000-line panel does not carry 10x the independent information of a 200-line one.
+.effective_n <- function(G) {
+  lambda <- eigen(G, symmetric = TRUE, only.values = TRUE)$values
+  lambda <- lambda[lambda > 1e-8]                  # drop ~zero / tiny-negative
+  if (length(lambda) < 1) return(1)
+  (sum(sqrt(lambda)))^2 / sum(lambda)
+}
+
+# Turn effective sample sizes into EM degrees of freedom: keep their relative ORDERING but
+# re-centre on mean_df and cap the spread at sd_df. Only the ratios between partials matter
+# to the combiner (the common scale divides out of the M-step), so this is the knob that
+# decides how far apart two panels' weights may get. Floored at 1 so every df stays positive.
+.center_dfs <- function(m_eff, mean_df, sd_df) {
+  if (length(m_eff) <= 1) return(rep(mean_df, length(m_eff)))
+  obs_sd <- stats::sd(m_eff)
+  if (!is.finite(obs_sd) || obs_sd == 0) return(rep(mean_df, length(m_eff)))
+  z <- (m_eff - mean(m_eff)) / obs_sd
+  pmax(mean_df + z * min(sd_df, obs_sd), 1)
 }
 
 # Accessions genotyped in >1 protocol group -- present in the rownames of >=2 of the

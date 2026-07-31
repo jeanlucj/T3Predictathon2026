@@ -91,11 +91,14 @@ open_store <- function(path, busy_timeout_ms = 60000) {
   # which concurrent worker produced the row; dosage_budget records the marker-density
   # budget in force, WITHOUT which rows made at different densities are silently
   # incomparable (density is not a config parameter -- see settings$dosage_budget_bytes).
+  # em_df_method is the same kind of hidden axis for em_combine: it names how each partial
+  # covariance's EM weight was derived. NULL on rows written before 2026-07-31 means the old
+  # accession-count weighting, which scores differently -- see EM_COMBINE_COMPARISON.md.
   have <- DBI::dbListFields(con, "evals")
   add <- c(detail = "TEXT", study_name = "TEXT", program_name = "TEXT",
            location_name = "TEXT", year = "INTEGER",
            peak_r_mb = "REAL", rss_mb = "REAL", worker = "TEXT", dosage_budget = "REAL",
-           peak_rss_mb = "REAL")
+           peak_rss_mb = "REAL", em_df_method = "TEXT")
   for (col in names(add)) {
     if (col %in% have) next
     # Two workers starting together both see the column missing and both try to add it.
@@ -157,13 +160,14 @@ store_eval <- function(con, cfg, trial_id, scheme, score, n_test, status,
                        study_name = NA_character_, program_name = NA_character_,
                        location_name = NA_character_, year = NA_integer_,
                        peak_r_mb = NA_real_, rss_mb = NA_real_, peak_rss_mb = NA_real_,
-                       worker = NA_character_, dosage_budget = NA_real_) {
+                       worker = NA_character_, dosage_budget = NA_real_,
+                       em_df_method = NA_character_) {
   invisible(.with_busy_retry(function() DBI::dbExecute(con,
     "INSERT INTO evals
        (config_hash, config_json, trial_id, study_name, program_name, location_name, year,
         scheme, score, n_test, status, reason, detail, seconds, ts,
-        peak_r_mb, rss_mb, worker, dosage_budget, peak_rss_mb)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        peak_r_mb, rss_mb, worker, dosage_budget, peak_rss_mb, em_df_method)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     params = list(config_hash(cfg), config_to_json(cfg), trial_id,
                   study_name %||% NA_character_, program_name %||% NA_character_,
                   location_name %||% NA_character_,
@@ -176,7 +180,8 @@ store_eval <- function(con, cfg, trial_id, scheme, score, n_test, status,
                   as.numeric(peak_r_mb %||% NA_real_), as.numeric(rss_mb %||% NA_real_),
                   as.character(worker %||% NA_character_),
                   as.numeric(dosage_budget %||% NA_real_),
-                  as.numeric(peak_rss_mb %||% NA_real_)))))
+                  as.numeric(peak_rss_mb %||% NA_real_),
+                  as.character(em_df_method %||% NA_character_)))))
 }
 
 # Belt-and-braces around the busy_timeout set in open_store: retry a write that still comes

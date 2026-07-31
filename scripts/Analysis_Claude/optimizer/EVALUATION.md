@@ -14,8 +14,8 @@ Eleven `R/` modules, one entry point, one settings file. The **group** column is
 
 | Module (`R/…`) | Owns | Off/online | Group |
 |----|----|----|----|
-| `config_space.R` | the six-subtask genome: sample / encode / crossover / mutate | offline | `genome` |
-| `seeds.R` | the five submissions as starting configs | offline | `genome` |
+| `config_space.R` | the six-subtask config space: sample / encode / crossover / mutate | offline | `config_space` |
+| `seeds.R` | the five submissions as starting configs | offline | `config_space` |
 | `optimizer.R` | candidate generation + acquisition + phase logic + incumbent | offline | `engine` |
 | `surrogate.R` | bagged-rpart RF surrogate: mean, uncertainty, Expected Improvement | offline | `engine` |
 | `store.R` | SQLite results store (resumable state) | offline | `store` |
@@ -28,7 +28,7 @@ Eleven `R/` modules, one entry point, one settings file. The **group** column is
 
 \* `evaluate.R` is offline in `simulate = TRUE`; in real mode it calls `run_pipeline()`, which is online.
 
-The six subtasks inside `pipeline.R` (the recombinable "genome"): **A** select training trials, **B** preprocess phenotypes → per-accession targets, **C** select genotyping data, **D** build relationship/kernel, **E** train model, **F** predict. Each is its own group (`subtaskA` … `subtaskF`) so you can arm exactly one.
+The six subtasks inside `pipeline.R` (the recombinable configuration): **A** select training trials, **B** preprocess phenotypes → per-accession targets, **C** select genotyping data, **D** build relationship/kernel, **E** train model, **F** predict. Each is its own group (`subtaskA` … `subtaskF`) so you can arm exactly one.
 
 ------------------------------------------------------------------------
 
@@ -108,10 +108,10 @@ Durable state lives in two dirs and is regenerable: `state/` (the SQLite store +
 
 Each level: **arm** the group, run the numbered console lines (each assigns a Global-Environment variable), and check the three annotations — **→ returns** (shape you should see), **🔍 eyeball** (the `peek()`/inspection and what healthy looks like), **🚩 red flag** (the subtle failure to hunt), plus the italic *Assumption:* the code is making at that step (test **it**, not just the output). `disarm_evaluation()` when you finish a level.
 
-### L1 — `genome` (offline, instant)
+### L1 — `config_space` (offline, instant)
 
 ``` r
-arm_evaluation("genome")
+arm_evaluation("config_space")
 cfg  <- sample_config()                        # step with n/c to watch each block fill
 cfgs <- seed_configs()                         # the 5 submissions as configs
 kid  <- crossover(cfgs$Prediction1, cfgs$Prediction5)
@@ -482,7 +482,7 @@ Each file is self-contained: it sources the subsystem, runs hand-rolled `check()
 
 | Command | Expected |
 |----|----|
-| `tests/test_config_space.R` | \~5 genome invariants across \~400 sampled/recombined configs → `config_space tests: 8007 passed, 0 failed` (8007 = individual assertions) |
+| `tests/test_config_space.R` | \~5 config-space invariants across \~400 sampled/recombined configs → `config_space tests: 8007 passed, 0 failed` (8007 = individual assertions) |
 | `tests/test_subtasks.R` | `Tier 1 subtask tests: 196 passed, 0 failed` |
 | `tests/run_all.R` | `2/2 test files passed` |
 | `tests/test_sim_loop.R` (or `run_all.R --all`) | `PASS: the surrogate search beats random search and the submissions on an exact objective`, exit 0. Deterministic — incumbent 0.600 vs random-search bar 0.567 vs best seed 0.507, every run. |
@@ -507,7 +507,7 @@ If a count drifts after a change, that is the regression signal — reconcile it
 | `predict_test` (`pipeline.R`) | conditional expectation with a clone test line → `mu + u[clone-source]`; `blend_obs_w` blends under CV0, no-op under CV00; fallback below `min_overlap` → all predictions `mean(targets)`. |
 | `mask_cv` (`pipeline.R`) | CV0 keeps every row; CV00 drops exactly the focal-accession rows (CV0 set minus CV00 set = the focal rows). |
 
-### Genome invariants *(implemented: `tests/test_config_space.R`)*
+### Configuration-space invariants *(implemented: `tests/test_config_space.R`)*
 
 Sampling, encoding, JSON round-trips, and crossover/mutation all produce well-formed configurations. Property-based: \~5 invariants (canonical key order, valid method, param-applies⇔not-NA, JSON round-trip hash, crossover/mutation validity) asserted across \~400 randomly sampled and recombined configs — hence the `8007 passed` counter (individual assertions, not distinct cases).
 
@@ -671,7 +671,7 @@ To add a literature method:
 
 1.  Add the method name (and any new parameters, tagged with the methods they apply to) to the relevant subtask in `R/config_space.R::SUBTASKS`.
 2.  Add a matching dispatcher branch in `R/pipeline.R` (the `select_training_trials` / `build_targets` / `choose_geno_sources` / `build_kernel` / `train_model` / `predict_test` switch for that subtask). An unhandled method must `fatal()`.
-3.  Re-run `Rscript tests/run_all.R` (genome invariants + subtasks) and, after a search-space change, `tests/test_sim_loop.R`.
+3.  Re-run `Rscript tests/run_all.R` (config-space invariants + subtasks) and, after a search-space change, `tests/test_sim_loop.R`.
 4.  Re-run `canary_coverage()` so the new method is exercised by a canary (extend a `canary_configs()` entry if needed).
 5.  If you added a function worth stepping through, add its name to the appropriate group in `R/evaluation.R::EVAL_GROUPS` so `arm_evaluation()` reaches it.
 
