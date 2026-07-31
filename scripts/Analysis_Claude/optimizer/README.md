@@ -152,15 +152,15 @@ preserved.
    You get that split by setting **one environment variable** -- no code edit:
    ```bash
    # in the optimizer folder's .Renviron (alongside T3_USERNAME / T3_PASSWORD):
-   OPTIMIZER_PATH=/home/<user>/t3_optimizer
+   OPTIMIZER_HOME=/home/<user>/t3_optimizer
    ```
    `settings.R` reads this and switches to **remote mode automatically**: `state/`,
-   `logs/`, `report.md`, and the `STOP` flag go under `$OPTIMIZER_PATH` (persistent),
-   while `cache/` stays on the work disk and is backed up to `$OPTIMIZER_PATH/cache`
-   (see "Automatic cache backup" below). A laptop with no `OPTIMIZER_PATH` stays in
+   `logs/`, `report.md`, and the `STOP` flag go under `$OPTIMIZER_HOME` (persistent),
+   while `cache/` stays on the work disk and is backed up to `$OPTIMIZER_HOME/cache`
+   (see "Automatic cache backup" below). A laptop with no `OPTIMIZER_HOME` stays in
    local mode. **`remote_server` is derived from the environment** (`.detect_remote_server()`
    in `settings.R`):
-   - it is **TRUE when `OPTIMIZER_PATH` is set**, else FALSE (auto-detect), and
+   - it is **TRUE when `OPTIMIZER_HOME` is set**, else FALSE (auto-detect), and
    - `OPTIMIZER_REMOTE=true|false` (also in `.Renviron` or the shell) forces it either
      way if you ever need to.
 
@@ -170,10 +170,10 @@ preserved.
    to edit `remote_server <- TRUE` on the server, and every upstream change to
    `settings.R` collided on pull.) `.Renviron` is gitignored and is read only at R
    **startup**, so after creating/editing it, **restart R**; verify with
-   `Sys.getenv("OPTIMIZER_PATH")`.
+   `Sys.getenv("OPTIMIZER_HOME")`.
 
    > **Never run R here with `--vanilla`.** It implies `--no-environ`, which skips
-   > `.Renviron` — so the run loses `OPTIMIZER_PATH` *and* the T3 credentials, and
+   > `.Renviron` — so the run loses `OPTIMIZER_HOME` *and* the T3 credentials, and
    > fails at login as though you had never written the file.
 
 4. **Change any OTHER setting per machine via an untracked `settings.local.R`.** The
@@ -203,15 +203,15 @@ preserved.
 - **Must save:** `state/evals.sqlite` (or wherever you pointed `db_path`). This
   single file *is* the optimizer's state -- the incumbent, the surrogate's
   training data, and what to try next are all recomputed from it on startup. Put
-  it on durable storage by setting `OPTIMIZER_PATH=/home/<user>/t3_optimizer` in
+  it on durable storage by setting `OPTIMIZER_HOME=/home/<user>/t3_optimizer` in
   `.Renviron` (see item 3 above) -- remote mode turns on automatically and sends
-  `state/` and `logs/` to `$OPTIMIZER_PATH` while the cache stays on the work disk.
+  `state/` and `logs/` to `$OPTIMIZER_HOME` while the cache stays on the work disk.
 - **Worth saving:** `cache/` -- large but regenerable; keeping it lets a resumed
   run skip re-downloading the trials it already touched. `state/report.md`/`logs/`
   are convenience only.
 
-**Automatic cache backup.** In remote mode (i.e. `OPTIMIZER_PATH` set), `run_optimizer()`
-backs the cache up to `$OPTIMIZER_PATH/cache` on its own: it restores from there at startup if
+**Automatic cache backup.** In remote mode (i.e. `OPTIMIZER_HOME` set), `run_optimizer()`
+backs the cache up to `$OPTIMIZER_HOME/cache` on its own: it restores from there at startup if
 the work cache is empty (fresh node), rsyncs additively every `cache_sync_minutes`
 (default 30) during the run, and flushes once more on a clean stop or an R-level error.
 So a graceful stop, an error, or a hit budget loses nothing.
@@ -220,13 +220,13 @@ So a graceful stop, an error, or a hit budget loses nothing.
 `SIGKILL`ed (OOM-killer, node reboot, `scancel`). For that, run an external rsync
 loop in a separate `tmux`/`nohup` shell so at most one interval is ever at risk:
 ```bash
-source ./optimizer_paths.sh          # OPTIMIZER_PATH lives in .Renviron, which only R reads
+source ./optimizer_paths.sh          # OPTIMIZER_HOME lives in .Renviron, which only R reads
 while true; do
-  rsync -a --exclude 'raw_project/' "$CACHE_DIR/" "$OPTIMIZER_PATH/cache/"
+  rsync -a --exclude 'raw_project/' "$CACHE_DIR/" "$OPTIMIZER_HOME/cache/"
   sleep 1800
 done
 ```
-Note this only protects the *cache*; `evals.sqlite` is already on durable `$OPTIMIZER_PATH`
+Note this only protects the *cache*; `evals.sqlite` is already on durable `$OPTIMIZER_HOME`
 storage, so optimizer **progress** is never lost to a kill -- only some re-downloadable cache.
 
 Manual copy off the machine before your time is up (belt-and-suspenders):
@@ -393,8 +393,8 @@ the batch job does not exit and tear down the allocation), which in an interacti
 blocks the terminal for the whole run. `monitor_memory.sh` loops until stopped.
 
 **6. Stop them** — all at once, with the stop file. Get the path from
-`optimizer_paths.sh` rather than building it yourself: `OPTIMIZER_PATH` is set in
-`.Renviron`, which **only R reads**, so in a shell `"$OPTIMIZER_PATH/state/STOP"` expands to
+`optimizer_paths.sh` rather than building it yourself: `OPTIMIZER_HOME` is set in
+`.Renviron`, which **only R reads**, so in a shell `"$OPTIMIZER_HOME/state/STOP"` expands to
 `"/state/STOP"` — `touch` fails and you believe you stopped a run that is still going.
 
 ```bash

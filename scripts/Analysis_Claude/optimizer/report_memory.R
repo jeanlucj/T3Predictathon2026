@@ -24,7 +24,7 @@
 suppressMessages(library(tidyverse))
 options(width = 200)
 
-# The live store is settings$db_path -- ASK SETTINGS, do not rebuild it from OPTIMIZER_PATH.
+# The live store is settings$db_path -- ASK SETTINGS, do not rebuild it from OPTIMIZER_HOME.
 # settings.local.R commonly moves db_path onto /workdir (so WAL works for parallel workers),
 # and guessing would silently report on a stale copy no worker is writing to.
 store_path <- local({
@@ -33,7 +33,7 @@ store_path <- local({
   s <- tryCatch({ source(here::here("settings.R")); optimizer_settings()$db_path },
                 error = function(e) NULL)
   if (!is.null(s) && nzchar(s)) return(s)
-  p <- Sys.getenv("OPTIMIZER_PATH")                      # fallback: pre-settings behaviour
+  p <- Sys.getenv("OPTIMIZER_HOME")                      # fallback: pre-settings behaviour
   cand <- if (nzchar(p)) file.path(p, "state", "evals.sqlite") else file.path("state", "evals.sqlite")
   if (!file.exists(cand) && file.exists(file.path("state", "evals.sqlite")))
     cand <- file.path("state", "evals.sqlite")
@@ -41,8 +41,8 @@ store_path <- local({
 })
 if (!file.exists(store_path))
   stop("no store at ", store_path,
-       "\nRun from the optimizer directory, or set OPTIMIZER_PATH (check with ",
-       "Sys.getenv(\"OPTIMIZER_PATH\")).")
+       "\nRun from the optimizer directory, or set OPTIMIZER_HOME (check with ",
+       "Sys.getenv(\"OPTIMIZER_HOME\")).")
 
 con <- DBI::dbConnect(RSQLite::SQLite(), store_path)
 have <- DBI::dbListFields(con, "evals")

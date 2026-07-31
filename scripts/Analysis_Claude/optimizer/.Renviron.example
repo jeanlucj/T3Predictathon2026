@@ -15,8 +15,8 @@ T3_PASSWORD=your_t3_password
 # NOTE: SETTING THIS TURNS ON REMOTE MODE AUTOMATICALLY:
 # settings.R derives remote_server from it, so you never edit the tracked file
 # Leave it unset on a laptop for local mode.
-OPTIMIZER_PATH=/home/directory/t3_optimizer
+OPTIMIZER_HOME=/home/directory/t3_optimizer
 
-# Optional: force remote mode on/off regardless of OPTIMIZER_PATH (true/false/yes/no/1/0).
-# Rarely needed -- the OPTIMIZER_PATH auto-detect above is usually enough.
+# Optional: force remote mode on/off regardless of OPTIMIZER_HOME (true/false/yes/no/1/0).
+# Rarely needed -- the OPTIMIZER_HOME auto-detect above is usually enough.
 # OPTIMIZER_REMOTE=true

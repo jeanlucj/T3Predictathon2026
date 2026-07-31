@@ -28,8 +28,8 @@ options(width = 200)   # keep the tables from wrapping
 #   Rscript report_timing.R                                  # the live store
 #   Rscript report_timing.R state/evals_pre_seedaudit.sqlite  # an archived one
 # The live store is settings$db_path -- ASK SETTINGS, do not rebuild the path from
-# OPTIMIZER_PATH. settings.local.R commonly moves db_path (onto /workdir, so SQLite's WAL mode
-# works for parallel workers), and guessing $OPTIMIZER_PATH/state/evals.sqlite then silently
+# OPTIMIZER_HOME. settings.local.R commonly moves db_path (onto /workdir, so SQLite's WAL mode
+# works for parallel workers), and guessing $OPTIMIZER_HOME/state/evals.sqlite then silently
 # reports on a stale copy that no worker is writing to.
 store_path <- local({
   arg <- commandArgs(trailingOnly = TRUE)
@@ -37,7 +37,7 @@ store_path <- local({
   s <- tryCatch({ source(here::here("settings.R")); optimizer_settings()$db_path },
                 error = function(e) NULL)
   if (!is.null(s) && nzchar(s)) return(s)
-  p <- Sys.getenv("OPTIMIZER_PATH")                      # fallback: pre-settings behaviour
+  p <- Sys.getenv("OPTIMIZER_HOME")                      # fallback: pre-settings behaviour
   cand <- if (nzchar(p)) file.path(p, "state", "evals.sqlite") else file.path("state", "evals.sqlite")
   if (!file.exists(cand) && file.exists(file.path("state", "evals.sqlite")))
     cand <- file.path("state", "evals.sqlite")
@@ -45,8 +45,8 @@ store_path <- local({
 })
 if (!file.exists(store_path))
   stop("no store at ", store_path,
-       "\nRun from the optimizer directory, or set OPTIMIZER_PATH (check with ",
-       "Sys.getenv(\"OPTIMIZER_PATH\")).")
+       "\nRun from the optimizer directory, or set OPTIMIZER_HOME (check with ",
+       "Sys.getenv(\"OPTIMIZER_HOME\")).")
 
 con <- DBI::dbConnect(RSQLite::SQLite(), store_path)
 e <- DBI::dbGetQuery(con, "SELECT id, config_json, trial_id, scheme, status, reason,

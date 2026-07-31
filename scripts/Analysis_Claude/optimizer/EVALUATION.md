@@ -91,7 +91,7 @@ conn <- t3_connect(s)          # createBrAPIConnection + t3_login from .Renviron
 Durable state lives in two dirs and is regenerable: `state/` (the SQLite store + `report.md`; `touch state/STOP` halts a run) and `cache/` (downloaded data). See §8.
 
 > **Cache backup (remote server).** With `remote_server = TRUE` the cache stays on the work
-> disk and is backed up to `$OPTIMIZER_PATH/cache`. `run_optimizer()` reconciles and backs it
+> disk and is backed up to `$OPTIMIZER_HOME/cache`. `run_optimizer()` reconciles and backs it
 > up automatically, but you can also drive it by hand outside the loop -- e.g. before a
 > `check_canaries()` / `calibrate_canary_trials()` session that isn't launched through
 > `run_optimizer()`:

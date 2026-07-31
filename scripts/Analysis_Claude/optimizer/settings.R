@@ -17,14 +17,14 @@ OPTIMIZER_BUILD <- "0.7.2"
 # on the server, and `git pull` never conflicts on this file:
 #   * OPTIMIZER_REMOTE, if set to a truthy value (1/true/yes/on) or falsy (0/false/no/off),
 #   decides explicitly; otherwise
-#   * it auto-detects: TRUE when OPTIMIZER_PATH is set in the environment, else FALSE.
-# The server's .Renviron sets OPTIMIZER_PATH, so the server is remote
-# automatically and a laptop (no OPTIMIZER_PATH) is local -- with no edit to
+#   * it auto-detects: TRUE when OPTIMIZER_HOME is set in the environment, else FALSE.
+# The server's .Renviron sets OPTIMIZER_HOME, so the server is remote
+# automatically and a laptop (no OPTIMIZER_HOME) is local -- with no edit to
 # this file on either machine.
 .detect_remote_server <- function() {
   ovr <- tolower(trimws(Sys.getenv("OPTIMIZER_REMOTE")))
   if (nzchar(ovr)) return(ovr %in% c("1", "true", "yes", "on"))   # explicit override wins
-  nzchar(Sys.getenv("OPTIMIZER_PATH"))                            # else auto-detect
+  nzchar(Sys.getenv("OPTIMIZER_HOME"))                            # else auto-detect
 }
 remote_server <- .detect_remote_server()
 
@@ -33,7 +33,7 @@ remote_server <- .detect_remote_server()
 # `git pull` never conflicts on it. That file defines `settings_override <- list(...)`; those
 # values are layered on top of the defaults below. Use it for anything you tune per machine --
 # simulate, dosage_budget_bytes, max_hours, run_startup_canary, custom paths, ... (remote_server
-# itself is env-driven, above -- set OPTIMIZER_PATH / OPTIMIZER_REMOTE for the local/remote
+# itself is env-driven, above -- set OPTIMIZER_HOME / OPTIMIZER_REMOTE for the local/remote
 # split rather than overriding it here).
 .local_overrides <- function(path = here::here("settings.local.R")) {
   if (!file.exists(path)) return(list())
@@ -94,19 +94,19 @@ remote_server <- .detect_remote_server()
 }
 
 # `local_overrides = FALSE` returns the TRACKED defaults only, ignoring settings.local.R.
-# Tests use it: a test that asserts on a derived path (db_path under OPTIMIZER_PATH, say) is
+# Tests use it: a test that asserts on a derived path (db_path under OPTIMIZER_HOME, say) is
 # otherwise checking the machine's untracked config rather than the derivation, and fails on
 # exactly the machines that legitimately override that path. Production always leaves it TRUE.
 optimizer_settings <- function(local_overrides = TRUE) {
   # Permanent, resumable state (sqlite store, report, logs, STOP flag) goes under `perm_dir`:
   # durable HOME storage in remote mode, else the work dir. Fail loudly if remote mode is on but
-  # OPTIMIZER_PATH is unset (only possible via an explicit OPTIMIZER_REMOTE=true) -- otherwise the
+  # OPTIMIZER_HOME is unset (only possible via an explicit OPTIMIZER_REMOTE=true) -- otherwise the
   # paths would silently resolve to the filesystem root ("/state/...").
-  if (remote_server && !nzchar(Sys.getenv("OPTIMIZER_PATH")))
-    stop("remote mode is on but OPTIMIZER_PATH is not set in the environment. Add it to ",
+  if (remote_server && !nzchar(Sys.getenv("OPTIMIZER_HOME")))
+    stop("remote mode is on but OPTIMIZER_HOME is not set in the environment. Add it to ",
          ".Renviron and RESTART R (.Renviron is read only at startup), or set ",
-         "OPTIMIZER_REMOTE=false. Check with Sys.getenv(\"OPTIMIZER_PATH\").")
-  perm_dir <- if (remote_server) Sys.getenv("OPTIMIZER_PATH") else here::here()
+         "OPTIMIZER_REMOTE=false. Check with Sys.getenv(\"OPTIMIZER_HOME\").")
+  perm_dir <- if (remote_server) Sys.getenv("OPTIMIZER_HOME") else here::here()
 
   defaults <- list(
     # Build of the code producing this run (see OPTIMIZER_BUILD at the top of this file).
@@ -392,10 +392,10 @@ optimizer_settings <- function(local_overrides = TRUE) {
     # Periodically rsync the (regenerable) cache to durable storage so an abrupt kill on a
     # scratch/work disk does not force re-downloading. The sync is ADDITIVE (cache files are
     # write-once) and excludes the transient raw_project/ VCFs. On a remote server it defaults
-    # to <OPTIMIZER_PATH>/cache; NULL disables it. Restored back to cache_dir at startup if the
+    # to <OPTIMIZER_HOME>/cache; NULL disables it. Restored back to cache_dir at startup if the
     # work cache is empty (e.g. a fresh node after a scratch purge). An in-process sync cannot
     # survive a SIGKILL of R -- see the README for an external cron/systemd safety net.
-    cache_backup_dir   = if (remote_server) file.path(Sys.getenv("OPTIMIZER_PATH"), "cache") else NULL,
+    cache_backup_dir   = if (remote_server) file.path(Sys.getenv("OPTIMIZER_HOME"), "cache") else NULL,
     # Minimum minutes between in-process cache backups (0 disables). Throttled on wall time,
     # not iterations, so checkpoint_every = 1 doesn't rsync every step.
     cache_sync_minutes = 120,
@@ -426,7 +426,7 @@ optimizer_settings <- function(local_overrides = TRUE) {
     # Where the leader copies the live store (VACUUM INTO; safe on a live database). This is
     # what makes a local-disk db_path safe to lose. NULL disables it. Defaults to the durable
     # location the store used to live at, so remote runs keep the same recovery story.
-    db_backup_path    = if (remote_server) file.path(Sys.getenv("OPTIMIZER_PATH"),
+    db_backup_path    = if (remote_server) file.path(Sys.getenv("OPTIMIZER_HOME"),
                                                      "state", "evals_backup.sqlite") else NULL,
     db_backup_minutes = 30,
 

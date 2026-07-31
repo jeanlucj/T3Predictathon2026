@@ -7,7 +7,7 @@
 # (to change a list-valued setting like target_domain, provide the whole list).
 #
 # NOTE: the local/remote directory split (remote_server) is driven by the ENVIRONMENT, not here
-# -- set OPTIMIZER_PATH (or OPTIMIZER_REMOTE) in .Renviron for that. Use this file for the rest.
+# -- set OPTIMIZER_HOME (or OPTIMIZER_REMOTE) in .Renviron for that. Use this file for the rest.
 
 settings_override <- list(
   # --- typical server tuning ---------------------------------------------

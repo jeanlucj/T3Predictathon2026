@@ -29,7 +29,7 @@ INTERVAL="${1:-60}"
 HOST="$(hostname -s 2>/dev/null || hostname)"
 OUT="${2:-logs/memory_${HOST}.tsv}"
 # The optimizer's own stop-file, so stopping the run stops the monitor too. Resolved by
-# asking R: OPTIMIZER_PATH lives in .Renviron, which only R reads, so building this path from
+# asking R: OPTIMIZER_HOME lives in .Renviron, which only R reads, so building this path from
 # the shell environment would silently watch ./state/STOP on a server whose real stop file is
 # under $HOME -- and the monitor would never exit. (See optimizer_paths.sh.)
 . "$(dirname "$0")/optimizer_paths.sh"

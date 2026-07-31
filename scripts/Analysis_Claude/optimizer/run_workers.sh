@@ -15,7 +15,7 @@
 #   OPTIMIZER_FIRST_WORKER=5 ./run_workers.sh 4   # ADD workers 5-8 to a job already running
 #
 # Stop them ALL with the usual stop-file (they share it):
-#   touch "${OPTIMIZER_PATH:-.}/state/STOP"
+#   touch "${OPTIMIZER_HOME:-.}/state/STOP"
 # Watch them:   tail -f logs/run_w1.out    /   nohup ./monitor_memory.sh > /dev/null 2>&1 &
 #
 # Two things this script exists to get right:
@@ -47,7 +47,7 @@ export OPENBLAS_NUM_THREADS="$N_THREADS"
 export MKL_NUM_THREADS="$N_THREADS"
 export VECLIB_MAXIMUM_THREADS="$N_THREADS"
 
-# Resolve the stop file by asking R. OPTIMIZER_PATH is set in .Renviron, which only R reads,
+# Resolve the stop file by asking R. OPTIMIZER_HOME is set in .Renviron, which only R reads,
 # so deriving this from the shell environment would check ./state/STOP while the workers watch
 # a different file -- the pre-flight check below would then pass on a run that is about to
 # stop dead. (See optimizer_paths.sh.)

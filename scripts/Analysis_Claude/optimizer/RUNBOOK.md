@@ -15,11 +15,17 @@ single worker is the same list minus the parallel-only items, marked **⑂** bel
 Once the drill is familiar, the whole thing is:
 
 ```bash
-cd /workdir/<user>/T3Predictathon2026/scripts/Analysis_Claude/optimizer
+export OPTIMIZER_WORK=/workdir/<user>/T3Predictathon2026/scripts/Analysis_Claude/optimizer
+cd $OPTIMIZER_WORK
 git pull && loadR
 source ./optimizer_paths.sh                  # $STOP_FILE, $DB_PATH, $REPORT_PATH, ...
 Rscript tests/run_all.R                      # expect 3/3
-rsync -a $HOME/T3optimizer/cache/ cache/     # trailing slashes!
+find $OPTIMIZER_WORK/cache -type f | wc -l   # how many files in the workdir cache
+find $OPTIMIZER_HOME/cache -type f | wc -l   # how many files in the home cache
+# If the home cache has more then:
+rsync -a $OPTIMIZER_HOME/cache/ cache/       # trailing slashes!
+# If the workdir cache has more then:
+rsync -a cache/ $OPTIMIZER_HOME/cache/       # trailing slashes!
 rm -f "$STOP_FILE"
 nohup ./run_workers.sh 8 > logs/workers.out 2>&1 &   # 8 workers, 2 BLAS threads each
 nohup ./monitor_memory.sh > /dev/null 2>&1 &         # AFTER the workers
@@ -34,8 +40,8 @@ touch "$STOP_FILE"                           # halts all workers, and the monito
 
 Two things that matter here:
 
-**`source ./optimizer_paths.sh` first.** `OPTIMIZER_PATH` is set in `.Renviron`, which **only
-R reads** — in a shell it is empty, so `"$OPTIMIZER_PATH/state/STOP"` expands to
+**`source ./optimizer_paths.sh` first.** `OPTIMIZER_HOME` is set in `.Renviron`, which **only
+R reads** — in a shell it is empty, so `"$OPTIMIZER_HOME/state/STOP"` expands to
 `"/state/STOP"`, `touch` fails with permission denied, and you conclude you stopped a run
 that is still going. `optimizer_paths.sh` asks R for the real paths (and so also honours any
 `settings.local.R` override of `db_path` / `stop_file`). The scripts do this internally
@@ -58,14 +64,14 @@ Without it the first command occupies the terminal and the rest never run.
       ```
       T3_USERNAME=<your-t3-username>
       T3_PASSWORD=<your-t3-password>
-      OPTIMIZER_PATH=/home/<user>/T3optimizer
+      OPTIMIZER_HOME=/home/<user>/T3optimizer
       ```
-      `OPTIMIZER_PATH` is what turns on remote mode — there is no `remote_server` flag to
+      `OPTIMIZER_HOME` is what turns on remote mode — there is no `remote_server` flag to
       edit any more, it is derived from this variable. Confirm with
-      `Rscript -e 'Sys.getenv("OPTIMIZER_PATH")'`.
+      `Rscript -e 'Sys.getenv("OPTIMIZER_HOME")'`.
 
       > **Never run R here with `--vanilla`.** It implies `--no-environ`, which skips
-      > `.Renviron` — you lose `OPTIMIZER_PATH` *and* the T3 credentials, and the run
+      > `.Renviron` — you lose `OPTIMIZER_HOME` *and* the T3 credentials, and the run
       > dies at login looking like a missing `.Renviron`.
 - [ ] **Packages installed** — this takes a while on a fresh machine. Includes the two
       non-CRAN ones: `BrAPI.R` and `T3BrapiHelpers`. Confirm with
@@ -92,6 +98,12 @@ Put these in **`settings.local.R`** (untracked, gitignored), never in the tracke
 - [ ] **⑂ `db_backup_path` on `/home`** — the leader copies the store there every
       `db_backup_minutes` (default 30) with `VACUUM INTO`, so a purged `/workdir` costs at
       most one interval.
+- [ ] **⑂ Move an existing store to the new `db_path`** — the workers continue from whatever
+      is at that path, so it must be the store you care about:
+      ```bash
+      mkdir -p /workdir/<user>/T3optimizer
+      cp $HOME/T3optimizer/state/evals.sqlite /workdir/<user>/T3optimizer/evals.sqlite
+      ```
 
 ```r
 # settings.local.R
@@ -170,7 +182,7 @@ config parameter, so old and new rows are not strictly comparable; each row reco
 ### Checks
 
 These come **after** the settings, not before. `optimizer_settings()` *throws* on an
-`optimize_scheme` that is not in `schemes`, and on remote mode with no `OPTIMIZER_PATH`; a
+`optimize_scheme` that is not in `schemes`, and on remote mode with no `OPTIMIZER_HOME`; a
 typo'd key warns rather than throws, but surfaces in the same run. `test_subtasks.R` and
 `test_sim_loop.R` both call it, so the suite is a settings check as much as a code check —
 running it before you have set the settings only tells you the code was fine yesterday.
@@ -186,12 +198,6 @@ running it before you have set the settings only tells you the code was fine yes
       Rscript tests/run_all.R --all    # adds the slow sim loop: "4/4"
       ```
       A missing or wrong `.Renviron`, or a typo in `settings.local.R`, usually surfaces here.
-- [ ] **⑂ Move an existing store to the new `db_path`** — the workers continue from whatever
-      is at that path, so it must be the store you care about:
-      ```bash
-      mkdir -p /workdir/<user>/T3optimizer
-      cp $HOME/T3optimizer/state/evals.sqlite /workdir/<user>/T3optimizer/evals.sqlite
-      ```
 
 ## 3. Cache
 
@@ -210,7 +216,7 @@ disk and is backed up to `$HOME/T3optimizer/cache`. It is large but regenerable.
       ```bash
       rsync -a $HOME/T3optimizer/cache/ /workdir/<user>/T3Predictathon2026/scripts/Analysis_Claude/optimizer/cache/
       ```
-      **The trailing slashes are load-bearing.** Without the one on the source, rsync
+      **The trailing slashes matter.** Without the one on the source, rsync
       *creates a nested directory* instead of merging. This takes a while; drop `-v` unless
       you want the file list. (The leader worker also does this automatically at startup, and
       the other workers wait for it to finish.)
@@ -276,7 +282,6 @@ cat  "$REPORT_PATH"                       # best pipeline so far + learning curv
 tail -f logs/run_w1.out                   # live log (one per worker)
 Rscript report_memory.R                   # peak per evaluation, workers-that-fit table
 Rscript report_timing.R                   # where the wall time goes
-tail logs/memory_*.tsv                    # whole-machine RSS over time
 sort -k3 -n logs/memory_*.tsv | tail -5   # most memory-intensive moments
 find cache -type f | wc -l                # number of files in cache
 ```

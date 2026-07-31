@@ -240,29 +240,29 @@ rm(list = ls(envir = .geno_note_seen), envir = .geno_note_seen)
 # ===========================================================================
 cat("remote_server path resolution + cache backup/restore\n")
 # Oracle: local mode puts state under the project dir and disables cache backup; remote mode
-# puts state under OPTIMIZER_PATH and points the backup there; remote with OPTIMIZER_PATH unset
+# puts state under OPTIMIZER_HOME and points the backup there; remote with OPTIMIZER_HOME unset
 # fails LOUDLY (not silently at the filesystem root). `remote_server` is the settings.R global.
-# HERMETIC: this block forces both `remote_server` and OPTIMIZER_PATH to known values and
+# HERMETIC: this block forces both `remote_server` and OPTIMIZER_HOME to known values and
 # restores BOTH afterward, so it does not depend on -- or clobber -- the user's real settings
-# (a run with remote_server = TRUE and OPTIMIZER_PATH set from .Renviron must be left intact).
+# (a run with remote_server = TRUE and OPTIMIZER_HOME set from .Renviron must be left intact).
 old_rs <- remote_server
-old_op <- Sys.getenv("OPTIMIZER_PATH", unset = NA_character_)
+old_op <- Sys.getenv("OPTIMIZER_HOME", unset = NA_character_)
 old_or <- Sys.getenv("OPTIMIZER_REMOTE", unset = NA_character_)
 
 # Oracle: remote_server is ENV-DRIVEN (so the tracked settings.R is unedited on every machine):
-# OPTIMIZER_REMOTE (truthy/falsy) wins; else it auto-detects from OPTIMIZER_PATH being set.
-Sys.unsetenv("OPTIMIZER_PATH"); Sys.unsetenv("OPTIMIZER_REMOTE")
-check(isFALSE(.detect_remote_server()), "no OPTIMIZER_PATH/REMOTE -> local (FALSE)")
-Sys.setenv(OPTIMIZER_PATH = "/tmp/opt_perm_test")
-check(isTRUE(.detect_remote_server()), "OPTIMIZER_PATH set -> remote (auto-detect)")
+# OPTIMIZER_REMOTE (truthy/falsy) wins; else it auto-detects from OPTIMIZER_HOME being set.
+Sys.unsetenv("OPTIMIZER_HOME"); Sys.unsetenv("OPTIMIZER_REMOTE")
+check(isFALSE(.detect_remote_server()), "no OPTIMIZER_HOME/REMOTE -> local (FALSE)")
+Sys.setenv(OPTIMIZER_HOME = "/tmp/opt_perm_test")
+check(isTRUE(.detect_remote_server()), "OPTIMIZER_HOME set -> remote (auto-detect)")
 Sys.setenv(OPTIMIZER_REMOTE = "false")
 check(isFALSE(.detect_remote_server()), "OPTIMIZER_REMOTE=false overrides the auto-detect")
-Sys.unsetenv("OPTIMIZER_PATH"); Sys.setenv(OPTIMIZER_REMOTE = "yes")
-check(isTRUE(.detect_remote_server()), "OPTIMIZER_REMOTE=yes -> remote even without OPTIMIZER_PATH")
-Sys.unsetenv("OPTIMIZER_PATH"); Sys.unsetenv("OPTIMIZER_REMOTE")
+Sys.unsetenv("OPTIMIZER_HOME"); Sys.setenv(OPTIMIZER_REMOTE = "yes")
+check(isTRUE(.detect_remote_server()), "OPTIMIZER_REMOTE=yes -> remote even without OPTIMIZER_HOME")
+Sys.unsetenv("OPTIMIZER_HOME"); Sys.unsetenv("OPTIMIZER_REMOTE")
 
 # From here, force the global into known LOCAL state (the source-time value may be remote if
-# the env had OPTIMIZER_PATH); optimizer_settings() reads this global, not the env.
+# the env had OPTIMIZER_HOME); optimizer_settings() reads this global, not the env.
 remote_server <<- FALSE
 
 # Oracle: the startup canary check is a boolean opt-out flag (value is the user's choice).
@@ -270,7 +270,7 @@ check({ v <- optimizer_settings()$run_startup_canary; is.logical(v) && length(v)
       "run_startup_canary is a single logical (TRUE/FALSE opt-out flag)")
 
 # local_overrides = FALSE throughout this block: these assertions are about how paths are
-# DERIVED from remote_server/OPTIMIZER_PATH, and a settings.local.R that legitimately moves
+# DERIVED from remote_server/OPTIMIZER_HOME, and a settings.local.R that legitimately moves
 # db_path (e.g. onto /workdir so WAL works for parallel workers) would otherwise fail them.
 # The override MECHANISM is tested separately, just below.
 sl <- optimizer_settings(local_overrides = FALSE)
@@ -278,19 +278,19 @@ check(sl$db_path == file.path(here::here(), "state", "evals.sqlite") && is.null(
       "local mode: state under project dir, cache backup disabled")
 
 remote_server <<- TRUE
-Sys.setenv(OPTIMIZER_PATH = "/tmp/opt_perm_test")
+Sys.setenv(OPTIMIZER_HOME = "/tmp/opt_perm_test")
 sr <- optimizer_settings(local_overrides = FALSE)
 check(sr$db_path == "/tmp/opt_perm_test/state/evals.sqlite" &&
       sr$log_dir == "/tmp/opt_perm_test/logs" &&
       sr$cache_backup_dir == "/tmp/opt_perm_test/cache",
-      "remote mode: state + backup under OPTIMIZER_PATH")
+      "remote mode: state + backup under OPTIMIZER_HOME")
 check(sr$cache_dir == here::here("cache"), "remote mode: cache still on the work disk")
 # The store backup that makes a local-disk db_path safe to lose (parallel workers require it).
 check(sr$db_backup_path == "/tmp/opt_perm_test/state/evals_backup.sqlite",
-      "remote mode: db_backup_path under OPTIMIZER_PATH")
-Sys.unsetenv("OPTIMIZER_PATH")
+      "remote mode: db_backup_path under OPTIMIZER_HOME")
+Sys.unsetenv("OPTIMIZER_HOME")
 check(inherits(try(optimizer_settings(local_overrides = FALSE), silent = TRUE), "try-error"),
-      "remote_server = TRUE with OPTIMIZER_PATH unset -> loud error (not root paths)")
+      "remote_server = TRUE with OPTIMIZER_HOME unset -> loud error (not root paths)")
 
 # (The override MECHANISM itself -- .apply_overrides layering and .local_overrides parsing --
 # is covered by the "settings.local.R overrides" block below, using temp files.)
@@ -370,7 +370,7 @@ local({
 })
 
 remote_server <<- old_rs                                          # restore the global and env vars
-if (is.na(old_op)) Sys.unsetenv("OPTIMIZER_PATH")   else Sys.setenv(OPTIMIZER_PATH   = old_op)
+if (is.na(old_op)) Sys.unsetenv("OPTIMIZER_HOME")   else Sys.setenv(OPTIMIZER_HOME   = old_op)
 if (is.na(old_or)) Sys.unsetenv("OPTIMIZER_REMOTE") else Sys.setenv(OPTIMIZER_REMOTE = old_or)
 
 # Oracle: cache backup is additive and excludes raw_project/; restore ADDITIVELY reconciles
