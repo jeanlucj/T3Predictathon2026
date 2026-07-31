@@ -111,13 +111,28 @@ evaluate_config_on_trial <- function(cfg, trial, scheme, settings, conn = NULL) 
 # Fails (NA) if fewer than 5 lines overlap or predictions/observations are
 # constant -- matching the Predictathon's "task can fail" rule.
 score_predictions <- function(pred, obs) {
-  m <- dplyr::inner_join(
+  j <- dplyr::inner_join(
     tibble::tibble(germ = names(pred), pred = as.numeric(pred)),
     tibble::tibble(germ = names(obs),  obs  = as.numeric(obs)),
-    by = "germ") |>
-    dplyr::filter(is.finite(pred), is.finite(obs))
+    by = "germ")
+  m <- dplyr::filter(j, is.finite(pred), is.finite(obs))
+  # Two unrelated failures used to share the `too_few_overlap` status, and telling them apart
+  # after the fact was impossible: n_test is counted AFTER the finite filter, so both read as
+  # "0 accessions". They mean opposite things --
+  #   nothing JOINED          -> a coverage / name problem: predictions and observations are
+  #                              about different accessions.
+  #   joined but none FINITE  -> a modelling problem: the names lined up and the numbers are
+  #                              NaN/Inf. Nothing about the data is missing.
+  # Report the second separately, and say which side went non-finite.
+  if (nrow(j) > 0 && nrow(m) == 0) {
+    nap <- sum(!is.finite(j$pred)); nao <- sum(!is.finite(j$obs))
+    return(list(score = NA_real_, n_test = 0L, status = "non_finite",
+                reason = sprintf("%d joined, 0 finite (pred non-finite %d, obs non-finite %d)",
+                                 nrow(j), nap, nao)))
+  }
   if (nrow(m) < 5) return(list(score = NA_real_, n_test = nrow(m),
-                               status = "too_few_overlap", reason = "n<5"))
+                               status = "too_few_overlap",
+                               reason = sprintf("n<5 (%d joined, %d finite)", nrow(j), nrow(m))))
   if (stats::sd(m$pred) == 0 || stats::sd(m$obs) == 0) {
     return(list(score = NA_real_, n_test = nrow(m),
                 status = "constant", reason = "no variance"))

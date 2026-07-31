@@ -87,11 +87,14 @@ if (!nrow(bad)) {
              "neither cliff -- genuinely thin"))))),
     right = FALSE, row.names = FALSE)
 
-  # Errors carry a message, not a funnel -- show them separately or they read as "no funnel".
-  errs <- dplyr::filter(bad, status == "error")
-  if (nrow(errs)) {
-    cat("\nerror rows (reason verbatim -- these are usually environmental, not data):\n")
-    print(as.data.frame(errs[, c("id", "trial_id", "ts", "reason")]),
+  # Rows whose status comes from SCORING (non_finite, too_few_overlap, constant) or from an
+  # uncaught error carry a message rather than a funnel. Printing only the funnel columns
+  # renders them "- (no funnel recorded)", which reads like missing information when the
+  # reason string is in fact the whole explanation. Show it.
+  noft <- dplyr::filter(bad, is.na(detail) | !grepl("test_in", detail))
+  if (nrow(noft)) {
+    cat("\nrows carrying a reason rather than a funnel (the reason IS the explanation):\n")
+    print(as.data.frame(noft[, c("id", "trial_id", "status", "reason")]),
           right = FALSE, row.names = FALSE)
   }
 }

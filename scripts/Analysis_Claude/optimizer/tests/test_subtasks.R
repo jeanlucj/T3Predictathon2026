@@ -509,6 +509,29 @@ check(is.na(r$score) && r$status == "too_few_overlap", "n<5 -> too_few_overlap")
 r <- score_predictions(setNames(rep(5, 6), names(obs)), obs)
 check(is.na(r$score) && r$status == "constant", "constant pred -> constant")
 
+# Oracle: a JOIN THAT SUCCEEDED but whose values are all non-finite is a MODELLING failure,
+# not a coverage one, and must not hide behind too_few_overlap. Both used to report
+# n_test = 0 (it is counted after the finite filter), which made them indistinguishable in
+# the store -- and sent a real 2026-07-31 investigation down two wrong paths.
+r <- score_predictions(setNames(rep(NaN, 6), names(obs)), obs)
+check(r$status == "non_finite" && r$n_test == 0,
+      "names join but predictions are all NaN -> non_finite, not too_few_overlap")
+check(grepl("pred non-finite 6", r$reason), "the reason names the side that went non-finite")
+r <- score_predictions(setNames(2 * obs, names(obs)), setNames(rep(Inf, 6), names(obs)))
+check(r$status == "non_finite" && grepl("obs non-finite 6", r$reason),
+      "non-finite OBSERVATIONS are reported as such, not blamed on the predictions")
+
+# Oracle: nothing joined at all stays too_few_overlap -- that IS a coverage problem.
+r <- score_predictions(c(x = 1, y = 2, z = 3), obs)
+check(r$status == "too_few_overlap" && r$n_test == 0,
+      "no shared names -> still too_few_overlap (a coverage problem)")
+check(grepl("0 joined", r$reason), "too_few_overlap now records how many joined vs stayed finite")
+
+# Oracle: a partial non-finite set still scores when >=5 finite pairs survive.
+p_part <- setNames(2 * obs, names(obs)); p_part["a"] <- NA
+r <- score_predictions(p_part, obs)
+check(r$status == "ok" && r$n_test == 5, "one NaN prediction drops that line, the rest score")
+
 # ===========================================================================
 cat(".vcf_to_dosage (orientation + encoding; guards the transposition bug)\n")
 vcf_lines <- c(

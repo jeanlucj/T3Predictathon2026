@@ -346,7 +346,8 @@ sweep_rich_trials <- function(settings, conn,
 # `status = NULL` returns every stored eval for the trial (useful to contrast a config that
 # failed against one that succeeded on the same trial).
 failed_configs <- function(con, trial_id,
-                           status = c("suspect", "infeasible", "error", "too_few_overlap")) {
+                           status = c("suspect", "infeasible", "error", "too_few_overlap",
+                                      "non_finite")) {
   e <- read_evals(con)
   e <- e[as.character(e$trial_id) == as.character(trial_id), , drop = FALSE]
   if (!is.null(status)) e <- e[e$status %in% status, , drop = FALSE]

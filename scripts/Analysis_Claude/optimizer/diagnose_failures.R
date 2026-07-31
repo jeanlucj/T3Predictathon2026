@@ -8,6 +8,9 @@
 #   too_few_overlap  score_predictions() got <5 accessions in predictions n observations.
 #                    The pipeline RAN; the cliff is one step downstream of
 #                    insufficient_geno_overlap. Diagnosed.
+#   non_finite       predictions and observations JOINED on name, but every pair had a
+#                    NaN/Inf on one side. Nothing about the data is missing -- this is a
+#                    modelling failure, and the reason names which side. Diagnosed.
 #   error            an uncaught R error. REPORTED, not diagnosed -- an error is usually a
 #                    property of the environment (a dead connection, a full disk), not of
 #                    the trial or the config, and running diagnose_trial on it would
@@ -35,7 +38,8 @@
 #   nohup Rscript diagnose_failures.R --no-replay > logs/diagnose_failures.out 2>&1 &
 #
 # Options (all optional):
-#   --status=suspect,error status(es) to act on; default suspect,too_few_overlap,error.
+#   --status=suspect,error status(es) to act on; default
+#                          suspect,too_few_overlap,non_finite,error.
 #                          Add `infeasible` to include the expected-failure bucket.
 #   --trials=10260,10259   trials to diagnose; default: every trial in the store carrying
 #                          an eval with one of the selected statuses
@@ -76,7 +80,7 @@ opt <- function(name, default = NULL) {
 split_csv <- function(x) if (is.null(x)) NULL else trimws(strsplit(x, ",")[[1]])
 
 o_trials  <- split_csv(opt("trials"))
-o_status  <- split_csv(opt("status", "suspect,too_few_overlap,error"))
+o_status  <- split_csv(opt("status", "suspect,too_few_overlap,non_finite,error"))
 o_canary  <- opt("canary", "10676")
 o_scheme  <- opt("scheme")
 o_maxproj <- as.integer(opt("max-projects", "8"))
