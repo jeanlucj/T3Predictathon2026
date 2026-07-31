@@ -168,6 +168,19 @@ t3_login <- function(conn, settings = NULL) {
              "Check with Sys.getenv(\"T3_USERNAME\")."),
            call = NULL)))
   conn$login(username = user, password = pass)
+  # BrAPI's login() assigns resp$content$access_token unconditionally, so a REJECTED password
+  # leaves auth_token NULL and returns normally. Without this check every later call goes out
+  # anonymous, 401s, and the run reports data-shaped failures (no descriptor, empty searches)
+  # for what is a one-line credentials problem. Same fail-fast class as missing credentials.
+  if (!nzchar(conn$auth_token %||% ""))
+    stop(structure(
+      class = c("t3_bad_credentials", "error", "condition"),
+      list(message = paste0(
+             "T3 login was REJECTED for user '", user, "' -- the server issued no token ",
+             "(look for an 'Incorrect Password' warning above). Fix T3_USERNAME / ",
+             "T3_PASSWORD in .Renviron ON THIS MACHINE and RESTART R -- .Renviron is read ",
+             "only at startup."),
+           call = NULL)))
   invisible(conn)
 }
 
@@ -186,11 +199,13 @@ t3_connect <- function(settings) {
   grepl("unauthor|must login|permission to access|\\b401\\b", msg, ignore.case = TRUE)
 
 .response_auth_failed <- function(r) {
-  if (!is.list(r) || is.null(r$status)) return(FALSE)
+  # [["status"]], not $status: a tibble is a list, and $ on a tibble without the column
+  # warns ("Unknown or uninitialised column") -- noise in the path that detects auth failure.
+  if (!is.list(r) || is.null(r[["status"]])) return(FALSE)
   # $status varies by call type: a flat httr::http_status list (category/reason/message,
   # e.g. from conn$wizard) or a per-page LIST of those (from a paginated conn$search).
   # Flatten either shape to its character values and scan -- no structural assumptions.
-  msgs <- tryCatch(as.character(unlist(r$status, use.names = FALSE)),
+  msgs <- tryCatch(as.character(unlist(r[["status"]], use.names = FALSE)),
                    error = function(e) character())
   any(grepl("unauthor|\\b401\\b", msgs, ignore.case = TRUE))
 }
@@ -235,7 +250,7 @@ t3_connect <- function(settings) {
       message(sprintf("%s: re-login FAILED: %s", what, conditionMessage(lr)))
       # Missing credentials is a setup error, not transient: retrying re-reads the same
       # empty env, so fail fast with the clear message instead of burning the retry budget.
-      if (inherits(lr, "t3_missing_credentials")) stop(lr)
+      if (inherits(lr, c("t3_missing_credentials", "t3_bad_credentials"))) stop(lr)
     }
     if (attempt < tries) {
       msg <- if (is_err) conditionMessage(r) else "unauthorized"

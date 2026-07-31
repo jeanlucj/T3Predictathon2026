@@ -157,10 +157,12 @@ check_canaries <- function(settings, conn, configs = canary_configs()) {
   sig  <- function(cfg) paste(vapply(names(SUBTASKS),
             function(st) as.character(cfg[[paste0(st, ".method")]]), character(1)), collapse = "/")
   out <- purrr::imap_dfr(configs, function(cfg, id) {
-    trial <- tryCatch(build_trial_descriptor(id, conn, settings), error = function(e) NULL)
+    derr  <- NULL
+    trial <- tryCatch(build_trial_descriptor(id, conn, settings),
+                      error = function(e) { derr <<- conditionMessage(e); NULL })
     if (is.null(trial)) {
       return(tibble::tibble(trial = id, scheme = NA, status = "no_descriptor",
-                            reason = "could not build descriptor", detail = NA,
+                            reason = "could not build descriptor", detail = derr,
                             n_test = NA_integer_, score = NA_real_,
                             method_signature = sig(cfg), weak = id %in% weak))
     }
@@ -425,7 +427,9 @@ diagnose_trial <- function(study_id, settings, conn,
   # covering panel existing but being passed over (.best_panel maximizes coverage of
   # union(train, focal), which large training sets dominate).
   # `trial` is built once here and reused by the pipeline replay below.
-  trial <- tryCatch(build_trial_descriptor(id, conn, settings), error = function(e) NULL)
+  trial_err <- NULL
+  trial <- tryCatch(build_trial_descriptor(id, conn, settings),
+                    error = function(e) { trial_err <<- conditionMessage(e); NULL })
   if (!is.null(trial)) {
     # Replay run_pipeline's own route to train_acc (select trials -> observations -> CV mask ->
     # targets), so the panels reported are the ones the pipeline would actually see.
@@ -461,7 +465,12 @@ diagnose_trial <- function(study_id, settings, conn,
 
   # --- run the pipeline and report where it lands -----------------------------
   # `trial` was built above for the panel probe.
-  if (is.null(trial)) { cat("  could not build descriptor; stopping.\n"); return(invisible(NULL)) }
+  # Report WHY. A descriptor failure is usually the catalogue fetch (auth / server), not the
+  # trial -- and the counts printed above come from cache, so they look healthy regardless.
+  if (is.null(trial)) {
+    cat("  could not build descriptor; stopping. reason: ", trial_err %||% "unknown", "\n", sep = "")
+    return(invisible(NULL))
+  }
   if (!isTRUE(replay)) {
     cat("  (pipeline replay skipped -- replay = FALSE; the stored eval already records the outcome)\n")
     return(invisible(NULL))
