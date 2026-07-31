@@ -20,6 +20,13 @@
 
 library(tidyverse)
 
+# Feasibility floors on the GENOTYPED overlap, in ACCESSIONS. Single-sourced because
+# .best_panel must select against exactly the guard run_pipeline then applies.
+# PITFALL fixed 2026-07-31: the train side used to read settings$min_train_trials -- a count
+# of TRIALS (3) compared against a count of accessions, which made the guard near-vacuous.
+.min_train <- function(settings) as.integer(settings$min_train_acc %||% 20L)
+.min_test  <- function(settings) as.integer(settings$min_test_acc  %||% 5L)
+
 run_pipeline <- function(cfg, trial, scheme, settings, conn) {
   focal_id  <- trial$id
   focal_acc <- trial$accessions
@@ -59,11 +66,11 @@ run_pipeline <- function(cfg, trial, scheme, settings, conn) {
   # --- D. build relationship / kernel --------------------------------------
   # QC + allele frequencies come from each panel's full population; the GRM itself
   # covers only the accessions we need to relate.
-  K <- build_kernel(cfg, dosage_list, union(train_acc, focal_acc), settings)
+  K <- build_kernel(cfg, dosage_list, union(train_acc, focal_acc), settings, focal_acc)
   geno_acc <- rownames(K)
   train_in <- intersect(train_acc, geno_acc)
   test_in  <- intersect(focal_acc, geno_acc)
-  if (length(train_in) < settings$min_train_trials || length(test_in) < 5) {
+  if (length(train_in) < .min_train(settings) || length(test_in) < .min_test(settings)) {
     fn <- c(focal_acc = length(focal_acc), train_acc = length(train_acc),
             geno_projects = n_projects, geno_acc = length(geno_acc),
             train_in = length(train_in), test_in = length(test_in))
@@ -560,7 +567,7 @@ choose_geno_sources <- function(cfg, train_acc, test_acc, conn, settings) {
 # `dosage_list` holds one FULL-population matrix per protocol group; `need` is the
 # accession set the pipeline actually has to relate (training + focal). Marker QC and
 # allele frequencies come from the population; the GRM is then formed over `need`.
-build_kernel <- function(cfg, dosage_list, need, settings = NULL) {
+build_kernel <- function(cfg, dosage_list, need, settings = NULL, focal = NULL) {
   ridge <- cfg$kernel.ridge
   m <- cfg$kernel.method
 
@@ -652,7 +659,8 @@ build_kernel <- function(cfg, dosage_list, need, settings = NULL) {
     if (length(final) < 2) infeasible("no_geno_overlap_in_panels")
     K <- K[final, final, drop = FALSE]
   } else if (m == "rkhs_gaussian") {
-    X <- .qc_markers(.best_panel(dosage_list, need), cfg)
+    X <- .qc_markers(.best_panel(dosage_list, need, focal, .min_test(settings),
+                                 .min_train(settings)), cfg)
     rows <- intersect(rownames(X), need)
     if (length(rows) < 2) infeasible("no_geno_overlap_in_panels")
     D2 <- as.matrix(stats::dist(X[rows, , drop = FALSE]))^2
@@ -666,7 +674,8 @@ build_kernel <- function(cfg, dosage_list, need, settings = NULL) {
     K <- exp(-theta * D2)
   } else {
     # vanRaden_single (also the fallback when em_combine has one panel).
-    K <- .vanraden(.qc_markers(.best_panel(dosage_list, need), cfg), need)
+    K <- .vanraden(.qc_markers(.best_panel(dosage_list, need, focal, .min_test(settings),
+                                           .min_train(settings)), cfg), need)
     if (is.null(K)) infeasible("no_geno_overlap_in_panels")
   }
   diag(K) <- diag(K) + ridge
@@ -707,11 +716,31 @@ build_kernel <- function(cfg, dosage_list, need, settings = NULL) {
   names(counts)[counts >= 2L]
 }
 
-# The protocol group covering the most of `need`.
-.best_panel <- function(dosage_list, need) {
+# The protocol group to build a single-panel kernel from.
+#
+# Maximizing coverage of `need` alone is not enough. `need` is union(train, focal), so a panel
+# thick with TRAINING lines outscores one that actually covers the focal trial -- and the
+# pipeline then fails at the test_in guard with a kernel full of unusable relationships. CV00
+# makes this sharpest: masking leaves train and focal disjoint, so the two coverages compete
+# directly.
+#
+# So: prefer panels that clear BOTH downstream guards (R/pipeline.R's train_in / test_in
+# check); among those, maximize coverage of `need` as before -- which reproduces the old pick
+# whenever the old pick was actually usable. If none qualifies, fall back to the best focal
+# coverage: without focal lines there is nothing to predict, so that is the failure to avoid.
+#
+# `focal` NULL restores the pure max-coverage behaviour (callers that have no focal set).
+.best_panel <- function(dosage_list, need, focal = NULL,
+                        min_test = 5L, min_train = 20L) {
   if (length(dosage_list) == 1) return(dosage_list[[1]])
   cover <- vapply(dosage_list, function(d) length(intersect(rownames(d), need)), integer(1))
-  dosage_list[[which.max(cover)]]
+  if (is.null(focal) || !length(focal)) return(dosage_list[[which.max(cover)]])
+  train  <- setdiff(need, focal)
+  f_cov  <- vapply(dosage_list, function(d) length(intersect(rownames(d), focal)), integer(1))
+  t_cov  <- vapply(dosage_list, function(d) length(intersect(rownames(d), train)), integer(1))
+  ok     <- f_cov >= min_test & t_cov >= min_train
+  if (any(ok)) return(dosage_list[[which.max(ifelse(ok, cover, -1L))]])
+  dosage_list[[which.max(f_cov)]]
 }
 
 # VanRaden GRM over `need`, centred and scaled on the allele frequencies of the FULL

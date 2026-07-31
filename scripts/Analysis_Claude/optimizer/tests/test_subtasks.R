@@ -814,6 +814,38 @@ check(outcome %in% c("matrix", "infeasible"),
       paste("em_combine survives a singular partial covariance (got:", outcome, ")"))
 
 # ===========================================================================
+cat(".best_panel (focal coverage, not just max union)\n")
+# The suspect configuration, reproduced: a BIG panel carrying training lines only, and a
+# SMALL panel carrying the focal lines. Old rule maximized coverage of union(train, focal)
+# and picked the big one -> test_in = 0 -> insufficient_geno_overlap flagged suspect.
+tr_only <- mkpanel(paste0("t", 1:60), paste0("mT", 1:200))               # 60 training lines
+fo_some <- mkpanel(c(paste0("t", 1:25), paste0("f", 1:10)), paste0("mF", 1:200))  # 25 train + 10 focal
+focal10 <- paste0("f", 1:10)
+need_bp <- union(paste0("t", 1:60), focal10)
+pl <- list(train_only = tr_only, focal_covering = fo_some)
+
+check(identical(.best_panel(pl, need_bp), pl$train_only),
+      ".best_panel with focal = NULL keeps the old max-union behaviour (train_only wins)")
+check(identical(.best_panel(pl, need_bp, focal10, min_test = 5, min_train = 20),
+                pl$focal_covering),
+      ".best_panel prefers the focal-covering panel over a bigger training-only panel")
+
+# No behaviour change when both panels clear the guards: max union still wins.
+both_a <- mkpanel(c(paste0("t", 1:50), paste0("f", 1:10)), paste0("mA", 1:200))
+both_b <- mkpanel(c(paste0("t", 1:25), paste0("f", 1:10)), paste0("mB", 1:200))
+check(identical(.best_panel(list(a = both_a, b = both_b), need_bp, focal10, 5, 20), both_a),
+      ".best_panel still takes max union coverage when both panels are feasible")
+
+# Nothing qualifies -> fall back to the best focal coverage (without focal lines there is
+# nothing to predict, so that is the failure worth avoiding).
+thin_a <- mkpanel(c(paste0("t", 1:8), paste0("f", 1:2)), paste0("mC", 1:200))
+thin_b <- mkpanel(c(paste0("t", 1:5), paste0("f", 1:7)), paste0("mD", 1:200))
+check(identical(.best_panel(list(a = thin_a, b = thin_b), need_bp, focal10, 5, 20), thin_b),
+      ".best_panel falls back to max FOCAL coverage when no panel clears the guards")
+check(identical(.best_panel(list(only = thin_a), need_bp, focal10, 5, 20), thin_a),
+      ".best_panel with one panel returns it regardless")
+
+# ===========================================================================
 cat(".effective_n / .center_dfs (em_combine degrees of freedom)\n")
 # Oracle: df is a partial's relative WEIGHT in the Wishart-EM likelihood. .effective_n is the
 # Galwey (2009) effective number of independent samples; it must not move when the matrix is
@@ -1143,8 +1175,12 @@ dbp2 <- tempfile(fileext = ".sqlite"); con2 <- open_store(dbp2)
 # for the wrong reason. The seed must come from the SAME scheme for the hashes to correspond.
 TEST_SCHEME <- "CV0"
 seed1 <- seed_configs(TEST_SCHEME)[[1]]
+# Stamp the current build: these oracles are about the DOMAIN/SCHEME filters, and an
+# unstamped row would additionally be retired by filter_evals_to_build, making the seed look
+# untried for the wrong reason.
 store_eval(con2, seed1, "900", TEST_SCHEME, 0.3, 40L, "ok",
-           study_name = "elsewhere", program_name = "OSU", location_name = "X", year = 2024)
+           study_name = "elsewhere", program_name = "OSU", location_name = "X", year = 2024,
+           build = OPTIMIZER_BUILD)
 # simulate = FALSE so the (real-data) target-domain filter actually engages.
 st <- modifyList(optimizer_settings(),
                  list(simulate = FALSE, optimize_scheme = TEST_SCHEME,
@@ -1160,6 +1196,57 @@ pick0 <- choose_config(con2, st0)
 check(!identical(config_hash(pick0$cfg), config_hash(seed1)),
       "choose_config: with no domain, the recorded seed is not re-offered")
 close_store(con2); unlink(dbp2)
+
+# ===========================================================================
+cat("aggregate_scores: Fisher-z pooling weighted by n_test\n")
+# Oracle: a score is a correlation, so a 5-accession one is nearly pure noise while a
+# 200-accession one is informative. Pooling must reflect that -- an unweighted mean of
+# r = 0.9 (n=5) and r = 0.3 (n=200) is 0.6, which is badly wrong.
+mkev <- function(scores, ns) tibble::tibble(
+  config_hash = "H", config_json = "{}", score = scores, n_test = as.integer(ns))
+a1 <- aggregate_scores(mkev(c(0.9, 0.3), c(5, 200)), min_n_test = 0L)
+check(abs(a1$unweighted - 0.6) < 1e-8, "aggregate_scores keeps the old unweighted mean alongside")
+check(a1$mean_score < 0.35 && a1$mean_score > 0.29,
+      "Fisher-z weighting: n=5 r=0.9 barely moves an n=200 r=0.3 (pools near 0.3)")
+
+# Equal n must reproduce the unweighted mean (in z space), so the change is a no-op when
+# every evaluation is equally precise.
+a2 <- aggregate_scores(mkev(c(0.4, 0.2), c(50, 50)), min_n_test = 0L)
+check(abs(a2$mean_score - tanh(mean(atanh(c(0.4, 0.2))))) < 1e-8,
+      "equal n_test -> plain mean of the z-transformed scores")
+
+# atanh(+-1) is Inf; the clamp must keep a perfect correlation finite.
+a3 <- aggregate_scores(mkev(c(1, -1), c(40, 40)), min_n_test = 0L)
+check(is.finite(a3$mean_score), "r = +-1 does not produce Inf through atanh")
+
+# The floor drops scores too small to inform, without dropping the ROW from n.
+a4 <- aggregate_scores(mkev(c(0.9, 0.3), c(5, 200)), min_n_test = 10L)
+check(abs(a4$mean_score - 0.3) < 1e-8 && a4$n == 2 && a4$n_ok == 1,
+      "min_n_test drops the low-n score from the pool but still counts the row")
+check(is.na(aggregate_scores(mkev(c(0.9), c(5)), min_n_test = 10L)$mean_score),
+      "a config with only sub-floor scores gets mean_score = NA")
+
+# ===========================================================================
+cat("filter_evals_to_build (retire rows a later build invalidated)\n")
+bev <- tibble::tibble(
+  config_json = c(config_to_json(modifyList(sample_config(), list(kernel.method = "em_combine"))),
+                  config_to_json(modifyList(sample_config(), list(kernel.method = "em_combine"))),
+                  config_to_json(modifyList(sample_config(), list(kernel.method = "two_stage_blup")))),
+  build = c(NA_character_, "0.7.1", NA_character_))
+ch <- list(list(build = "0.7.1", what = "em_combine df",
+                affects = function(cfg) identical(cfg$kernel.method, "em_combine")))
+kept <- filter_evals_to_build(bev, "0.7.1", ch)
+check(nrow(kept) == 2, "filter_evals_to_build drops the pre-build row whose config matches")
+check(all(!is.na(kept$build) | !grepl("em_combine", kept$config_json)),
+      "the dropped row is the NA-build em_combine one, not the same-build one")
+check(nrow(filter_evals_to_build(bev, "0.7.1", list())) == 3,
+      "no change rules -> nothing is retired")
+check(nrow(filter_evals_to_build(bev[0, ], "0.7.1", ch)) == 0,
+      "filter_evals_to_build handles an empty store")
+# A row stamped with a LATER build survives a rule from an earlier one.
+bev2 <- tibble::tibble(config_json = bev$config_json[1], build = "0.7.2")
+check(nrow(filter_evals_to_build(bev2, "0.7.2", ch)) == 1,
+      "a row from a later build is not retired by an earlier build's rule")
 
 # ===========================================================================
 cat("evals store: optimizer targets ONE scheme (per-scheme slice of the archive)\n")
@@ -1184,13 +1271,13 @@ close_store(con3); unlink(dbp3)
 # choose_config re-offers a seed; once it exists under this scheme it is done.
 dbp4 <- tempfile(fileext = ".sqlite"); con4 <- open_store(dbp4)
 seedA <- seed_configs("CV00")[[1]]   # same scheme the settings below target
-store_eval(con4, seedA, "900", "CV0", 0.3, 40L, "ok")   # CV0 only; no domain attrs
+store_eval(con4, seedA, "900", "CV0", 0.3, 40L, "ok", build = OPTIMIZER_BUILD)  # CV0 only
 stCV00 <- modifyList(optimizer_settings(),
                      list(simulate = FALSE, target_domain = NULL, optimize_scheme = "CV00"))
 pickB <- choose_config(con4, stCV00)
 check(identical(config_hash(pickB$cfg), config_hash(seedA)) && grepl("^seed:", pickB$source),
       "choose_config: a seed evaluated only under CV0 is untried when optimizing CV00")
-store_eval(con4, seedA, "901", "CV00", 0.3, 40L, "ok")  # now it exists under CV00
+store_eval(con4, seedA, "901", "CV00", 0.3, 40L, "ok", build = OPTIMIZER_BUILD)  # now under CV00
 pickC <- choose_config(con4, stCV00)
 check(!identical(config_hash(pickC$cfg), config_hash(seedA)),
       "choose_config: once the seed has a CV00 eval it is not re-offered")

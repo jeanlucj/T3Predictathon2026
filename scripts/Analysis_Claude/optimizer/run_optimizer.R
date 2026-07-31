@@ -65,7 +65,8 @@ optimizer_step <- function(con, settings, conn = NULL) {
              # How em_combine derived each partial's EM weight. Like dosage_budget, this is
              # not a config parameter, so without it rows from before and after the
              # 2026-07-31 switch would be averaged together (EM_COMBINE_COMPARISON.md item 1).
-             em_df_method  = "effective_n")
+             em_df_method  = "effective_n",
+             build         = settings$build %||% OPTIMIZER_BUILD)
   # scores/statuses kept as length-1 vectors so the main-loop logging is unchanged.
   list(source = choice$source, trial = trial$id,
        scores = ev$score, statuses = ev$status, ei = choice$ei %||% NA_real_,
@@ -78,6 +79,9 @@ optimizer_step <- function(con, settings, conn = NULL) {
 
 # The main loop. Reusable from tests with a small max_iters.
 run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
+  message(sprintf("optimizer build %s | scheme %s | %s mode",
+                  settings$build %||% OPTIMIZER_BUILD, settings$optimize_scheme,
+                  if (isTRUE(settings$simulate)) "SIMULATE" else "real"))
   dir.create(dirname(settings$db_path), showWarnings = FALSE, recursive = TRUE)
   dir.create(settings$log_dir, showWarnings = FALSE, recursive = TRUE)
   dir.create(settings$cache_dir, showWarnings = FALSE, recursive = TRUE)
@@ -134,6 +138,15 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
 
   con <- open_store(settings$db_path)
   on.exit(close_store(con), add = TRUE)
+  # A build that invalidated earlier rows starts with less history than the store suggests.
+  # Say so once, loudly, rather than let a silently-empty surrogate look like a fresh start.
+  local({
+    all_n  <- nrow(read_evals(con))
+    kept_n <- nrow(filter_evals_to_build(read_evals(con), settings$build %||% OPTIMIZER_BUILD))
+    if (all_n > 0)
+      message(sprintf("store: %d rows, %d usable by build %s (%d retired by BUILD_CHANGES)",
+                      all_n, kept_n, settings$build %||% OPTIMIZER_BUILD, all_n - kept_n))
+  })
 
   start <- Sys.time()
   last_cache_sync <- start

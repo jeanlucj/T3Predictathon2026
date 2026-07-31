@@ -3,6 +3,13 @@
 # Every knob in one place. The driver and the optimizer read from here, so you
 # tune the run by editing this file (or overriding fields after sourcing it).
 
+# Build of the optimizer itself. Stamped into the log, the report and every stored eval so a
+# score can be traced to the code that produced it. Bump the LAST digit for a minor change
+# (0.7.1 -> 0.7.2) and the middle one for a major one (0.7.x -> 0.8.1). Whenever a bump
+# changes what a configuration COMPUTES, add a matching entry to BUILD_CHANGES
+# (R/optimizer.R) so filter_evals_to_build can retire exactly the rows it invalidated.
+OPTIMIZER_BUILD <- "0.7.1"
+
 # remote_server: when TRUE, permanent files (state / logs / cache backup) go to
 # durable HOME storage instead of the work directory (see the paths section and
 # README "Running on a remote server"). It is DRIVEN BY THE ENVIRONMENT -- NOT
@@ -102,6 +109,9 @@ optimizer_settings <- function(local_overrides = TRUE) {
   perm_dir <- if (remote_server) Sys.getenv("OPTIMIZER_PATH") else here::here()
 
   defaults <- list(
+    # Build of the code producing this run (see OPTIMIZER_BUILD at the top of this file).
+    build = OPTIMIZER_BUILD,
+
     # ---- mode -------------------------------------------------------------
     # TRUE  = synthetic offline world (fast; for verifying the machinery).
     # FALSE = real T3 pipeline on real data (network + heavy model fits).
@@ -274,6 +284,16 @@ optimizer_settings <- function(local_overrides = TRUE) {
 
     min_trial_acc    = 30,       # skip trials with fewer genotyped accessions
     min_train_trials = 3,        # skip focal trials we cannot assemble a training set for
+    # Feasibility floors on the GENOTYPED overlap, counted in ACCESSIONS (min_train_trials
+    # above counts TRIALS -- the two are not interchangeable, and conflating them is what
+    # made the training-side guard vacuous before 2026-07-31). min_train_acc is a floor for
+    # fitting a GBLUP at all; min_test_acc is the Predictathon's own "task can fail" rule.
+    min_train_acc    = 20,
+    min_test_acc     = 5,
+    # Scores are correlations, so their precision depends on how many accessions they were
+    # computed over. aggregate_scores pools them in Fisher-z space weighted by n_test - 3;
+    # this floor drops the ones too small to inform anything (at n = 5, SD(r) ~ 0.7).
+    agg_min_n_test   = 10,
     max_sample_fail  = 25,       # consecutive trial-sampling failures before halting
                                  # (guards against a too-restrictive domain or a
                                  #  down network spinning the loop forever)

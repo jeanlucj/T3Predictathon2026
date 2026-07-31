@@ -98,7 +98,8 @@ write_report <- function(con, settings) {
   # learns from); keep the global count for context.
   td      <- if (isTRUE(settings$simulate)) NULL else settings$target_domain
   evals   <- filter_evals_to_domain(all_evals, td) |>
-               filter_evals_to_scheme(settings$optimize_scheme)
+               filter_evals_to_scheme(settings$optimize_scheme) |>
+               filter_evals_to_build(settings$build %||% OPTIMIZER_BUILD)
   n_other <- nrow(all_evals) - nrow(evals)
   agg   <- aggregate_scores(evals)
   inc   <- incumbent_config(agg, settings$incumbent_min_reps)
@@ -120,6 +121,7 @@ write_report <- function(con, settings) {
     "# Optimizer report",
     paste0("_", format(Sys.time(), tz = "UTC", usetz = TRUE), "_"),
     "",
+    paste0("- optimizer build: ", settings$build %||% OPTIMIZER_BUILD),
     paste0("- optimized scheme: ", settings$optimize_scheme),
     paste0("- evaluations: ", nrow(evals),
            " (", sum(is.finite(evals$score)), " scored, ",
