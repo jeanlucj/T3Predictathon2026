@@ -122,6 +122,18 @@ write_report <- function(con, settings) {
     paste0("_", format(Sys.time(), tz = "UTC", usetz = TRUE), "_"),
     "",
     paste0("- optimizer build: ", settings$build %||% OPTIMIZER_BUILD),
+    # Which estimator ranked the configs, and -- when the random-effects fit ran -- the
+    # variance components. sd_trial vs sd_config is the number that says whether adjusting for
+    # trials is worth anything on this data; it used to have to be computed by hand.
+    local({
+      est <- attr(agg, "estimator") %||% "pooled"
+      vc  <- attr(agg, "var_comps")
+      paste0("- config score estimator: ", est,
+             if (!is.null(vc) && all(is.finite(vc)))
+               sprintf("  (sd_trial %.3f, sd_config %.3f, sd_resid %.3f)",
+                       vc[["sd_trial"]], vc[["sd_config"]], vc[["sd_resid"]])
+             else "")
+    }),
     paste0("- optimized scheme: ", settings$optimize_scheme),
     paste0("- evaluations: ", nrow(evals),
            " (", sum(is.finite(evals$score)), " scored, ",

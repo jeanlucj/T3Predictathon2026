@@ -42,8 +42,44 @@ fit_surrogate <- function(features, y,
   trees <- trees[!vapply(trees, is.null, logical(1))]
   if (!length(trees)) return(NULL)
 
-  structure(list(trees = trees, feat_names = feat_names, y_obs = y),
+  structure(list(trees = trees, feat_names = feat_names, y_obs = y,
+                 trial_levels = if ("trial_id" %in% feat_names) features$trial_id else NULL),
             class = "rf_surrogate")
+}
+
+# Is the eval slice replicated enough for trial_id to be a SAFE surrogate feature?
+#
+# rpart splits a many-level factor by ordering its levels on the response and cutting along
+# that order -- so with one observation per trial the ordering IS the noise, and the split
+# memorises it (in-sample R^2 0.98 against a pure-noise response, measured with this
+# project's rpart.control; minbucket = 3 does not prevent it). With >= 2 configurations per
+# trial the same fit recovers the real trial effect. Gate on that rather than trusting
+# settings$trial_replication to have been in force for the whole store.
+trial_feature_usable <- function(evals, min_cfg = 2L) {
+  if (!nrow(evals) || !all(c("trial_id", "config_hash") %in% names(evals))) return(FALSE)
+  n <- tapply(evals$config_hash, evals$trial_id, function(x) length(unique(x)))
+  length(n) >= 2L && all(n >= min_cfg)
+}
+
+# Expected score of each candidate over the TRIAL POPULATION, when trial_id is a feature.
+#
+# The objective is "best on a random trial", so a candidate is scored by predicting it on
+# every observed trial and averaging -- no unseen factor level is ever needed. Marginalise
+# WITHIN each tree first, so the reported sd is the uncertainty of the marginal estimate
+# across trees, not the trial-to-trial spread (which is a property of the trials, not of how
+# well we know the configuration).
+predict_surrogate_marginal <- function(model, newfeatures, trials) {
+  trials <- factor(trials, levels = levels(model$trial_levels %||% factor(trials)))
+  n_c <- nrow(newfeatures); n_t <- length(trials)
+  grid <- newfeatures[rep(seq_len(n_c), times = n_t), , drop = FALSE]
+  grid$trial_id <- rep(trials, each = n_c)
+  per_tree <- vapply(model$trees, function(tr) {
+    p <- as.numeric(stats::predict(tr, newdata = grid))
+    rowMeans(matrix(p, nrow = n_c, ncol = n_t))     # mean over trials, inside this tree
+  }, FUN.VALUE = numeric(n_c))
+  if (is.null(dim(per_tree))) per_tree <- matrix(per_tree, nrow = n_c)
+  list(mean = rowMeans(per_tree),
+       sd   = apply(per_tree, 1, stats::sd))
 }
 
 # Predict mean and between-tree sd for new configurations (a feature data.frame).

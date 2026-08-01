@@ -36,7 +36,9 @@ for (f in list.files(here::here("R"), pattern = "[.]R$", full.names = TRUE)) sou
 #     step samples a new trial and chooses a new configuration.
 optimizer_step <- function(con, settings, conn = NULL) {
   choice <- choose_config(con, settings)
-  trial  <- tryCatch(sample_trial(settings, conn),
+  # choose_trial, not sample_trial: a started trial must reach settings$trial_replication
+  # distinct configurations before fresh trials are drawn (see R/optimizer.R).
+  trial  <- tryCatch(choose_trial(con, settings, conn),
                      optimizer_sample_failed = function(e) {
                        message("  trial sampling: ", conditionMessage(e)); NULL })
   if (is.null(trial)) return(list(source = choice$source, sampling_failed = TRUE))

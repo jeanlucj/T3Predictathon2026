@@ -1263,6 +1263,61 @@ check(!identical(config_hash(pick0$cfg), config_hash(seed1)),
 close_store(con2); unlink(dbp2)
 
 # ===========================================================================
+cat("aggregate_scores: trial-adjusted config estimates (incumbent + elites)\n")
+# Oracle (the point of the change): a config that drew EASY trials must not outrank a better
+# config that drew HARD ones. Trials differ ~2x more than configs on the real store, so the
+# raw mean is confounded with which trials a config happened to get.
+#   cA is genuinely better than cB, but cB was run on the two easy trials.
+blup_ev <- tibble::tibble(
+  config_hash = c("cA","cA","cB","cB","cC","cC","cD","cD"),
+  trial_id    = c("hard1","hard2","easy1","easy2","hard1","easy1","hard2","easy2"),
+  score       = c(0.30,0.32, 0.38,0.40, 0.22,0.44, 0.20,0.42),
+  n_test      = 200L, config_json = "{}")
+agg_raw  <- aggregate_scores(blup_ev, adjust_trial = FALSE)
+agg_adj  <- aggregate_scores(blup_ev, adjust_trial = TRUE)
+check(identical(attr(agg_raw, "estimator"), "pooled"), "adjust_trial = FALSE keeps the pooled estimator")
+check(identical(attr(agg_adj, "estimator"), "blup"),   "adjust_trial = TRUE uses the BLUP estimator")
+rawA <- agg_raw$mean_score[agg_raw$config_hash == "cA"]
+rawB <- agg_raw$mean_score[agg_raw$config_hash == "cB"]
+adjA <- agg_adj$mean_score[agg_adj$config_hash == "cA"]
+adjB <- agg_adj$mean_score[agg_adj$config_hash == "cB"]
+check(rawB > rawA, "raw mean ranks the easy-trial config ABOVE the better one (the bug)")
+check((adjB - adjA) < (rawB - rawA),
+      "the trial adjustment SHRINKS that spurious advantage")
+vc <- attr(agg_adj, "var_comps")
+check(!is.null(vc) && all(is.finite(vc)) && all(c("sd_trial","sd_config","sd_resid") %in% names(vc)),
+      "variance components are returned for the report")
+check(vc[["sd_trial"]] > 0, "a real trial effect is detected in data that has one")
+
+# Oracle: BLUPs shrink by REPLICATION -- same raw mean, fewer reps -> pulled further to the mean.
+shrink_ev <- tibble::tibble(
+  config_hash = c(rep("many", 8), "few", rep("filler", 8)),
+  trial_id    = c(paste0("t", 1:8), "t1", paste0("t", 1:8)),
+  score       = c(rep(0.45, 8), 0.45, rep(0.05, 8)),
+  n_test      = 200L, config_json = "{}")
+sa <- aggregate_scores(shrink_ev, adjust_trial = TRUE)
+if (identical(attr(sa, "estimator"), "blup")) {
+  gm <- mean(sa$mean_score, na.rm = TRUE)
+  d_many <- abs(sa$mean_score[sa$config_hash == "many"] - gm)
+  d_few  <- abs(sa$mean_score[sa$config_hash == "few"]  - gm)
+  check(d_few < d_many,
+        "same raw score, 1 rep vs 8: the 1-rep config is shrunk further toward the mean")
+} else message("  (BLUP unavailable -- skipping the replication-shrinkage oracle)")
+
+# Oracle: every fallback path returns the pooled estimate rather than erroring.
+one_cfg_per_trial <- tibble::tibble(config_hash = c("a","b","c"), trial_id = c("t1","t2","t3"),
+                                    score = c(0.2,0.3,0.4), n_test = 100L, config_json = "{}")
+fb <- aggregate_scores(one_cfg_per_trial, adjust_trial = TRUE)
+check(identical(attr(fb, "estimator"), "pooled"),
+      "one config per trial is unidentifiable -> falls back to pooled")
+check(all(is.finite(fb$mean_score)), "the fallback still produces finite scores")
+single <- tibble::tibble(config_hash = "a", trial_id = "t1", score = 0.3,
+                         n_test = 100L, config_json = "{}")
+check(identical(attr(aggregate_scores(single), "estimator"), "pooled"),
+      "a single row falls back to pooled without error")
+check(nrow(aggregate_scores(single[0, ])) == 0, "an empty slice returns an empty tibble")
+
+# ===========================================================================
 cat("aggregate_scores: Fisher-z pooling weighted by n_test\n")
 # Oracle: a score is a correlation, so a 5-accession one is nearly pure noise while a
 # 200-accession one is informative. Pooling must reflect that -- an unweighted mean of
@@ -1312,6 +1367,80 @@ check(nrow(filter_evals_to_build(bev[0, ], "0.7.1", ch)) == 0,
 bev2 <- tibble::tibble(config_json = bev$config_json[1], build = "0.7.2")
 check(nrow(filter_evals_to_build(bev2, "0.7.2", ch)) == 1,
       "a row from a later build is not retired by an earlier build's rule")
+
+# ===========================================================================
+cat("choose_trial (trial_replication) + trial_id as a surrogate feature\n")
+# Oracle: .sim_trial must be a FUNCTION of the id. Revisiting a simulated trial has to return
+# the SAME trial, or trial_replication can never be satisfied offline and trial_id is
+# degenerate in every simulate-mode test.
+check(identical(.sim_trial("simtrial_42"), .sim_trial("simtrial_42")),
+      ".sim_trial is deterministic in the id")
+check(!identical(.sim_trial("simtrial_42")$heritability, .sim_trial("simtrial_43")$heritability),
+      ".sim_trial gives different trials different attributes")
+local({                                    # and it must not disturb the caller's RNG stream
+  set.seed(99); a <- runif(3)
+  set.seed(99); invisible(.sim_trial("simtrial_7")); b <- runif(3)
+  check(isTRUE(all.equal(a, b)), ".sim_trial restores the global RNG state")
+})
+
+dbp6 <- tempfile(fileext = ".sqlite"); con6 <- open_store(dbp6)
+tset <- function(w = 1, r = 2) modifyList(optimizer_settings(),
+  list(simulate = TRUE, optimize_scheme = "CV00", trial_replication = r,
+       worker_id = as.character(w)))
+# Empty store -> nothing to revisit, fall through to a fresh sample.
+check(grepl("^simtrial_", choose_trial(con6, tset())$id),
+      "empty store: choose_trial falls through to sample_trial")
+c1 <- sample_config(); c2 <- sample_config()
+store_eval(con6, c1, "simtrial_111", "CV00", 0.3, 40L, "ok", build = OPTIMIZER_BUILD)
+check(identical(choose_trial(con6, tset())$id, "simtrial_111"),
+      "a trial with 1 config and trial_replication=2 is REVISITED")
+store_eval(con6, c2, "simtrial_111", "CV00", 0.4, 40L, "ok", build = OPTIMIZER_BUILD)
+check(!identical(choose_trial(con6, tset())$id, "simtrial_111"),
+      "once it has 2 distinct configs it leaves the backlog")
+# trial_replication = 1 disables revisiting outright.
+store_eval(con6, c1, "simtrial_222", "CV00", 0.3, 40L, "ok", build = OPTIMIZER_BUILD)
+check(!identical(choose_trial(con6, tset(r = 1))$id, "simtrial_222"),
+      "trial_replication = 1 disables revisiting")
+# Workers must not pile onto the same backlog trial (the 0.7.4 lockstep bug, again).
+store_eval(con6, c1, "simtrial_333", "CV00", 0.3, 40L, "ok", build = OPTIMIZER_BUILD)
+store_eval(con6, c1, "simtrial_444", "CV00", 0.3, 40L, "ok", build = OPTIMIZER_BUILD)
+wpicks <- vapply(1:3, function(w) choose_trial(con6, tset(w = w))$id, character(1))
+check(dplyr::n_distinct(wpicks) == 3,
+      "three workers revisit three DIFFERENT backlog trials")
+# A row under the other scheme must not count toward a trial's config tally.
+store_eval(con6, c2, "simtrial_222", "CV0", 0.3, 40L, "ok", build = OPTIMIZER_BUILD)
+check(identical(choose_trial(con6, tset())$id, "simtrial_222"),
+      "an eval under the OTHER scheme does not satisfy the replication constraint")
+close_store(con6); unlink(dbp6)
+
+# Oracle: trial_id is only safe as a feature once every trial has >= 2 configs.
+mk_ev <- function(n_cfg) tibble::tibble(
+  trial_id = rep(c("A","B"), each = n_cfg),
+  config_hash = paste0("c", seq_len(2 * n_cfg)), score = 0.3)
+check(!trial_feature_usable(mk_ev(1)), "trial_id NOT usable at 1 config per trial")
+check(trial_feature_usable(mk_ev(2)),  "trial_id usable at 2 configs per trial")
+check(!trial_feature_usable(tibble::tibble(trial_id = character(), config_hash = character())),
+      "trial_feature_usable is FALSE on an empty slice")
+
+# Oracle: the marginal prediction is the mean over trials of the per-trial predictions, and
+# scoring never needs a level the forest has not seen.
+local({
+  set.seed(5); n <- 60
+  tr <- factor(sample(c("t1","t2","t3"), n, TRUE))
+  X  <- data.frame(a = runif(n), b = runif(n), trial_id = tr)
+  y  <- X$a * 2 + as.numeric(tr) * 0.5 + rnorm(n, 0, 0.05)
+  m  <- fit_surrogate(X, y, ntree = 40, min_obs = 10)
+  newX <- data.frame(a = c(0.2, 0.8), b = c(0.5, 0.5))
+  pm <- predict_surrogate_marginal(m, newX, levels(tr))
+  # Recompute the marginal by hand: predict on each trial, average across trials.
+  byhand <- vapply(levels(tr), function(lv) {
+    g <- newX; g$trial_id <- factor(lv, levels = levels(tr))
+    predict_surrogate(m, g)$mean }, numeric(2))
+  check(isTRUE(all.equal(pm$mean, rowMeans(byhand), tolerance = 1e-8)),
+        "marginal mean == mean over trials of the per-trial predictions")
+  check(length(pm$sd) == 2 && all(is.finite(pm$sd)), "marginal sd is finite, one per candidate")
+  check(pm$mean[2] > pm$mean[1], "the marginal still ranks on the config feature (a)")
+})
 
 # ===========================================================================
 cat("evals store: optimizer targets ONE scheme (per-scheme slice of the archive)\n")

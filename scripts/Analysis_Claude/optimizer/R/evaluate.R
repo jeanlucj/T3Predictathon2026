@@ -31,17 +31,34 @@ sample_trial <- function(settings, conn = NULL) {
     if (isTRUE(settings$sim_fixed_trial))
       return(list(id = "simtrial_fixed", n_projects = 3L, env_var = 0.5,
                   n_acc = 150L, heritability = 0.45))
-    id <- paste0("simtrial_", sample.int(1e6, 1))
-    list(
-      id          = id,
-      n_projects  = sample(1:4, 1),                 # how many genotyping projects cover it
-      env_var     = stats::runif(1),                # environmental atypicality (0..1)
-      n_acc       = sample(40:300, 1),              # number of accessions
-      heritability = stats::runif(1, 0.2, 0.7)      # caps achievable accuracy
-    )
+    .sim_trial(paste0("simtrial_", sample.int(1e6, 1)))
   } else {
     sample_real_trial(settings, conn)               # defined in R/data_access.R
   }
+}
+
+# A simulated trial's attributes, DERIVED FROM ITS ID so the id actually identifies a trial.
+# Needed because trial_replication revisits a trial by id: if the attributes were redrawn the
+# "same" simulated trial would be a different trial each time, and neither the replication
+# constraint nor the surrogate's trial_id feature could be exercised offline.
+# The global RNG is saved and restored, so seeding here does not perturb the optimizer's own
+# random stream (config sampling, candidate proposal).
+.sim_trial <- function(id) {
+  n <- suppressWarnings(as.integer(sub("^simtrial_", "", id)))
+  if (!is.finite(n)) n <- 1L
+  had <- exists(".Random.seed", envir = globalenv())
+  old <- if (had) get(".Random.seed", envir = globalenv()) else NULL
+  set.seed(n)
+  out <- list(
+    id          = id,
+    n_projects  = sample(1:4, 1),                 # how many genotyping projects cover it
+    env_var     = stats::runif(1),                # environmental atypicality (0..1)
+    n_acc       = sample(40:300, 1),              # number of accessions
+    heritability = stats::runif(1, 0.2, 0.7)      # caps achievable accuracy
+  )
+  if (had) assign(".Random.seed", old, envir = globalenv())
+  else if (exists(".Random.seed", envir = globalenv())) rm(".Random.seed", envir = globalenv())
+  out
 }
 
 # ---------------------------------------------------------------------------

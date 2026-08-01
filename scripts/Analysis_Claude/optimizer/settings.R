@@ -8,7 +8,7 @@
 # (0.7.1 -> 0.7.2) and the middle one for a major one (0.7.x -> 0.8.1). Whenever a bump
 # changes what a configuration COMPUTES, add a matching entry to BUILD_CHANGES
 # (R/optimizer.R) so filter_evals_to_build can retire exactly the rows it invalidated.
-OPTIMIZER_BUILD <- "0.7.4"
+OPTIMIZER_BUILD <- "0.7.6"
 
 # remote_server: when TRUE, permanent files (state / logs / cache backup) go to
 # durable HOME storage instead of the work directory (see the paths section and
@@ -290,6 +290,21 @@ optimizer_settings <- function(local_overrides = TRUE) {
     # fitting a GBLUP at all; min_test_acc is the Predictathon's own "task can fail" rule.
     min_train_acc    = 20,
     min_test_acc     = 5,
+    # A trial that has been evaluated must reach this many DISTINCT configurations before the
+    # search moves on to fresh trials. Trials differ far more than configurations do (measured
+    # on the real store: sd_trial 0.078 vs sd_config 0.036), and that difference is idiosyncratic
+    # -- program, year, location and test-set size explain essentially none of it -- so the
+    # surrogate blocks on trial_id rather than on trial descriptors. Replication is what makes
+    # that safe: at one observation per trial an rpart split on trial_id fits pure noise to an
+    # in-sample R^2 of 0.98. 1 disables revisiting entirely.
+    trial_replication = 2,
+    # Should the surrogate BLOCK on trial_id -- train on (config, trial) rows with trial_id as
+    # a factor and marginalise it away when scoring -- rather than on per-config means?
+    # Evidence as of 2026-07-31: a properly replicated simulation favours it (+0.059, sd 0.018,
+    # 8/8 seeds); 12 paired CVs on the real store gave -0.001 (p 0.84), which BOUNDS the effect
+    # below ~0.013 rather than excluding it, because the expected gain there is only ~0.015.
+    # Re-measure with surrogate_bakeoff.R as the store grows.
+    surrogate_block_trial = TRUE,
     # Scores are correlations, so their precision depends on how many accessions they were
     # computed over. aggregate_scores pools them in Fisher-z space weighted by n_test - 3;
     # this floor drops the ones too small to inform anything (at n = 5, SD(r) ~ 0.7).
