@@ -323,3 +323,145 @@ Red flags:
 To **resume** later — same server, new reservation, or laptop — put `evals.sqlite` (and
 `cache/` if you kept it) back at the paths the settings name, and launch again.
 Configurations already run are skipped by hash, so nothing is repeated.
+
+---
+
+## 7. Running under SLURM (clusters)
+
+Steps 1–6 assume a machine you can `ssh` into and run things on directly. On a cluster you
+instead *ask a scheduler* for a machine, and it runs your script when one is free. This
+section starts from the beginning; if you already use SLURM daily, skip to "Mapping this
+project onto it".
+
+### The mental model
+
+Three kinds of machine, and the distinction matters:
+
+- **Login node** — where you land on `ssh`. Shared by everyone. Edit files, submit jobs, run
+  30-second commands. **Do not compute here**; a long R job on a login node is the classic way
+  to annoy an administrator.
+- **Compute nodes** — where work actually runs. You never `ssh` to one; you ask for one.
+- **The scheduler** — SLURM. You describe the resources you want and it queues you until they
+  are free.
+
+Five commands cover nearly everything:
+
+```bash
+sbatch  myjob.sh          # submit a batch job; prints a job id
+squeue  -u $USER          # what is queued/running for me, and why it is waiting
+scancel <jobid>           # kill it
+sacct   -j <jobid> --format=JobID,State,Elapsed,MaxRSS,ReqMem
+                          # what a FINISHED job actually used -- the one to learn from
+sinfo   -s                # partitions and how busy they are
+```
+
+`sacct`'s `MaxRSS` is the number to check after your first run: it tells you whether the
+memory you requested was anywhere near what you needed.
+
+### A minimal job script
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=t3opt        # shows in squeue
+#SBATCH --partition=<partition> # which queue (see `sinfo -s`)
+#SBATCH --nodes=1               # ONE node -- see the store constraint below
+#SBATCH --ntasks=16             # logical cores on that node
+#SBATCH --mem=600G              # TOTAL memory for the job (or --mem-per-cpu)
+#SBATCH --time=3-00:00:00       # D-HH:MM:SS. Defaults are usually SHORT -- always set it
+#SBATCH --account=<account>     # billing/allocation; required on many clusters
+#SBATCH --output=logs/slurm-%j.out   # %j = job id
+#SBATCH --error=logs/slurm-%j.err
+
+cd /path/to/optimizer           # .Renviron is read from the WORKING DIRECTORY
+module load r/<version>         # or use a container -- see USDA_ARS_SCINET.md
+
+./run_workers.sh 8 2            # 8 workers, 2 BLAS threads each
+```
+
+Submit with `sbatch myjob.sh`. Two directives people get wrong:
+
+- **`--time`** — the default is often an hour or two, and the job is killed the moment it
+  expires. Always set it explicitly.
+- **`--mem` vs `--mem-per-cpu`** — these are alternatives, not additions. Exceeding either is
+  an instant kill, not a slowdown.
+
+### Interactive work
+
+For the short read-only scripts here — `peek_failures.R`, `peek_config.R`,
+`surrogate_bakeoff.R` — do not write a batch script. Grab a node interactively:
+
+```bash
+salloc --nodes=1 --ntasks=4 --mem=32G --time=1:00:00 --account=<account>
+# on some clusters salloc drops you onto the node; on others you then need:
+#   srun --pty --preserve-env bash
+cd /path/to/optimizer && Rscript peek_failures.R
+exit                            # releases the allocation -- do not forget
+```
+
+### Mapping this project onto it
+
+**One job = one node running N workers. Not one job per worker.**
+
+The reason is the store. SQLite in WAL mode coordinates through an mmap'd `-shm` file, which
+network filesystems do not provide — `open_store()` warns about exactly this, and the
+consequence of ignoring it is a corrupted store. So every worker sharing an `evals.sqlite`
+must be on the same physical node, with `db_path` on **node-local** disk.
+
+That gives the layout:
+
+| setting | where it must point |
+|---|---|
+| `db_path` | node-local scratch (often `$TMPDIR`) |
+| `db_backup_path` | durable project storage — `backup_store()` `VACUUM INTO`s here every 30 min |
+| `cache_dir` | node-local scratch if it fits, else project storage |
+| `cache_backup_dir` | durable project storage |
+| `OPTIMIZER_HOME` | durable project storage (drives the three above) |
+
+`run_workers.sh` ends in `wait`, which is exactly what a batch script needs — without it the
+script would exit immediately and SLURM would tear down the allocation with the workers still
+running.
+
+**Sizing: this job is memory-bound, not core-bound.** Measured over 121 real evaluations,
+peak R heap was a median of **19 GB** and a maximum of **82 GB** per worker — and that is R's
+heap peak, an under-estimate of true RSS. So:
+
+```
+workers = usable node RAM / 80 GB      (conservative, start here)
+workers = usable node RAM / 25 GB      (after report_memory.R confirms headroom)
+```
+
+Not `cores / threads`. Start conservative, run `Rscript report_memory.R` after a few hours,
+and raise it — the same procedure as §2's memory budget.
+
+### Wall-clock limits and resumability
+
+Clusters cap job length (commonly 1–3 weeks); the optimizer is designed to run indefinitely.
+This is not a problem, because the store is resumable: a job that hits its limit loses only
+the evaluations in flight. Chain jobs instead —
+
+```bash
+sbatch --dependency=afterany:<previous_jobid> myjob.sh
+```
+
+— each one picking up from the store. Configurations already run are skipped by hash.
+
+Two things that still work from the **login node** while a job runs:
+
+```bash
+tail -f logs/run_w1.out                       # watch a worker
+source ./optimizer_paths.sh && touch "$STOP_FILE"   # clean stop; workers finish and exit
+```
+
+### Troubleshooting
+
+| symptom | cause |
+|---|---|
+| Job dies immediately, `sacct` shows `OUT_OF_MEMORY` | `--mem` too low. Check `MaxRSS`, raise it or cut worker count. |
+| Job killed at a round time (1:00:00, 2:00:00) | `--time` default. Set it explicitly. |
+| `squeue` shows `PD` forever, reason `PartitionConfig` | Asked for more cores/memory/time than the partition allows. |
+| `T3 login was REJECTED` / `could not build descriptor` | `.Renviron` not read — the job did not `cd` to the optimizer directory. |
+| `could not put the store in WAL mode` warning | `db_path` is on a network filesystem. Move it to node-local disk. |
+| Workers all evaluate the same configuration | Pre-0.7.4 code; `git pull`. |
+
+For SciNet specifically — partitions, accounts, containers, storage — see
+`USDA_ARS_SCINET.md`.
