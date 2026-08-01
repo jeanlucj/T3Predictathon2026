@@ -1347,6 +1347,41 @@ pickC <- choose_config(con4, stCV00)
 check(!identical(config_hash(pickC$cfg), config_hash(seedA)),
       "choose_config: once the seed has a CV00 eval it is not re-offered")
 close_store(con4); unlink(dbp4)
+
+# ---------------------------------------------------------------------------
+# Oracle: CONCURRENT WORKERS MUST NOT ALL PICK THE SAME SEED. choose_config knows only what
+# has FINISHED, never what is in flight, so before the first worker stores anything every
+# worker sees an identical store. Six workers once spent six evaluations on Prediction1
+# before any other seed was touched (observed on the server, 2026-07-31).
+dbp5 <- tempfile(fileext = ".sqlite"); con5 <- open_store(dbp5)
+wsettings <- function(w) modifyList(optimizer_settings(),
+  list(simulate = FALSE, target_domain = NULL, optimize_scheme = "CV00", worker_id = as.character(w)))
+n_seed <- length(seed_configs("CV00"))
+picks  <- vapply(seq_len(n_seed), function(w) choose_config(con5, wsettings(w))$source,
+                 character(1))
+check(dplyr::n_distinct(picks) == n_seed,
+      "empty store: workers 1..5 pick five DIFFERENT seeds (not all the first)")
+check(all(grepl("^seed:", picks)), "all five picks are seeds")
+# More workers than seeds -> wrap around rather than error or return NULL.
+check(identical(choose_config(con5, wsettings(n_seed + 1))$source, picks[1]),
+      "worker 6 wraps around to worker 1's seed")
+# Unchanged for a single worker: still the first un-done seed.
+check(identical(choose_config(con5, wsettings(1))$source,
+                paste0("seed:", names(seed_configs("CV00"))[1])),
+      "worker 1 alone still takes the FIRST un-done seed (no change unstaggered)")
+# The offset indexes the UN-DONE list, not the full one: with seed 1 stored, worker 1 gets #2.
+store_eval(con5, seed_configs("CV00")[[1]], "950", "CV00", 0.3, 40L, "ok", build = OPTIMIZER_BUILD)
+check(identical(choose_config(con5, wsettings(1))$source,
+                paste0("seed:", names(seed_configs("CV00"))[2])),
+      "with seed 1 done, worker 1 takes seed 2 (offset is into the un-done list)")
+# With every seed stored, phase 1 must fall through rather than return a seed.
+for (k in 2:n_seed)
+  store_eval(con5, seed_configs("CV00")[[k]], paste0("95", k), "CV00", 0.3, 40L, "ok",
+             build = OPTIMIZER_BUILD)
+check(!grepl("^seed:", choose_config(con5, wsettings(3))$source),
+      "all seeds done -> phase 1 falls through to random/acquisition")
+close_store(con5); unlink(dbp5)
+
 # Oracle: optimize_scheme must be a single scheme within `schemes`; a bad override
 # is rejected by optimizer_settings(). Guard so a real settings.local.R is untouched.
 lfs <- here::here("settings.local.R")

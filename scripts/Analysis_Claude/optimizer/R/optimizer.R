@@ -201,11 +201,21 @@ choose_config <- function(con, settings) {
 
   # Phase 1: seed the five submissions.
   # Prediction5 submitted a different model per scheme, so the seeds are scheme-specific.
-  seeds <- seed_configs(settings$optimize_scheme)
-  for (nm in names(seeds)) {
-    if (!(config_hash(seeds[[nm]]) %in% done_hashes)) {
-      return(list(cfg = seeds[[nm]], source = paste0("seed:", nm)))
-    }
+  #
+  # Each worker takes a DIFFERENT un-done seed. This selection knows only what has FINISHED,
+  # never what is in flight, so "the first un-done seed" is the same answer for every worker
+  # that asks before the first one stores anything -- and an evaluation runs far longer than
+  # run_workers.sh's 20 s launch stagger. Six workers then spent six evaluations on
+  # Prediction1 before any other seed was touched. Offsetting by worker id gets all five
+  # seeds running at once and still accumulates reps, one per seed per round.
+  seeds  <- seed_configs(settings$optimize_scheme)
+  hashes <- vapply(seeds, config_hash, character(1))
+  undone <- seeds[!(hashes %in% done_hashes)]
+  if (length(undone)) {
+    w <- suppressWarnings(as.integer(settings$worker_id %||% "1"))
+    if (!is.finite(w) || w < 1L) w <- 1L          # worker ids are free-form; degrade to 1
+    i <- ((w - 1L) %% length(undone)) + 1L        # wraps when workers outnumber seeds
+    return(list(cfg = undone[[i]], source = paste0("seed:", names(undone)[i])))
   }
 
   agg <- aggregate_scores(evals)
