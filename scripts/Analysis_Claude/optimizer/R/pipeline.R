@@ -47,7 +47,15 @@ run_pipeline <- function(cfg, trial, scheme, settings, conn) {
   train_obs <- mask_cv(train_obs, focal_acc, scheme)
   if (!nrow(train_obs)) infeasible("no_train_obs_after_mask")
   targets <- build_targets(cfg, train_obs, trial, conn, settings)   # named numeric
-  if (length(targets) < 10) infeasible("too_few_train_acc", length(targets))
+  # Count USABLE targets, not just present ones. A non-finite target is not a training
+  # datum -- it poisons the model fit and comes back out as a non-finite prediction, which
+  # scores as an empty test set far downstream. Drop them here, where the cause is legible.
+  n_na    <- sum(!is.finite(targets))
+  targets <- targets[is.finite(targets)]
+  if (length(targets) < 10)
+    infeasible("too_few_train_acc",
+               sprintf("%d finite%s", length(targets),
+                       if (n_na > 0) sprintf(" (%d non-finite dropped)", n_na) else ""))
 
   # --- C. select genotyping data -------------------------------------------
   train_acc <- names(targets)
@@ -246,7 +254,13 @@ select_training_trials <- function(cfg, trial, conn, settings) {
       d2 <- (suppressWarnings(as.numeric(r$latitude)) - trial$lat)^2 +
             (suppressWarnings(as.numeric(r$longitude)) - trial$long)^2 +
             (0.1 * (suppressWarnings(as.integer(r$year)) - trial$year))^2
-      e[sid] <- exp(-d2 / 10)
+      # A candidate whose coordinates or year are unknown is UNRELATED (similarity 0), not
+      # poison. `is.finite(trial$lat)` above guards the focal trial; nothing guarded the
+      # candidates, and 28% of the T3 catalogue has year = NA. An NA here became an NA
+      # weight in build_targets, and weighted.mean has no na.rm -- so one such trial in the
+      # training set made the target NA for every accession phenotyped there, and every
+      # prediction non-finite. Kernel-independent, which is what made it hard to place.
+      e[sid] <- if (is.finite(d2)) exp(-d2 / 10) else 0
     }
   }
   switch(kind, genomic = g, environmental = e, both = g + e)

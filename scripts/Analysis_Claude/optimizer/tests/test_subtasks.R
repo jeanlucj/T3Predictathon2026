@@ -1056,6 +1056,48 @@ f_na <- train_model(list(model.method = "gblup_rrblup", model.lambda_select = NA
 check(approx(f_na$lambda, f_rem$lambda, tol = 1e-8), "an NA lambda_select falls back to REML")
 
 # ===========================================================================
+cat(".trial_similarity: an unknown year/coordinate is UNRELATED, not NA\n")
+# Oracle: 28% of the T3 catalogue has year = NA. Before 2026-07-31 such a candidate made d2
+# NA -> similarity NA -> weight NA -> weighted.mean NA -> an NA TARGET for every accession
+# phenotyped there -> non-finite predictions -> a scored-as-empty test set, several subtasks
+# downstream. A candidate we cannot place must score 0, not poison the arithmetic.
+sim_cat <- tibble::tibble(
+  study_db_id = c("A", "B", "C"),
+  latitude    = c(42.5, 42.6, NA_real_),
+  longitude   = c(-76.5, -76.4, -76.3),
+  year        = c(2020L, NA_integer_, 2021L))
+sim_settings <- modifyList(optimizer_settings(), list(simulate = TRUE))
+local({
+  # Stub the catalogue: .trial_similarity's environmental branch reads only these columns.
+  tc <- trial_catalog
+  assign("trial_catalog", function(conn, settings) sim_cat, envir = globalenv())
+  on.exit(assign("trial_catalog", tc, envir = globalenv()), add = TRUE)
+  focal <- list(id = "F", accessions = character(), lat = 42.5, long = -76.5, year = 2020)
+  s <- .trial_similarity(focal, c("A", "B", "C"), conn = NULL, sim_settings, "environmental")
+  check(all(is.finite(s)), ".trial_similarity: no NA even when a candidate lacks year/coords")
+  check(s[["A"]] > 0.9, "a candidate at the focal position scores ~1")
+  check(s[["B"]] == 0 && s[["C"]] == 0, "candidates with unknown year / coordinates score 0")
+  # The consequence that mattered: weights derived from this are usable.
+  w <- exp(log(pmax(s, 1e-6)) / 1.5)
+  check(all(is.finite(w)) && is.finite(stats::weighted.mean(c(1, 2, 3), w)),
+        "weights from the fixed similarity give a finite weighted.mean")
+
+  # End to end: build_targets under env_gaussian weighting, with an unplaceable trial in the
+  # training set. This is the exact path that produced trial 11033's non-finite predictions.
+  tobs <- tibble::tibble(
+    study_id       = rep(c("A", "B", "C"), each = 4),
+    germplasm_name = rep(paste0("g", 1:4), times = 3),
+    value          = c(5000, 5200, 4800, 5100, 5050, 5250, 4850, 5150, 4990, 5190, 4790, 5090),
+    rep = "1", block = "1", unit_id = NA_character_, col = NA_character_, row = NA_character_)
+  cfg_ge <- modifyList(canary_config(),
+    list(pheno_prep.method = "raw_mean", pheno_prep.ge_weighting = "env_gaussian",
+         pheno_prep.ge_bandwidth = 1.5))
+  tg <- build_targets(cfg_ge, tobs, focal, conn = NULL, sim_settings)
+  check(length(tg) == 4 && all(is.finite(tg)),
+        "build_targets: env_gaussian over an unplaceable trial yields FINITE targets")
+})
+
+# ===========================================================================
 cat("build_targets + .blue_per_trial\n")
 mkobs <- function(study, germ, value) tibble::tibble(
   study_id = study, germplasm_name = germ, value = value, rep = "r1", block = "b1")

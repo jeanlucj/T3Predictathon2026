@@ -56,7 +56,12 @@ BUILD_CHANGES <- list(
        affects = function(cfg) identical(cfg$kernel.method, "em_combine")),
   list(build = "0.7.1",
        what  = ".best_panel now requires focal coverage, not just max union coverage",
-       affects = function(cfg) isTRUE(cfg$kernel.method %in% c("vanRaden_single", "rkhs_gaussian")))
+       affects = function(cfg) isTRUE(cfg$kernel.method %in% c("vanRaden_single", "rkhs_gaussian"))),
+  list(build = "0.7.3",
+       what  = paste(".trial_similarity no longer returns NA for a candidate trial with an",
+                     "unknown year/coordinates; env_gaussian weighting produced NA targets",
+                     "and hence non-finite predictions before this"),
+       affects = function(cfg) identical(cfg$pheno_prep.ge_weighting, "env_gaussian"))
 )
 
 # Drop rows a later build invalidated. A row goes when it was produced BEFORE a change's
