@@ -656,6 +656,11 @@ get_trial_accessions <- function(study_id, conn, settings) {
   # An accession listed twice in one trial must not count twice toward that trial's overlap.
   index <- lapply(index, unique)
 
+  # Which trials the index actually SAW. Needed to tell "this candidate has zero overlap"
+  # (absent from the tabulation, count 0) from "this candidate was never indexed" (must be
+  # measured the old way). Without the distinction the index is unusable: one uncached
+  # candidate would either be silently scored 0, or force every candidate back to the loop.
+  attr(index, "trials") <- ids[keep]
   .cache_save(settings, "trial_index", NULL, list(index = index, n_files = length(fs)))
   index
 }

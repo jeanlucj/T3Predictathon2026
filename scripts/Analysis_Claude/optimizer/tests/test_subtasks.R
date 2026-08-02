@@ -1436,6 +1436,23 @@ local({
     if (!identical(as.integer(loop), as.integer(fromidx))) bad <- bad + 1L
   }
   check(bad == 0L, "index tabulation EQUALS the per-candidate intersect loop, element for element")
+
+  # The index must record WHICH trials it saw, so a candidate absent from the tabulation can
+  # be read as "zero overlap" rather than "unknown". Without it the index is all-or-nothing:
+  # one unindexed candidate sent every candidate back to the loop, which is exactly why the
+  # first cut of this showed no improvement on the server (803 s -> 736 s).
+  seen <- attr(idx3, "trials")
+  check(!is.null(seen) && all(ids %in% seen),
+        ".trial_index records the trial ids it indexed")
+  check(!("never_indexed" %in% seen), "a trial with no accession cache is not claimed as indexed")
+
+  # A trial that IS indexed but shares nothing with the query must score 0, not fall back.
+  put("iso", c("zzz_unique_1", "zzz_unique_2"))
+  idx4 <- .trial_index(st)
+  hits <- unlist(idx4[intersect(c("g1","g2"), names(idx4))], use.names = FALSE)
+  tb <- table(hits); v <- as.integer(tb); names(v) <- names(tb)
+  check("iso" %in% attr(idx4, "trials") && !("iso" %in% names(v)),
+        "an indexed trial with zero overlap is absent from the tabulation (reads as 0)")
   unlink(cdir, recursive = TRUE)
 })
 

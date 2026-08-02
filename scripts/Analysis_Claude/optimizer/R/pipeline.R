@@ -228,25 +228,34 @@ select_training_trials <- function(cfg, trial, conn, settings) {
     # largest single cost in the pipeline. The inverted index answers the same question by
     # tabulation. It is used only when it covers every candidate; otherwise the loop runs,
     # so a partial index can never silently shrink the training set.
-    idx <- tryCatch(.trial_index(settings), error = function(e) NULL)
-    counts <- NULL
-    if (!is.null(idx)) {
+    idx    <- tryCatch(.trial_index(settings), error = function(e) NULL)
+    known  <- if (is.null(idx)) character() else (attr(idx, "trials") %||% character())
+    counts <- stats::setNames(integer(length(cand)), cand)
+
+    # Candidates the index HAS seen: absent from the tabulation means genuinely zero overlap.
+    in_idx <- cand %in% known
+    if (any(in_idx)) {
       hits <- unlist(idx[intersect(acc, names(idx))], use.names = FALSE)
       if (length(hits)) {
-        tb <- table(hits)
-        v  <- as.integer(tb); names(v) <- names(tb)
-        # Candidates the index does not know about (trial evaluated before its accession
-        # cache existed) must fall back, or their overlap silently reads as zero.
-        if (all(cand %in% names(v))) {
-          counts <- v[cand]                       # exactly the candidates, in order
-          names(counts) <- cand
-        }
+        tb <- table(hits); v <- as.integer(tb); names(v) <- names(tb)
+        got <- v[cand[in_idx]]; got[is.na(got)] <- 0L
+        counts[in_idx] <- as.integer(got)
       }
     }
-    if (is.null(counts))
-      counts <- stats::setNames(purrr::map_int(cand, function(sid) {
+    # Only the candidates it has NOT seen need the old per-trial read + intersect. Falling
+    # back for ALL of them because ONE is unindexed (the first cut of this) put the whole
+    # 435 s straight back -- the index has to degrade candidate by candidate.
+    miss <- cand[!in_idx]
+    # Coverage is the whole story for this optimisation: every unindexed candidate costs one
+    # cache read plus one intersect, which is what the index exists to remove. Reported once
+    # per session so a profile run says outright whether the index is doing its job.
+    .note_geno_once("trial_index_coverage", sprintf(
+      "trial index: covered %d of %d candidates (%.0f%%); %d fell back to per-trial reads",
+      sum(in_idx), length(cand), 100 * mean(in_idx), length(miss)))
+    if (length(miss))
+      counts[miss] <- purrr::map_int(miss, function(sid) {
         length(intersect(get_trial_accessions(sid, conn, settings), acc))
-      }, .progress = "Germplasm overlap: candidate trials"), cand)
+      }, .progress = "Germplasm overlap: unindexed candidates")
     counts
   }, error = function(e) integer())
 
