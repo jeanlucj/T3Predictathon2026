@@ -1406,6 +1406,25 @@ local({
   check(is.null(.trial_index(list(cache_dir = tempfile()))),
         ".trial_index returns NULL when there are no accession caches")
 
+  # LEGACY FLAT LAYOUT. .cache_existing() reads cache/acc_<id>.rds as well as the nested
+  # cache/acc/acc_<id>.rds, so the index must too. Globbing only the nested path left a
+  # server with an older cache reporting "covered 0 of 432 candidates" -- the index was not
+  # empty, it was never built.
+  fdir <- tempfile("flat_"); dir.create(fdir)
+  saveRDS(c("p", "q"), file.path(fdir, "acc_f1.rds"))       # flat, no acc/ subdirectory
+  saveRDS(c("q", "r"), file.path(fdir, "acc_f2.rds"))
+  fidx <- .trial_index(list(cache_dir = fdir))
+  check(!is.null(fidx) && setequal(fidx[["q"]], c("f1", "f2")),
+        ".trial_index reads the LEGACY FLAT cache layout, not just the nested one")
+  check(setequal(attr(fidx, "trials"), c("f1", "f2")), "flat-layout trials are recorded as indexed")
+  # Both layouts at once: the nested copy wins, as in .cache_existing.
+  dir.create(file.path(fdir, "acc"))
+  saveRDS(c("p", "NESTED"), file.path(fdir, "acc", "acc_f1.rds"))
+  bidx <- .trial_index(list(cache_dir = fdir))
+  check("NESTED" %in% names(bidx) && setequal(bidx[["p"]], c("f1")),
+        "with both layouts present the nested file takes precedence")
+  unlink(fdir, recursive = TRUE)
+
   # An accession repeated within one trial must not double-count that trial's overlap.
   put("t4", c("q", "q", "r"))
   idx <- .trial_index(st)

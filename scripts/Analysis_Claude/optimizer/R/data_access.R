@@ -631,12 +631,36 @@ get_trial_accessions <- function(study_id, conn, settings) {
 # added since the build forces a rebuild. max_age_days is short as a second line of defence
 # (a file REPLACED rather than added leaves the count unchanged).
 .trial_index <- function(settings, max_age_days = 1) {
-  dir <- file.path(settings$cache_dir, "acc")
-  fs  <- list.files(dir, pattern = "^acc_.*[.]rds$", full.names = TRUE)
+  # BOTH cache layouts, exactly as .cache_existing() reads them: nested cache/acc/acc_<id>.rds
+  # and legacy FLAT cache/acc_<id>.rds. Globbing only the nested one made the index empty on a
+  # server whose cache predates the nested layout -- it reported "covered 0 of 432 candidates"
+  # and every candidate fell back, which looked like the index not helping rather than the
+  # index not existing.
+  fs <- c(list.files(file.path(settings$cache_dir, "acc"),
+                     pattern = "^acc_.*[.]rds$", full.names = TRUE),
+          list.files(settings$cache_dir, pattern = "^acc_.*[.]rds$", full.names = TRUE))
   if (!length(fs)) return(NULL)
+  # Nested wins on a duplicate id, matching .cache_existing's precedence.
+  fs <- fs[!duplicated(basename(fs))]
 
-  # A cached index is usable only if it was built over the same number of accession files.
-  ok <- function(v) is.list(v) && length(v$index) > 0 && identical(v$n_files, length(fs))
+  # A cached index is usable only if the source files are unchanged. COUNT ALONE IS NOT
+  # ENOUGH: replacing a file (or a flat cache being superseded by a nested one) leaves the
+  # count identical while the contents differ, so the newest mtime goes into the signature
+  # too. One stat pass over a few thousand files is milliseconds.
+  # `ver` is the index's SCHEMA version, separate from the source-file signature. Bump it
+  # whenever the stored structure changes. Without it, an index written by an older build is
+  # served happily because the source files are unchanged -- which is exactly what happened
+  # on the server: a cached index from the previous version had no "trials" attribute, so
+  # every candidate read as unindexed and the whole optimisation silently did nothing.
+  ver <- 2L
+  # The newest mtime is formatted to a STRING and compared with identical(). all.equal() on
+  # POSIXct uses a RELATIVE tolerance -- against ~1.75e9 seconds its default 1.5e-8 makes any
+  # two times within ~26 s compare equal, so a cache rebuilt moments later would look
+  # unchanged. Exact string comparison has no such hole.
+  sig <- list(n = length(fs),
+              newest = format(suppressWarnings(max(file.mtime(fs))), "%Y-%m-%d %H:%M:%OS6"))
+  ok  <- function(v) is.list(v) && length(v$index) > 0 && identical(v$ver, ver) &&
+                     identical(v$sig, sig) && !is.null(attr(v$index, "trials"))
   hit <- .cache_existing(settings, "trial_index", NULL)
   if (!is.na(hit)) {
     age <- as.numeric(difftime(Sys.time(), file.info(hit)$mtime, units = "days"))
@@ -661,7 +685,7 @@ get_trial_accessions <- function(study_id, conn, settings) {
   # measured the old way). Without the distinction the index is unusable: one uncached
   # candidate would either be silently scored 0, or force every candidate back to the loop.
   attr(index, "trials") <- ids[keep]
-  .cache_save(settings, "trial_index", NULL, list(index = index, n_files = length(fs)))
+  .cache_save(settings, "trial_index", NULL, list(index = index, sig = sig, ver = ver))
   index
 }
 

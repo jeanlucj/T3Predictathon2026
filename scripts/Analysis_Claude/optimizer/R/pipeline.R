@@ -249,9 +249,11 @@ select_training_trials <- function(cfg, trial, conn, settings) {
     # Coverage is the whole story for this optimisation: every unindexed candidate costs one
     # cache read plus one intersect, which is what the index exists to remove. Reported once
     # per session so a profile run says outright whether the index is doing its job.
-    .note_geno_once("trial_index_coverage", sprintf(
-      "trial index: covered %d of %d candidates (%.0f%%); %d fell back to per-trial reads",
-      sum(in_idx), length(cand), 100 * mean(in_idx), length(miss)))
+    .note_geno_once("trial_index_coverage", if (is.null(idx)) {
+      "trial index: NOT BUILT (no acc_*.rds found in cache_dir or cache_dir/acc) -- every candidate falls back"
+    } else sprintf(
+      "trial index: %d trials indexed; covered %d of %d candidates (%.0f%%); %d fell back to per-trial reads",
+      length(known), sum(in_idx), length(cand), 100 * mean(in_idx), length(miss)))
     if (length(miss))
       counts[miss] <- purrr::map_int(miss, function(sid) {
         length(intersect(get_trial_accessions(sid, conn, settings), acc))
