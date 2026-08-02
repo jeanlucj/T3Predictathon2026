@@ -1388,6 +1388,112 @@ check(nrow(filter_evals_to_build(bev2, "0.7.2", ch)) == 1,
       "a row from a later build is not retired by an earlier build's rule")
 
 # ===========================================================================
+cat("trial discovery: coverage gating and the attempted set\n")
+# The wizard call this replaces was 440 s of a 795 s evaluation -- 99.9% of .find_related.
+# Discovery may only go local when the index covers every trial the CATALOGUE can offer as a
+# candidate, because .germ_overlap filters candidates to the catalogue.
+local({
+  cdir <- tempfile("cov_"); dir.create(file.path(cdir, "acc"), recursive = TRUE)
+  st <- list(cache_dir = cdir)
+  put <- function(id, acc) saveRDS(acc, file.path(cdir, "acc", paste0("acc_", id, ".rds")))
+  put("c1", c("a", "b")); put("c2", c("b", "c"))
+  idx <- .trial_index(st)
+  # A stub connection is enough: .index_covers_catalog only needs trial_catalog(), which the
+  # cache serves, so no BrAPI call happens.
+  saveRDS(tibble::tibble(study_db_id = c("c1", "c2", "c3"), location_name = "L",
+                         latitude = 1, longitude = 1, year = 2024L),
+          {dir.create(file.path(cdir, "trial_catalog")); file.path(cdir, "trial_catalog", "trial_catalog.rds")})
+  check(!.index_covers(idx, c("c1","c2","c3"), st, "acc"),
+        "coverage is FALSE while a catalogue trial is neither indexed nor attempted")
+  # c3 has no accessions at all -- get_trial_accessions would not cache it, so only the
+  # ATTEMPTED record can lift coverage. Without it, coverage could never reach 100%.
+  .note_attempted(st, "acc", "c3")
+  check(setequal(.attempted(st, "acc"), "c3"), "attempted trials are recorded")
+  check(.index_covers(idx, c("c1","c2","c3"), st, "acc"),
+        "an ATTEMPTED but empty trial counts as covered (else coverage never completes)")
+  .note_attempted(st, "acc", "c9")
+  check(setequal(.attempted(st, "acc"), c("c3", "c9")), "attempted records accumulate, not overwrite")
+  unlink(cdir, recursive = TRUE)
+})
+
+# Oracle: local discovery yields the SAME candidates and counts as counting from an explicit
+# candidate list. This is what licenses replacing the wizard.
+local({
+  cdir <- tempfile("disc_"); dir.create(file.path(cdir, "acc"), recursive = TRUE)
+  st <- list(cache_dir = cdir)
+  set.seed(303)
+  pool <- paste0("g", 1:120); ids <- paste0("d", 1:40)
+  for (i in ids) saveRDS(sample(pool, sample(5:40, 1)),
+                         file.path(cdir, "acc", paste0("acc_", i, ".rds")))
+  idx <- .trial_index(st)
+  bad <- 0L
+  for (r in 1:10) {
+    acc <- sample(pool, 30)
+    hits <- unlist(idx[intersect(acc, names(idx))], use.names = FALSE)
+    tab  <- table(hits)
+    disc <- names(tab)                                   # local discovery
+    # ground truth: every trial sharing >= 1 accession, by brute force
+    truth <- Filter(function(sid) length(intersect(
+      as.character(readRDS(file.path(cdir, "acc", paste0("acc_", sid, ".rds")))), acc)) > 0, ids)
+    if (!setequal(disc, truth)) { bad <- bad + 1L; next }
+    cnt <- as.integer(tab[truth])
+    ref <- vapply(truth, function(sid) length(intersect(
+      as.character(readRDS(file.path(cdir, "acc", paste0("acc_", sid, ".rds")))), acc)), integer(1))
+    if (!identical(cnt, as.integer(ref))) bad <- bad + 1L
+  }
+  check(bad == 0L,
+        "local discovery finds EXACTLY the trials sharing an accession, with exact counts")
+  unlink(cdir, recursive = TRUE)
+})
+
+# ===========================================================================
+cat("local wizards: the projects index and memo isolation\n")
+# The wizard answers `accessions` BY genotyping project, and there are only ~110 projects in
+# the crop -- so accession -> projects is an inversion of a cheap primary map, exactly like
+# accession -> trials. Verified against the live wizard on real accession sets: 0 mismatches.
+local({
+  cdir <- tempfile("pi_"); dir.create(file.path(cdir, "proj_acc"), recursive = TRUE)
+  st <- list(cache_dir = cdir)
+  putp <- function(pid, acc) saveRDS(acc, file.path(cdir, "proj_acc", paste0("proj_acc_", pid, ".rds")))
+  putp("p1", c("a", "b")); putp("p2", c("b", "c"))
+  pidx <- .project_index(st)
+  check(setequal(pidx[["b"]], c("p1", "p2")), ".project_index inverts project -> accessions")
+  check(setequal(attr(pidx, "keys"), c("p1", "p2")), ".project_index records the projects it saw")
+  check(!.index_covers(pidx, c("p1","p2","p3"), st, "proj_acc"),
+        "coverage is FALSE while a project in the universe is unseen")
+  .note_attempted(st, "proj_acc", "p3")
+  check(.index_covers(pidx, c("p1","p2","p3"), st, "proj_acc"),
+        "an attempted-but-empty project counts as covered")
+  # The trials and projects indices must not collide: same helper, different categories.
+  dir.create(file.path(cdir, "acc"))
+  saveRDS(c("a", "zzz"), file.path(cdir, "acc", "acc_t1.rds"))
+  check(setequal(.trial_index(st)[["a"]], "t1") && setequal(.project_index(st)[["a"]], c("p1")),
+        "the trial and project indices are independent")
+  unlink(cdir, recursive = TRUE)
+})
+
+# Oracle: the RAM memo must key on the CACHE DIRECTORY too. Two caches with the same file
+# count -- and, in a fast test, the same newest mtime -- would otherwise share an entry and
+# one would be served the other's index.
+local({
+  d1 <- tempfile("m1_"); d2 <- tempfile("m2_")
+  for (d in c(d1, d2)) dir.create(file.path(d, "acc"), recursive = TRUE)
+  saveRDS(c("x"), file.path(d1, "acc", "acc_A.rds"))
+  saveRDS(c("y"), file.path(d2, "acc", "acc_B.rds"))
+  # FORCE the collision: identical file count AND identical mtime, so the signature alone
+  # cannot tell the two caches apart. Without this the test passes either way, because temp
+  # files created milliseconds apart already differ.
+  tt <- as.POSIXct("2026-01-01 00:00:00", tz = "UTC")
+  Sys.setFileTime(file.path(d1, "acc", "acc_A.rds"), tt)
+  Sys.setFileTime(file.path(d2, "acc", "acc_B.rds"), tt)
+  i1 <- .trial_index(list(cache_dir = d1))
+  i2 <- .trial_index(list(cache_dir = d2))
+  check(identical(names(i1), "x") && identical(names(i2), "y"),
+        "two cache dirs with identical file counts get their OWN index, not a shared memo")
+  unlink(c(d1, d2), recursive = TRUE)
+})
+
+# ===========================================================================
 cat(".trial_index (inverted accession -> trials lookup)\n")
 # .germ_overlap decides which trials become the TRAINING SET, so an index that is fast but
 # subtly different silently changes every score and would read as a modelling result rather
@@ -1416,7 +1522,7 @@ local({
   fidx <- .trial_index(list(cache_dir = fdir))
   check(!is.null(fidx) && setequal(fidx[["q"]], c("f1", "f2")),
         ".trial_index reads the LEGACY FLAT cache layout, not just the nested one")
-  check(setequal(attr(fidx, "trials"), c("f1", "f2")), "flat-layout trials are recorded as indexed")
+  check(setequal(attr(fidx, "keys"), c("f1", "f2")), "flat-layout trials are recorded as indexed")
   # Both layouts at once: the nested copy wins, as in .cache_existing.
   dir.create(file.path(fdir, "acc"))
   saveRDS(c("p", "NESTED"), file.path(fdir, "acc", "acc_f1.rds"))
@@ -1460,7 +1566,7 @@ local({
   # be read as "zero overlap" rather than "unknown". Without it the index is all-or-nothing:
   # one unindexed candidate sent every candidate back to the loop, which is exactly why the
   # first cut of this showed no improvement on the server (803 s -> 736 s).
-  seen <- attr(idx3, "trials")
+  seen <- attr(idx3, "keys")
   check(!is.null(seen) && all(ids %in% seen),
         ".trial_index records the trial ids it indexed")
   check(!("never_indexed" %in% seen), "a trial with no accession cache is not claimed as indexed")
@@ -1470,7 +1576,7 @@ local({
   idx4 <- .trial_index(st)
   hits <- unlist(idx4[intersect(c("g1","g2"), names(idx4))], use.names = FALSE)
   tb <- table(hits); v <- as.integer(tb); names(v) <- names(tb)
-  check("iso" %in% attr(idx4, "trials") && !("iso" %in% names(v)),
+  check("iso" %in% attr(idx4, "keys") && !("iso" %in% names(v)),
         "an indexed trial with zero overlap is absent from the tabulation (reads as 0)")
   unlink(cdir, recursive = TRUE)
 })

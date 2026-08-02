@@ -209,56 +209,66 @@ select_training_trials <- function(cfg, trial, conn, settings) {
     acc <- unique(as.character(accessions))
     if (!length(acc)) stop("no accessions")
 
-    # Candidate trials: any trial sharing >= 1 accession. The breeder wizard unions
-    # over the accessions it is given, so batch them (as projects_for_accessions does)
-    # rather than asking once per germplasm.
-    batches <- split(acc, ceiling(seq_along(acc) / 500L))
-    cand <- unique(unlist(purrr::map(batches, function(b) {
-      w <- .brapi_try(function() conn$wizard("trials", list(accessions = b)),
-                      conn = conn, settings = settings, what = "trials wizard")
-      as.character(w$data$ids)
-    })))
-    # Keep only trials that measured the focal trait, and drop the excluded trial(s).
-    cand <- setdiff(intersect(cand, as.character(trial_catalog(conn, settings)$study_db_id)),
-                    exclude)
-    if (!length(cand)) stop("no candidates")
+    cat_ids <- as.character(trial_catalog(conn, settings)$study_db_id)
+    idx     <- tryCatch(.trial_index(settings), error = function(e) NULL)
+    local_ok <- !identical(settings$local_wizards %||% "auto", "off") &&
+                .index_covers(idx, cat_ids, settings, "acc")
 
-    # Overlap counts. The per-candidate loop below reads one accession cache and runs one
-    # intersect() PER CANDIDATE TRIAL -- 435 s of an 803 s evaluation on the server, the
-    # largest single cost in the pipeline. The inverted index answers the same question by
-    # tabulation. It is used only when it covers every candidate; otherwise the loop runs,
-    # so a partial index can never silently shrink the training set.
-    idx    <- tryCatch(.trial_index(settings), error = function(e) NULL)
-    known  <- if (is.null(idx)) character() else (attr(idx, "trials") %||% character())
-    counts <- stats::setNames(integer(length(cand)), cand)
-
-    # Candidates the index HAS seen: absent from the tabulation means genuinely zero overlap.
-    in_idx <- cand %in% known
-    if (any(in_idx)) {
+    # One tabulation answers BOTH questions the wizard was used for: which trials share an
+    # accession (its names) and how many they share (its values). Profiled on the server, the
+    # wizard call this replaces was 440 s of a 795 s evaluation -- 99.9% of .find_related.
+    tab <- NULL
+    if (!is.null(idx)) {
       hits <- unlist(idx[intersect(acc, names(idx))], use.names = FALSE)
-      if (length(hits)) {
-        tb <- table(hits); v <- as.integer(tb); names(v) <- names(tb)
+      if (length(hits)) tab <- table(hits)
+    }
+
+    if (local_ok) {
+      # Local discovery: the candidates ARE the tabulated trials. No BrAPI call at all.
+      .note_geno_once("trial_discovery_mode", sprintf(
+        "trial discovery: LOCAL (index covers the %d-trial catalogue) -- no trials wizard call",
+        length(cat_ids)))
+      cand <- setdiff(intersect(names(tab) %||% character(), cat_ids), exclude)
+      if (!length(cand)) stop("no candidates")
+      counts <- stats::setNames(as.integer(tab[cand]), cand)
+      counts[is.na(counts)] <- 0L
+      counts
+    } else {
+      # Fallback: ask the wizard which trials to consider, exactly as before. Reached when the
+      # index does not yet cover the catalogue (run prewarm_trial_index.R) or discovery is
+      # pinned to "wizard".
+      .note_geno_once("trial_discovery_mode", sprintf(
+        "trial discovery: WIZARD (index covers %d of %d catalogue trials) -- run prewarm_trial_index.R",
+        if (is.null(idx)) 0L else sum(cat_ids %in% union(attr(idx, "keys") %||% character(),
+                                                         .attempted(settings, "acc"))),
+        length(cat_ids)))
+      batches <- split(acc, ceiling(seq_along(acc) / 500L))
+      cand <- unique(unlist(purrr::map(batches, function(b) {
+        w <- .brapi_try(function() conn$wizard("trials", list(accessions = b)),
+                        conn = conn, settings = settings, what = "trials wizard")
+        as.character(w$data$ids)
+      })))
+      cand <- setdiff(intersect(cand, cat_ids), exclude)
+      if (!length(cand)) stop("no candidates")
+
+      # Count from the index where it knows the candidate; only the rest need the old
+      # per-trial read + intersect. Degrading candidate by candidate matters: falling back for
+      # ALL of them because ONE is unindexed put the whole cost straight back.
+      known  <- if (is.null(idx)) character() else (attr(idx, "keys") %||% character())
+      counts <- stats::setNames(integer(length(cand)), cand)
+      in_idx <- cand %in% known
+      if (any(in_idx) && !is.null(tab)) {
+        v <- as.integer(tab); names(v) <- names(tab)
         got <- v[cand[in_idx]]; got[is.na(got)] <- 0L
         counts[in_idx] <- as.integer(got)
       }
+      miss <- cand[!in_idx]
+      if (length(miss))
+        counts[miss] <- purrr::map_int(miss, function(sid) {
+          length(intersect(get_trial_accessions(sid, conn, settings), acc))
+        }, .progress = "Germplasm overlap: unindexed candidates")
+      counts
     }
-    # Only the candidates it has NOT seen need the old per-trial read + intersect. Falling
-    # back for ALL of them because ONE is unindexed (the first cut of this) put the whole
-    # 435 s straight back -- the index has to degrade candidate by candidate.
-    miss <- cand[!in_idx]
-    # Coverage is the whole story for this optimisation: every unindexed candidate costs one
-    # cache read plus one intersect, which is what the index exists to remove. Reported once
-    # per session so a profile run says outright whether the index is doing its job.
-    .note_geno_once("trial_index_coverage", if (is.null(idx)) {
-      "trial index: NOT BUILT (no acc_*.rds found in cache_dir or cache_dir/acc) -- every candidate falls back"
-    } else sprintf(
-      "trial index: %d trials indexed; covered %d of %d candidates (%.0f%%); %d fell back to per-trial reads",
-      length(known), sum(in_idx), length(cand), 100 * mean(in_idx), length(miss)))
-    if (length(miss))
-      counts[miss] <- purrr::map_int(miss, function(sid) {
-        length(intersect(get_trial_accessions(sid, conn, settings), acc))
-      }, .progress = "Germplasm overlap: unindexed candidates")
-    counts
   }, error = function(e) integer())
 
   # Memoize only real answers: caching an empty result would let one transient network

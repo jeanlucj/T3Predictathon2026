@@ -617,76 +617,114 @@ get_trial_accessions <- function(study_id, conn, settings) {
   })
 }
 
-# --- inverted accession -> trials index ------------------------------------
-# .germ_overlap() used to answer "which trials share germplasm with this accession set?" by
-# reading EVERY candidate trial's accession list and intersecting -- one cache read plus one
-# intersect() per candidate, on every evaluation. Profiled on the server that was 435 s of an
-# 803 s evaluation (54%), the single largest cost in the pipeline.
+# --- local wizards: shared primary maps, locally derived inversions --------
 #
-# The same information inverted -- accession -> the trials containing it -- answers the
-# question by tabulation instead. It is built from `cache/acc`, which is already on local
-# disk, so this costs NO BrAPI calls.
+# Three BrAPI wizard calls answer every "who relates to what" question here:
+#   trial   -> accessions   get_trial_accessions       (cache/acc/acc_<id>.rds)
+#   project -> accessions   get_project_accessions     (cache/proj_acc/proj_acc_<id>.rds)
+#   accessions -> trials / projects
 #
-# Invalidation: the number of files in cache/acc is stored alongside the index, so a trial
-# added since the build forces a rebuild. max_age_days is short as a second line of defence
-# (a file REPLACED rather than added leaves the count unchanged).
-.trial_index <- function(settings, max_age_days = 1) {
-  # BOTH cache layouts, exactly as .cache_existing() reads them: nested cache/acc/acc_<id>.rds
-  # and legacy FLAT cache/acc_<id>.rds. Globbing only the nested one made the index empty on a
-  # server whose cache predates the nested layout -- it reported "covered 0 of 432 candidates"
-  # and every candidate fell back, which looked like the index not helping rather than the
-  # index not existing.
-  fs <- c(list.files(file.path(settings$cache_dir, "acc"),
-                     pattern = "^acc_.*[.]rds$", full.names = TRUE),
-          list.files(settings$cache_dir, pattern = "^acc_.*[.]rds$", full.names = TRUE))
+# The last two are INVERSIONS of the first two, so only the first two are fetched. Both are
+# built by iterating the small side -- 7,645 trials, 110 projects -- and both are stored as
+# one file PER KEY. That shape is deliberate: N workers writing distinct files never contend,
+# whereas a single shared index file would need locking and could lose updates. Any worker's
+# fetch is immediately available to every other worker.
+#
+# The inversions are NOT persisted. They are derived data costing ~1 s to rebuild, and a
+# persisted copy has to be invalidated -- which produced two real bugs (a silently stale
+# schema, and an all.equal timestamp comparison whose relative tolerance made times within
+# ~26 s compare equal). Workers already communicate through the per-key files; the inversion
+# is just a local read of that conversation. So: memoised in RAM, keyed on a cheap signature.
+.index_memo <- new.env(parent = emptyenv())
+
+# Source files for a primary map, honouring BOTH cache layouts exactly as .cache_existing
+# does: nested cache/<cat>/<cat>_<id>.rds and legacy flat cache/<cat>_<id>.rds. Globbing only
+# the nested one once left a server with an older cache reporting zero coverage.
+.index_files <- function(settings, category) {
+  pat <- paste0("^", category, "_.*[.]rds$")
+  fs <- c(list.files(file.path(settings$cache_dir, category), pattern = pat, full.names = TRUE),
+          list.files(settings$cache_dir, pattern = pat, full.names = TRUE))
+  fs[!duplicated(basename(fs))]                   # nested wins, as in .cache_existing
+}
+
+# Invert a primary map to `accession -> keys`, memoised per session. attr(, "keys") records
+# which keys were seen, so a key absent from a later tabulation reads as "zero overlap"
+# rather than "unknown" -- without it the index is all-or-nothing and one unseen key sends
+# every lookup back to the slow path.
+.inverted_index <- function(settings, category) {
+  fs <- .index_files(settings, category)
   if (!length(fs)) return(NULL)
-  # Nested wins on a duplicate id, matching .cache_existing's precedence.
-  fs <- fs[!duplicated(basename(fs))]
+  # Signature: count AND newest mtime. Count alone misses a REPLACED file. Formatted to a
+  # string and compared with identical(), never all.equal().
+  # The memo key includes cache_dir: two settings objects pointing at different caches must
+  # not share an entry, or a coincidental count+mtime match would serve the wrong index.
+  mkey <- paste0(category, "@", settings$cache_dir)
+  sig  <- paste0(length(fs), "|",
+                 format(suppressWarnings(max(file.mtime(fs))), "%Y-%m-%d %H:%M:%OS6"))
+  memo <- .index_memo[[mkey]]
+  if (!is.null(memo) && identical(memo$sig, sig)) return(memo$index)
 
-  # A cached index is usable only if the source files are unchanged. COUNT ALONE IS NOT
-  # ENOUGH: replacing a file (or a flat cache being superseded by a nested one) leaves the
-  # count identical while the contents differ, so the newest mtime goes into the signature
-  # too. One stat pass over a few thousand files is milliseconds.
-  # `ver` is the index's SCHEMA version, separate from the source-file signature. Bump it
-  # whenever the stored structure changes. Without it, an index written by an older build is
-  # served happily because the source files are unchanged -- which is exactly what happened
-  # on the server: a cached index from the previous version had no "trials" attribute, so
-  # every candidate read as unindexed and the whole optimisation silently did nothing.
-  ver <- 2L
-  # The newest mtime is formatted to a STRING and compared with identical(). all.equal() on
-  # POSIXct uses a RELATIVE tolerance -- against ~1.75e9 seconds its default 1.5e-8 makes any
-  # two times within ~26 s compare equal, so a cache rebuilt moments later would look
-  # unchanged. Exact string comparison has no such hole.
-  sig <- list(n = length(fs),
-              newest = format(suppressWarnings(max(file.mtime(fs))), "%Y-%m-%d %H:%M:%OS6"))
-  ok  <- function(v) is.list(v) && length(v$index) > 0 && identical(v$ver, ver) &&
-                     identical(v$sig, sig) && !is.null(attr(v$index, "trials"))
-  hit <- .cache_existing(settings, "trial_index", NULL)
-  if (!is.na(hit)) {
-    age <- as.numeric(difftime(Sys.time(), file.info(hit)$mtime, units = "days"))
-    v <- tryCatch(readRDS(hit), error = function(e) NULL)
-    if (!is.null(v) && age <= max_age_days && ok(v)) return(v$index)
-  }
-
-  # Build: one pass over the accession caches. Trial id comes from the filename, which is
-  # what .cache_stem wrote -- acc_<study_id>.rds.
-  ids <- sub("^acc_", "", sub("[.]rds$", "", basename(fs)))
-  accs <- lapply(fs, function(f) tryCatch(as.character(readRDS(f)), error = function(e) character()))
-  keep <- lengths(accs) > 0
+  ids  <- sub(paste0("^", category, "_"), "", sub("[.]rds$", "", basename(fs)))
+  vals <- lapply(fs, function(f) tryCatch(as.character(readRDS(f)), error = function(e) character()))
+  keep <- lengths(vals) > 0
   if (!any(keep)) return(NULL)
-  flat_acc   <- unlist(accs[keep], use.names = FALSE)
-  flat_trial <- rep(ids[keep], lengths(accs[keep]))
-  index <- split(flat_trial, flat_acc)
-  # An accession listed twice in one trial must not count twice toward that trial's overlap.
-  index <- lapply(index, unique)
-
-  # Which trials the index actually SAW. Needed to tell "this candidate has zero overlap"
-  # (absent from the tabulation, count 0) from "this candidate was never indexed" (must be
-  # measured the old way). Without the distinction the index is unusable: one uncached
-  # candidate would either be silently scored 0, or force every candidate back to the loop.
-  attr(index, "trials") <- ids[keep]
-  .cache_save(settings, "trial_index", NULL, list(index = index, sig = sig, ver = ver))
+  index <- split(rep(ids[keep], lengths(vals[keep])), unlist(vals[keep], use.names = FALSE))
+  index <- lapply(index, unique)      # one key listed twice must not count twice
+  attr(index, "keys") <- ids[keep]
+  assign(mkey, list(sig = sig, index = index), envir = .index_memo)
   index
+}
+
+.trial_index   <- function(settings) .inverted_index(settings, "acc")
+.project_index <- function(settings) .inverted_index(settings, "proj_acc")
+
+# Keys ATTEMPTED but yielding nothing. get_trial_accessions / get_project_accessions
+# deliberately do not cache an empty result (a soft failure must be retried), so a genuinely
+# empty trial or project would otherwise hold coverage below 100% for ever.
+.attempted <- function(settings, category) {
+  p <- .cache_existing(settings, "attempted", category)
+  if (is.na(p)) return(character())
+  tryCatch(as.character(readRDS(p)), error = function(e) character())
+}
+
+.note_attempted <- function(settings, category, ids) {
+  cur <- union(.attempted(settings, category), as.character(ids))
+  .cache_save(settings, "attempted", category, cur)
+  invisible(cur)
+}
+
+# Can this question be answered locally? Only if every key the UNIVERSE can offer is either
+# indexed or known-attempted. Self-healing: a refreshed universe that gains keys drops
+# coverage and the wizard resumes until the pre-warm is re-run -- there is no window in which
+# a local answer is silently incomplete.
+.index_covers <- function(idx, universe, settings, category) {
+  if (is.null(idx) || !length(universe)) return(FALSE)
+  all(universe %in% union(attr(idx, "keys") %||% character(), .attempted(settings, category)))
+}
+
+# Every genotyping project in the crop -- the coverage denominator for the projects index,
+# as trial_catalog is for trials. One unfiltered wizard call; 110 ids on T3/Wheat.
+.all_project_ids <- function(conn, settings) {
+  cached(settings, "all_projects", NULL, max_age_days = 1,
+         valid = function(v) length(v) > 0, expr = {
+    w <- .brapi_try(function() conn$wizard("genotyping_projects", list()),
+                    conn = conn, settings = settings, what = "all genotyping_projects wizard")
+    unique(as.character(w$data$ids))
+  })
+}
+
+# Accessions genotyped in ONE project. The mirror of get_trial_accessions, and the primary
+# map the accession -> projects inversion is built from. The wizard answers this direction
+# directly, which is what makes the projects index cheap: 110 calls rather than one per
+# accession.
+get_project_accessions <- function(project_id, conn, settings) {
+  cached(settings, "proj_acc", as.character(project_id), max_age_days = 30,
+         valid = function(a) length(a) > 0, expr = {
+    w <- .brapi_try(function() conn$wizard("accessions",
+                      list(genotyping_projects = list(as.character(project_id)))),
+                    conn = conn, settings = settings, what = "accessions-by-project wizard")
+    unique(as.character(w$data$names))
+  })
 }
 
 # --- genotyping projects covering a set of accessions ----------------------
@@ -699,16 +737,32 @@ get_trial_accessions <- function(study_id, conn, settings) {
 # NOT be used here.)
 projects_for_accessions <- function(accessions, conn, settings) {
   acc <- unique(as.character(accessions))
-  key <- substr(rlang::hash(sort(acc)), 1, 12)       # identifier: hash of the accession set
-  hit <- .cache_existing(settings, "proj", key)
-  if (!is.na(hit) &&
-      as.numeric(difftime(Sys.time(), file.info(hit)$mtime, units = "days")) <= 30)
-    return(readRDS(hit))
+  if (!length(acc)) return(character())
 
+  # Local answer when the projects index covers every project in the crop. The inversion is
+  # exactly equivalent to the wizard -- verified against it on real accession sets -- and
+  # needs no network at all. The old `proj` cache keyed on a hash of the whole accession SET,
+  # so a training set that changed with any config parameter never hit; this is keyed on
+  # projects, of which there are ~110, so it always hits once built.
+  idx <- tryCatch(.project_index(settings), error = function(e) NULL)
+  if (!identical(settings$local_wizards %||% "auto", "off")) {
+    universe <- tryCatch(.all_project_ids(conn, settings), error = function(e) character())
+    if (.index_covers(idx, universe, settings, "proj_acc")) {
+      .note_geno_once("project_discovery_mode", sprintf(
+        "project discovery: LOCAL (index covers all %d genotyping projects) -- no wizard call",
+        length(universe)))
+      return(unique(unlist(idx[intersect(acc, names(idx))], use.names = FALSE)))
+    }
+  }
+
+  # Fallback: ask the wizard. Reached until prewarm_indices.R has filled the projects map, or
+  # when local_wizards = "off".
+  .note_geno_once("project_discovery_mode",
+                  "project discovery: WIZARD -- run prewarm_indices.R to answer this locally")
   # Cache ONLY a result assembled from wizard calls that all SUCCEEDED: a transient HTTP
-  # 500 swallowed to an empty result and then cached for 30 days hides a trial's genotype
-  # data entirely (LESSONS.md #7). A failed batch sets `failed` -- we return what we have so
-  # the current run proceeds, but do NOT persist it, so the next run retries.
+  # 500 swallowed to an empty result and then cached hides a trial's genotype data entirely
+  # (LESSONS.md #7). A failed batch sets `failed` -- we return what we have so the current
+  # run proceeds, but do NOT persist it, so the next run retries.
   batches <- split(acc, ceiling(seq_along(acc) / 500L))
   failed  <- FALSE
   ids <- unlist(purrr::map(batches, function(b) {
@@ -717,9 +771,7 @@ projects_for_accessions <- function(accessions, conn, settings) {
                   error = function(e) { failed <<- TRUE; NULL })
     if (is.null(w)) character() else as.character(w$data$ids)
   }, .progress = "Genotyping projects for accessions"), use.names = FALSE)
-  ids <- unique(stats::na.omit(ids))
-  if (!failed) .cache_save(settings, "proj", key, ids)
-  ids
+  unique(stats::na.omit(ids))
 }
 
 # --- dosage matrix for one genotyping project ------------------------------

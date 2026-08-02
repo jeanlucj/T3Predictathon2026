@@ -8,7 +8,7 @@
 # (0.7.1 -> 0.7.2) and the middle one for a major one (0.7.x -> 0.8.1). Whenever a bump
 # changes what a configuration COMPUTES, add a matching entry to BUILD_CHANGES
 # (R/optimizer.R) so filter_evals_to_build can retire exactly the rows it invalidated.
-OPTIMIZER_BUILD <- "0.7.7"
+OPTIMIZER_BUILD <- "0.8.1"
 
 # remote_server: when TRUE, permanent files (state / logs / cache backup) go to
 # durable HOME storage instead of the work directory (see the paths section and
@@ -298,6 +298,16 @@ optimizer_settings <- function(local_overrides = TRUE) {
     # that safe: at one observation per trial an rpart split on trial_id fits pure noise to an
     # in-sample R^2 of 0.98. 1 disables revisiting entirely.
     trial_replication = 2,
+    # LOCAL WIZARDS. Two relationship questions -- which trials share germplasm with this
+    # accession set, and which genotyping projects cover it -- are answered from inverted
+    # local maps rather than BrAPI, once those maps cover their universe. Build them with
+    # prewarm_indices.R (~26 min: 110 projects, then the trial catalogue).
+    #   auto  local when coverage is complete, else the wizard. Self-healing: a refreshed
+    #         catalogue or project list that gains entries drops coverage and the wizard
+    #         resumes automatically.
+    #   off   always use the wizard.
+    # The trials wizard this replaces was measured at 440 s of a 795 s evaluation (55%).
+    local_wizards = "auto",
     # Should the surrogate BLOCK on trial_id -- train on (config, trial) rows with trial_id as
     # a factor and marginalise it away when scoring -- rather than on per-config means?
     # Evidence as of 2026-07-31: a properly replicated simulation favours it (+0.059, sd 0.018,
