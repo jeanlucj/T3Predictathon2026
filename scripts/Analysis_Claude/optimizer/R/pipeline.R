@@ -223,9 +223,31 @@ select_training_trials <- function(cfg, trial, conn, settings) {
                     exclude)
     if (!length(cand)) stop("no candidates")
 
-    stats::setNames(purrr::map_int(cand, function(sid) {
-      length(intersect(get_trial_accessions(sid, conn, settings), acc))
-    }, .progress = "Germplasm overlap: candidate trials"), cand)
+    # Overlap counts. The per-candidate loop below reads one accession cache and runs one
+    # intersect() PER CANDIDATE TRIAL -- 435 s of an 803 s evaluation on the server, the
+    # largest single cost in the pipeline. The inverted index answers the same question by
+    # tabulation. It is used only when it covers every candidate; otherwise the loop runs,
+    # so a partial index can never silently shrink the training set.
+    idx <- tryCatch(.trial_index(settings), error = function(e) NULL)
+    counts <- NULL
+    if (!is.null(idx)) {
+      hits <- unlist(idx[intersect(acc, names(idx))], use.names = FALSE)
+      if (length(hits)) {
+        tb <- table(hits)
+        v  <- as.integer(tb); names(v) <- names(tb)
+        # Candidates the index does not know about (trial evaluated before its accession
+        # cache existed) must fall back, or their overlap silently reads as zero.
+        if (all(cand %in% names(v))) {
+          counts <- v[cand]                       # exactly the candidates, in order
+          names(counts) <- cand
+        }
+      }
+    }
+    if (is.null(counts))
+      counts <- stats::setNames(purrr::map_int(cand, function(sid) {
+        length(intersect(get_trial_accessions(sid, conn, settings), acc))
+      }, .progress = "Germplasm overlap: candidate trials"), cand)
+    counts
   }, error = function(e) integer())
 
   # Memoize only real answers: caching an empty result would let one transient network
@@ -524,11 +546,24 @@ choose_geno_sources <- function(cfg, train_acc, test_acc, conn, settings) {
 # gets its own id but (near-)identical markers. Two projects join the same group when
 # they share >= settings$merge_containment of the smaller panel; grouping is
 # transitive (single-linkage).
+# Memo for .group_by_panel, per session and in RAM (like .overlap_memo). The grouping is a
+# property of the PANELS, not of the configuration, so it was being recomputed identically for
+# every evaluation touching the same projects -- 108 s of an 803 s evaluation on the server.
+.panel_group_memo <- new.env(parent = emptyenv())
+
 .group_by_panel <- function(dl, settings) {
   ids <- names(dl)
   if (length(ids) <= 1) return(as.list(ids))
   mk  <- lapply(dl, colnames)
   thr <- settings$merge_containment %||% 0.95
+
+  # Key on the project ids AND their marker counts: the same project served at a different
+  # marker density (.dosage_thin_plan) is a different panel and can group differently, so ids
+  # alone would be an unsound key. Counts are O(1) to read and pin the density.
+  o   <- order(ids)
+  key <- rlang::hash(list(ids[o], vapply(mk[o], length, integer(1)), thr))
+  hit <- .panel_group_memo[[key]]
+  if (!is.null(hit)) return(hit)
 
   grp <- seq_along(ids)                                   # union-find by relabelling
   for (i in seq_along(ids)) for (j in seq_len(i - 1)) {
@@ -537,7 +572,9 @@ choose_geno_sources <- function(cfg, train_acc, test_acc, conn, settings) {
       grp[grp == grp[i]] <- grp[j]
     }
   }
-  unname(split(ids, grp))
+  out <- unname(split(ids, grp))
+  assign(key, out, envir = .panel_group_memo)
+  out
 }
 
 # Drop redundant projects WITHIN a protocol group -- the same lines re-called on the

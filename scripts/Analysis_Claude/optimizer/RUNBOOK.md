@@ -76,7 +76,78 @@ Without it the first command occupies the terminal and the rest never run.
 - [ ] **Packages installed** — this takes a while on a fresh machine. Includes the two
       non-CRAN ones: `BrAPI.R` and `T3BrapiHelpers`. Confirm with
       `Rscript -e 'ip <- installed.packages(); which(ip[,1] == "BrAPI")'`.
-      
+
+### Are R's linear-algebra threads actually being used? (BioHPC)
+
+- [ ] **Measure it, do not infer it:**
+      ```bash
+      Rscript blas_check.R
+      ```
+      It prints the BLAS R is linked against, the thread environment, and then times a
+      compute-bound matrix multiply, reporting **"cores busy"** = user CPU / elapsed. ~1.0 is
+      single-threaded; ~N means N threads.
+
+If it reports single-threaded, there are four causes. **Measured on the BioHPC server
+2026-08-01, the answer was #1** — and the diagnostic output looked healthy right up to the
+timing line.
+
+1. **R is linked against a SERIAL OpenBLAS build.** The BLAS path says `openblas`, so it
+   looks right, but the library has no threading code and **no environment variable can
+   change that** — `OPENBLAS_NUM_THREADS=8` and `OMP_NUM_THREADS=8` gave 10.30 s and 10.33 s
+   against 10.25 s unset, all at 1.0 cores on a 64-core machine. RHEL ships three builds side
+   by side; `ls -la /usr/lib64/libopenblas*` shows them:
+
+   | library | threading |
+   |---|---|
+   | `libopenblas-r*.so` | **serial** — R links here by default |
+   | `libopenblasp-r*.so` | pthread → honours `OPENBLAS_NUM_THREADS` |
+   | `libopenblaso-r*.so` | OpenMP → honours `OMP_NUM_THREADS` |
+
+   Switch without root:
+   ```bash
+   LD_PRELOAD=/usr/lib64/libopenblasp.so.0 OPENBLAS_NUM_THREADS=8 Rscript blas_check.R
+   ```
+
+2. **Reference BLAS** — a path containing `libRblas`. The *other* single-threaded case, and it
+   looks different in the diagnostic. On BioHPC, R builds from 4.4.3 onward are compiled with
+   OpenBLAS; 4.0.5–4.4.2 are not, and the unmodified default is 4.2.3. `module load R/4.6.1`
+   puts you past this. Note that **switching R version means reinstalling your packages** —
+   they live in `$HOME/R` under a per-version path.
+
+3. **`run_workers.sh` capping it — on purpose.** Its second argument is BLAS threads per
+   worker and **defaults to 2**. `./run_workers.sh 8` therefore uses 8 × 2 = 16 cores and
+   leaves the rest idle by design. Since this workload is memory-limited, spend the surplus on
+   threads: `./run_workers.sh 6 8`. Keep `workers × threads` at or under the core count.
+   **Caveat**: the launcher exports `OPENBLAS_NUM_THREADS`, which a *serial* build (#1) ignores
+   entirely — it is not a safety net.
+
+4. **There is very little linear algebra to thread.** See below.
+
+> **Temper expectations — this pipeline is not BLAS-bound.** Benchmarked at realistic sizes:
+> the VanRaden GEMM (`tcrossprod`, 500 accessions x 130k markers) **0.13 s**;
+> `rrBLUP::mixed.solve` on 600 accessions **0.11 s**; whole-population marker QC **~0.5 s**;
+> a 130k-marker VCF parse **~9 s**; and the largest single item, `eigen()` on 3000x3000,
+> **25 s**. That is well under a minute against a **median evaluation of 29 minutes**, so
+> upwards of 95% of the wall time is elsewhere — almost certainly VCF downloads and BrAPI
+> calls, which no BLAS setting touches. The pipeline's products are also tall-and-thin and
+> memory-bandwidth-bound rather than FLOP-bound, so they thread poorly even when threads are
+> available.
+>
+> Fixing the thread cap is worth doing for correctness, but **it will not convert spare cores
+> into throughput**. A profiled real evaluation on the server (`profile_evaluation.R`, trial
+> 10938, 803 s) put **`build_kernel` at 6.4 s — 0.8% of the run**, against `.find_related` at
+> 54% and `.group_by_panel` at 13%, with CPU/wall = 0.98: serial R computation, not waiting
+> and not linear algebra. One busy core per worker is what that looks like in `top`, and it is
+> correct behaviour, not a broken BLAS.
+
+- [ ] **Find where the time actually goes** before optimising anything:
+      ```bash
+      Rscript profile_evaluation.R --trial=<id>
+      ```
+      It runs one real evaluation with per-subtask timing and reports the split plus CPU/wall.
+      Attack the stage it names — on the run above that was `choose_geno_sources`, not
+      anything BLAS touches.
+
 ## 2. Settings
 
 Put these in **`settings.local.R`** (untracked, gitignored), never in the tracked

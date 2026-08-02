@@ -930,6 +930,25 @@ check(any(vapply(g, function(x) setequal(x, c("v1", "v2")), logical(1))),
       "100% marker containment -> same protocol group")
 check(any(vapply(g, function(x) identical(x, "other"), logical(1))),
       "40% marker containment -> its own group")
+# Oracle: the grouping is a property of the PANELS, not the config, so it is memoized -- but
+# the key must include marker COUNTS, since the same project served at a different density
+# (.dosage_thin_plan) is a different panel and can group differently.
+local({
+  g1 <- .group_by_panel(list(v1 = v1, v2 = v2, other = other), gset)
+  g2 <- .group_by_panel(list(v1 = v1, v2 = v2, other = other), gset)
+  check(identical(g1, g2), ".group_by_panel is stable across calls (memo returns the same grouping)")
+  # Same ids, a DIFFERENT marker set on v2 -- 60 markers of which only 20 are in v1, so
+  # containment fails (20 < 0.95*60) and v1/v2 must now separate. If the memo keyed on ids
+  # alone it would wrongly return the earlier "v1+v2 together" grouping.
+  v2alt <- v2[, c(1:20, 101:140), drop = FALSE]
+  g3 <- .group_by_panel(list(v1 = v1, v2 = v2alt, other = other), gset)
+  check(length(g3) == 3,
+        "a differently-thinned panel is re-evaluated, not served from the memo")
+  # Same panels, looser threshold -> everything merges. Must miss the memo keyed at 0.95.
+  loose <- modifyList(gset, list(merge_containment = 0.30))
+  g4 <- .group_by_panel(list(v1 = v1, v2 = v2alt, other = other), loose)
+  check(length(g4) == 1, "changing merge_containment misses the memo and regroups")
+})
 
 # Oracle: identical accession sets -> keep the richer marker build (the v1/v2 case).
 pr <- .prune_redundant(list(v1 = v1, v2 = v2), gset)
@@ -1367,6 +1386,58 @@ check(nrow(filter_evals_to_build(bev[0, ], "0.7.1", ch)) == 0,
 bev2 <- tibble::tibble(config_json = bev$config_json[1], build = "0.7.2")
 check(nrow(filter_evals_to_build(bev2, "0.7.2", ch)) == 1,
       "a row from a later build is not retired by an earlier build's rule")
+
+# ===========================================================================
+cat(".trial_index (inverted accession -> trials lookup)\n")
+# .germ_overlap decides which trials become the TRAINING SET, so an index that is fast but
+# subtly different silently changes every score and would read as a modelling result rather
+# than a bug. These oracles demand exact equivalence, not agreement.
+local({
+  cdir <- tempfile("cache_"); dir.create(file.path(cdir, "acc"), recursive = TRUE)
+  st <- list(cache_dir = cdir)
+  put <- function(id, acc) saveRDS(acc, file.path(cdir, "acc", paste0("acc_", id, ".rds")))
+  put("t1", c("a", "b", "c"))
+  put("t2", c("b", "c", "d"))
+  put("t3", c("z"))
+  idx <- .trial_index(st)
+  check(setequal(names(idx), c("a","b","c","d","z")), ".trial_index keys on every accession")
+  check(setequal(idx[["b"]], c("t1","t2")), "an accession maps to every trial containing it")
+  check(identical(idx[["z"]], "t3"), "a single-trial accession maps to just that trial")
+  check(is.null(.trial_index(list(cache_dir = tempfile()))),
+        ".trial_index returns NULL when there are no accession caches")
+
+  # An accession repeated within one trial must not double-count that trial's overlap.
+  put("t4", c("q", "q", "r"))
+  idx <- .trial_index(st)
+  check(identical(idx[["q"]], "t4"), "a duplicated accession yields the trial once, not twice")
+
+  # Adding a trial must invalidate the cached index rather than serve a stale one.
+  put("t5", c("a", "new"))
+  idx2 <- .trial_index(st)
+  check("new" %in% names(idx2) && setequal(idx2[["a"]], c("t1","t5")),
+        "a new accession cache file forces a rebuild")
+
+  # THE ORACLE THAT LICENSES THE CHANGE: tabulation == the per-candidate intersect loop.
+  set.seed(77)
+  ids <- paste0("s", 1:60)
+  pool <- paste0("g", 1:200)
+  for (i in ids) put(i, sample(pool, sample(10:60, 1)))
+  idx3 <- .trial_index(st)
+  bad <- 0L
+  for (rep in 1:10) {
+    acc  <- sample(pool, 40)
+    cand <- sample(ids, 25)
+    loop <- vapply(cand, function(sid)
+      length(intersect(as.character(readRDS(file.path(cdir,"acc",paste0("acc_",sid,".rds")))), acc)),
+      integer(1))
+    hits <- unlist(idx3[intersect(acc, names(idx3))], use.names = FALSE)
+    tb <- table(hits); v <- as.integer(tb); names(v) <- names(tb)
+    fromidx <- ifelse(cand %in% names(v), v[cand], 0L); fromidx[is.na(fromidx)] <- 0L
+    if (!identical(as.integer(loop), as.integer(fromidx))) bad <- bad + 1L
+  }
+  check(bad == 0L, "index tabulation EQUALS the per-candidate intersect loop, element for element")
+  unlink(cdir, recursive = TRUE)
+})
 
 # ===========================================================================
 cat("choose_trial (trial_replication) + trial_id as a surrogate feature\n")

@@ -617,6 +617,49 @@ get_trial_accessions <- function(study_id, conn, settings) {
   })
 }
 
+# --- inverted accession -> trials index ------------------------------------
+# .germ_overlap() used to answer "which trials share germplasm with this accession set?" by
+# reading EVERY candidate trial's accession list and intersecting -- one cache read plus one
+# intersect() per candidate, on every evaluation. Profiled on the server that was 435 s of an
+# 803 s evaluation (54%), the single largest cost in the pipeline.
+#
+# The same information inverted -- accession -> the trials containing it -- answers the
+# question by tabulation instead. It is built from `cache/acc`, which is already on local
+# disk, so this costs NO BrAPI calls.
+#
+# Invalidation: the number of files in cache/acc is stored alongside the index, so a trial
+# added since the build forces a rebuild. max_age_days is short as a second line of defence
+# (a file REPLACED rather than added leaves the count unchanged).
+.trial_index <- function(settings, max_age_days = 1) {
+  dir <- file.path(settings$cache_dir, "acc")
+  fs  <- list.files(dir, pattern = "^acc_.*[.]rds$", full.names = TRUE)
+  if (!length(fs)) return(NULL)
+
+  # A cached index is usable only if it was built over the same number of accession files.
+  ok <- function(v) is.list(v) && length(v$index) > 0 && identical(v$n_files, length(fs))
+  hit <- .cache_existing(settings, "trial_index", NULL)
+  if (!is.na(hit)) {
+    age <- as.numeric(difftime(Sys.time(), file.info(hit)$mtime, units = "days"))
+    v <- tryCatch(readRDS(hit), error = function(e) NULL)
+    if (!is.null(v) && age <= max_age_days && ok(v)) return(v$index)
+  }
+
+  # Build: one pass over the accession caches. Trial id comes from the filename, which is
+  # what .cache_stem wrote -- acc_<study_id>.rds.
+  ids <- sub("^acc_", "", sub("[.]rds$", "", basename(fs)))
+  accs <- lapply(fs, function(f) tryCatch(as.character(readRDS(f)), error = function(e) character()))
+  keep <- lengths(accs) > 0
+  if (!any(keep)) return(NULL)
+  flat_acc   <- unlist(accs[keep], use.names = FALSE)
+  flat_trial <- rep(ids[keep], lengths(accs[keep]))
+  index <- split(flat_trial, flat_acc)
+  # An accession listed twice in one trial must not count twice toward that trial's overlap.
+  index <- lapply(index, unique)
+
+  .cache_save(settings, "trial_index", NULL, list(index = index, n_files = length(fs)))
+  index
+}
+
 # --- genotyping projects covering a set of accessions ----------------------
 # Returns downloadable genotyping_project_ids -- the id space conn$vcf_archived()
 # accepts. NOTE: a genotyping PROJECT id is NOT a genotyping PROTOCOL id; the two
