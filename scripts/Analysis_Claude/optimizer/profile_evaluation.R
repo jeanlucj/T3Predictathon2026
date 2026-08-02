@@ -83,7 +83,14 @@ TOP <- c("select_training_trials", "get_observations", "build_targets",
 # 17% to the inner functions then wrapped -- these close that gap.
 INNER <- c("projects_for_accessions", "get_project_dosage", ".dosage_thin_plan",
            ".group_by_panel", ".prune_redundant", ".merge_markers",
-           ".find_related", ".trial_similarity", ".qc_markers", ".vanraden")
+           ".find_related", ".trial_similarity", ".qc_markers", ".vanraden",
+           # Inside .find_related. Two hypotheses about where its 435 s went -- the projects
+           # wizard, then the overlap loop -- were both wrong, so instrument every piece
+           # rather than guess again. .germ_overlap is the whole body; the rest partition it.
+           ".germ_overlap", ".trial_index", "trial_catalog", "get_trial_accessions",
+           # Every BrAPI call goes through .brapi_try, so its total separates "talking to T3"
+           # from local compute. It spans ALL stages, so it will overlap the others.
+           ".brapi_try")
 for (f in c(TOP, INNER)) wrap(f)
 
 # --- run one evaluation -----------------------------------------------------
