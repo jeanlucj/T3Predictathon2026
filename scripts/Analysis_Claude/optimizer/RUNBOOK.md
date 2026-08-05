@@ -361,3 +361,88 @@ source ./optimizer_paths.sh && touch "$STOP_FILE"   # clean stop; workers finish
 | Workers all evaluate the same configuration | Pre-0.7.4 code; `git pull`. |
 
 For SciNet specifically — partitions, accounts, containers, storage — see `USDA_ARS_SCINET.md`.
+
+---
+
+## 8. Diagnostics and analysis
+
+Six standalone scripts, all run from this directory. **All are read-only against the store
+except `prewarm_indices.R`**, which writes cache files. The read-only ones copy the database
+*and* its `-wal`/`-shm` sidecars before reading, so they are safe to run against a live store
+while workers are going.
+
+| script | question it answers |
+|---|---|
+| `profile_evaluation.R` | where does an evaluation's time actually go? |
+| `surrogate_bakeoff.R` | which surrogate design predicts held-out configurations best, and does it improve as evaluations accumulate? |
+| `peek_failures.R` | why did the non-`ok` evaluations fail? |
+| `peek_config.R` | what configuration did a given eval run? |
+| `prewarm_indices.R` | fill the local wizards so the pipeline needs no BrAPI call |
+| `blas_check.R` | is R's linear algebra actually threaded? |
+
+### Where the time goes
+
+```bash
+Rscript profile_evaluation.R --trial=<id>          # one real evaluation, per-subtask timing
+```
+
+Reports the six subtasks plus the expensive internals, and **CPU/wall** — which separates
+"waiting on the network" from "compute-bound on one core". Pick a trial with several stored
+evaluations so the cache is warm; otherwise you are timing downloads. `--kernel=em_combine`
+profiles the heavy kernel instead of the default.
+
+### Which surrogate is best
+
+```bash
+Rscript surrogate_bakeoff.R                        # full comparison + learning curve
+Rscript surrogate_bakeoff.R --no-curve --reps=12   # just the full-store table, tighter bars
+Rscript surrogate_bakeoff.R --curve-reps=4 --n-grid=4    # faster curve
+```
+
+Three arms — `pooled` (config means, no trial), `blocked` (`trial_id` in the forest,
+marginalised), `merf` (trial as a random effect outside the tree). Repeated cross-validation
+over configurations, so every number carries an error bar, and the footer states **the
+smallest difference the current store can resolve**. A gap smaller than that is not evidence
+of no effect; it is too little data. That line exists because a single 5-fold split once
+suggested an improvement that twelve splits showed was zero.
+
+The learning curve re-runs the comparison on the first *n* evaluations by timestamp and writes
+`logs/surrogate_bakeoff.tsv` (tidy, so the figure can be redrawn) and
+`logs/surrogate_bakeoff.png`.
+
+> **Read the curve carefully.** Rows are in time order, so it mixes *more data* with
+> *differently distributed data*: early evaluations are seeds and random draws, later ones are
+> acquisition picks concentrated in one region. A falling segment can mean the search narrowed,
+> not that the surrogate got worse. The script prints this above the table.
+
+### Why evaluations failed
+
+```bash
+Rscript peek_failures.R                            # every non-ok eval, with its funnel unpacked
+Rscript peek_config.R --ids=4,23                   # the configurations those evals ran
+```
+
+`peek_failures.R` reads the funnel stored in `detail` and prints a verdict per row — whether
+the kernel covered training lines but no focal lines, covered neither, or was merely thin.
+Rows whose status comes from scoring carry a reason string instead of a funnel; those are
+printed separately, because the reason *is* the explanation.
+
+### Fill the local wizards
+
+```bash
+nohup Rscript prewarm_indices.R > logs/prewarm.out 2>&1 &
+```
+
+Fetches `project -> accessions` (110 projects, ~1 min) and `trial -> accessions` (the
+catalogue, ~25 min) so candidate discovery needs no BrAPI call. Resumable, rate-limited, and
+safe to run beside working workers — every fetch is cached independently and workers
+contribute to the same files. Finish when both lines read `covers universe: TRUE`.
+
+### Is BLAS threaded
+
+```bash
+Rscript blas_check.R
+```
+
+See §1 — and note the answer barely matters for throughput here: `build_kernel` was 0.8% of a
+profiled evaluation.
