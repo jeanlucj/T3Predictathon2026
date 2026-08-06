@@ -1,0 +1,143 @@
+Bootstrap: docker
+From: rocker/r-ver:4.5.3
+
+# Apptainer image for the T3 pipeline optimizer.
+#
+# R is pinned to 4.5.3 to MATCH SciNet's r/4.5.3 module, so the container route and the
+# module fallback run the same R and switching between them cannot itself move a result.
+#
+# Build on a Linux host -- there is no native macOS build. See container/build.sh.
+#
+# The optimizer's own code is NOT baked in: it is bind-mounted at run time so `git pull`
+# keeps working without a rebuild. Only R and the packages are frozen here.
+
+%labels
+    Optimizer.Build       0.8.2
+    R.Version             4.5.3
+    CRAN.Snapshot         2026-08-01
+    T3BrapiHelpers.Sha    6c756462b5a315a992bdd7a26585d912a5452013
+    BrAPI.Sha             51d8d450d8ec4f9fc13248165b6382f4a24030b0
+
+%post
+    # Steps are separate statements with an explicit `|| exit`, never `cmd1 && cmd2`.
+    # POSIX exempts every command of an AND-OR list except the last from errexit, and a
+    # short-circuited `A && B` returns status 0 -- so under `set -e` a failing A is silently
+    # stepped over and the build carries on to produce a half-populated image. That is a
+    # property of the shell, not a bug in set -e.
+    set -eux
+
+    # libcurl/openssl/xml2 are httr's and xml2's build deps; libgit2 is remotes';
+    # cmake is needed by a few Rcpp-heavy packages.
+    #
+    # rsync IS REQUIRED, and is not a build dep -- it is a RUNTIME dependency.
+    # sync_cache_to_backup() shells out to it (R/data_access.R) and its absence is silent:
+    # the code prints "rsync not on PATH -- skipping" and proceeds with no cache backup.
+    apt-get update || exit 1
+    apt-get install -y --no-install-recommends \
+        libcurl4-openssl-dev libssl-dev libxml2-dev libgit2-dev \
+        cmake git rsync ca-certificates || exit 1
+    rm -rf /var/lib/apt/lists/*
+
+    # CRAN pinned to a dated Posit Package Manager snapshot: without this, "rebuild the
+    # image" quietly means "get whatever CRAN holds today" and the image stops being a pin.
+    # Bump the date deliberately, and change CRAN.Snapshot above to match.
+    #
+    # Use PPM's __linux__/<codename> path, which serves PRECOMPILED binaries for this
+    # distribution. The bare .../cran/<date> URL is source-only: it works, but it makes
+    # every package compile and turns a ~15 minute build into an hour or more. The codename
+    # is read from the image rather than hardcoded, so bumping the rocker base tag to a new
+    # Ubuntu release does not silently drop back to source builds.
+    CODENAME="$(. /etc/os-release && echo "$VERSION_CODENAME")"
+    SNAPSHOT=2026-08-01
+    cat > /usr/local/lib/R/etc/Rprofile.site <<EOF
+options(repos = c(CRAN = "https://packagemanager.posit.co/cran/__linux__/${CODENAME}/${SNAPSHOT}"),
+        HTTPUserAgent = sprintf("R/%s R (%s)", getRversion(),
+                                paste(getRversion(), R.version["platform"],
+                                      R.version["arch"], R.version["os"])),
+        Ncpus = max(1L, parallel::detectCores()))
+EOF
+    # PPM serves binaries only when the User-Agent identifies the platform -- without the
+    # HTTPUserAgent option above it silently falls back to source. Confirm the repo took.
+    Rscript -e 'cat("repo:", getOption("repos")[["CRAN"]], "\n")'
+
+    # R code goes through a HEREDOC, never `Rscript -e` with backslash continuations: inside
+    # single quotes a backslash is literal, so R receives "c( \" and dies on a parse error.
+    #
+    # The list is what the code ACTUALLY calls -- derived by grepping every pkg:: and
+    # library() across R/, *.R and tests/. Two packages named in older notes (vcfR,
+    # AGHmatrix) are deliberately absent: they appear only in stale comments, never in code.
+    #
+    # dependencies is left at its default (Depends, Imports, LinkingTo). dependencies = TRUE
+    # would drag in every Suggests of every tidyverse package -- hundreds, most of them
+    # irrelevant, and a large multiple of the build time.
+    Rscript - <<'EOF' || { echo "CRAN INSTALL FAILED"; exit 1; }
+pkgs <- c("tidyverse", "here", "DBI", "RSQLite", "jsonlite", "rlang", "Matrix",
+          "lme4", "rrBLUP", "sommer", "rpart", "MASS", "janitor", "httr",
+          "RhpcBLASctl", "remotes")
+install.packages(pkgs)
+missing <- setdiff(pkgs, rownames(installed.packages()))
+if (length(missing)) {
+  cat("FAILED to install:", paste(missing, collapse = ", "), "\n")
+  quit(status = 1)
+}
+cat("all", length(pkgs), "CRAN packages installed\n")
+EOF
+
+    # Both GitHub packages pinned to a COMMIT, not a branch. R/data_access.R reaches a
+    # private function via getFromNamespace("make_row_from_trial_result", "T3BrapiHelpers"),
+    # and an internal carries no API contract -- a branch install can rename it away and the
+    # failure only surfaces hours into a run, inside a catalogue fetch.
+    # T3BrapiHelpers declares Remotes: github::TriticeaeToolbox/BrAPI.R, so BrAPI is
+    # installed first and explicitly to keep ITS version pinned too.
+    Rscript - <<'EOF' || { echo "GITHUB INSTALL FAILED"; exit 1; }
+remotes::install_github("TriticeaeToolbox/BrAPI.R@51d8d450d8ec4f9fc13248165b6382f4a24030b0",
+                        upgrade = "never")
+remotes::install_github("jeanlucj/T3BrapiHelpers@6c756462b5a315a992bdd7a26585d912a5452013",
+                        upgrade = "never")
+missing <- setdiff(c("BrAPI", "T3BrapiHelpers"), rownames(installed.packages()))
+if (length(missing)) {
+  cat("FAILED to install:", paste(missing, collapse = ", "), "\n")
+  quit(status = 1)
+}
+EOF
+
+%environment
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
+
+%test
+    set -eu
+    Rscript -e '
+      stopifnot(identical(paste(R.version$major, R.version$minor, sep = "."), "4.5.3"))
+      for (p in c("tidyverse","here","DBI","RSQLite","lme4","rrBLUP","sommer","rpart",
+                  "MASS","janitor","httr","RhpcBLASctl","jsonlite","Matrix",
+                  "BrAPI","T3BrapiHelpers"))
+        suppressMessages(library(p, character.only = TRUE))
+      # The private function the optimizer reaches for. Assert it HERE so a bad pin fails
+      # at build time rather than hours into a run.
+      stopifnot(exists("make_row_from_trial_result", asNamespace("T3BrapiHelpers")))
+      for (f in c("get_all_trial_meta_data", "covariance_combiner",
+                  "get_lat_long_elev_from_location_vec"))
+        stopifnot(exists(f, asNamespace("T3BrapiHelpers")))
+      # Runtime binary, silent if missing.
+      stopifnot(nzchar(Sys.which("rsync")))
+      cat("container OK:", R.version.string, "\n")
+    '
+
+%runscript
+    # Default action: report what this image is, so `apptainer run optimizer.sif` is useful.
+    exec Rscript -e 'cat(R.version.string, "\n"); cat("T3BrapiHelpers",
+        as.character(packageVersion("T3BrapiHelpers")), "| BrAPI",
+        as.character(packageVersion("BrAPI")), "\n")'
+
+%help
+    T3 pipeline optimizer runtime: R 4.5.3 plus pinned packages.
+
+    The optimizer code is NOT in this image -- bind it at run time:
+
+      apptainer exec --bind /path/to/optimizer:/opt/optimizer \
+                     --bind $OPTIMIZER_HOME:$OPTIMIZER_HOME \
+                     optimizer.sif bash -c 'cd /opt/optimizer && ./run_workers.sh 8 2'
+
+    The cd is load-bearing: R reads .Renviron (T3 credentials) from the working
+    directory only. See container/run_in_container.sh.
