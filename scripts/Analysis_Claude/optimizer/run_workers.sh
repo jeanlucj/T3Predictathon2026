@@ -24,8 +24,8 @@
 #    workers x N cores oversubscribe the machine and everything slows down together. The
 #    product (workers x threads) should be at most the core count.
 #  * WORKER IDENTITY. OPTIMIZER_WORKER tells settings.R which worker this is. Worker 1 is
-#    the "leader" and is the only one that rsyncs the cache and backs up
-#    the store -- see settings$is_leader.
+#    the "leader" and is the only one that rsyncs the cache -- see settings$is_leader.
+#    The STORE backup is every worker, deliberately (LESSONS #25).
 #
 # PREREQUISITE: db_path must be on LOCAL disk. SQLite's WAL mode, which is what makes
 # concurrent writers safe, cannot work on NFS. open_store warns if the pragma did not take;

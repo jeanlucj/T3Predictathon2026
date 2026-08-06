@@ -20,3 +20,12 @@ OPTIMIZER_HOME=/home/directory/t3_optimizer
 # Optional: force remote mode on/off regardless of OPTIMIZER_HOME (true/false/yes/no/1/0).
 # Rarely needed -- the OPTIMIZER_HOME auto-detect above is usually enough.
 # OPTIMIZER_REMOTE=true
+
+# Optional: personal R library, for clusters where you install packages yourself rather than
+# using a container. R reads exactly ONE .Renviron -- the working directory's if it exists,
+# otherwise $HOME's -- and it does not merge them. Since this project always runs from the
+# optimizer directory, a ~/.Renviron holding R_LIBS_USER would NEVER BE READ and packages
+# would land in the default library (on a cluster, inside a small home quota). So it belongs
+# here, next to the credentials. %v expands to the R version.
+# Confirm with: Rscript -e '.libPaths()'   -- your path must come first.
+# R_LIBS_USER=/project/<account>/R_packages/%v

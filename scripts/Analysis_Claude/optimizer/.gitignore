@@ -15,3 +15,6 @@ EM_COMBINE_COMPARISON.md
 CODE_ASSESSMENT.md
 NEXT_STEPS.md
 USDA_ARS_SCINET.md
+# Cluster packaging: specific to one person's SciNet/BioHPC accounts, not to the algorithm.
+# NOTE: being ignored, `git pull` does NOT deliver these to a build host -- scp the folder.
+container/
