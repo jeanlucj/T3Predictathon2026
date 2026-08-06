@@ -33,9 +33,13 @@ REPO="${REPO:-/project/CHANGEME/T3Predictathon2026/scripts/Analysis_Claude/optim
 SIF="${SIF:-$OPTIMIZER_HOME/optimizer.sif}"
 
 # The live store goes on node-local disk. SQLite's WAL coordinates through an mmap'd -shm
-# file that network filesystems do not provide; settings.local.R is where db_path is
-# pointed at $TMPDIR, and backup_store() VACUUM INTOs to project storage from there.
-: "${TMPDIR:?TMPDIR is unset -- the store MUST be on node-local disk, not /project}"
+# file that network filesystems do not provide; settings.local.R points db_path at $TMPDIR,
+# and backup_store() VACUUM INTOs to project storage from there.
+#
+# On Ceres SLURM sets TMPDIR to /local/bgfs/<jobid> -- 1.5 TB of node-local SSD, erased when
+# the job exits. Unset means we are not inside a job, and proceeding would put the store on a
+# network filesystem shared by every worker: the one configuration that corrupts it.
+: "${TMPDIR:?TMPDIR is unset -- not inside a SLURM job? The store MUST be on node-local disk}"
 
 # Workers x threads <= ntasks. Memory, not cores, is the binding constraint: raise the
 # worker count only after report_memory.R confirms headroom.
@@ -43,6 +47,23 @@ N_WORKERS="${N_WORKERS:-22}"
 N_THREADS="${N_THREADS:-1}"
 
 mkdir -p "$OPTIMIZER_HOME/state" "$OPTIMIZER_HOME/logs" logs
+
+# ---- restore the store into node-local scratch ---------------------------
+# $TMPDIR is empty at job start and erased at job end, and the optimizer does NOT restore the
+# store by itself -- restore_cache_from_backup() covers the cache, but there is no equivalent
+# for evals.sqlite. Without this copy every chained job would start from an empty store and
+# re-run work already paid for.
+BACKUP="$OPTIMIZER_HOME/state/evals_backup.sqlite"
+STORE="$TMPDIR/evals.sqlite"
+if [ -f "$BACKUP" ]; then
+  cp "$BACKUP" "$STORE"
+  # VACUUM INTO emits a self-contained file with no -wal sidecar, so the copy is complete as
+  # it stands. Report what came back, so a silently-empty restore cannot pass unnoticed.
+  echo "restored $(sqlite3 "$STORE" 'SELECT COUNT(*) FROM evals;' 2>/dev/null || echo '?') rows from $BACKUP"
+else
+  echo "no backup at $BACKUP -- starting from an EMPTY store"
+  echo "  (expected only on the very first job; check this if you meant to resume)"
+fi
 
 echo "node      : $(hostname)"
 echo "TMPDIR    : $TMPDIR"

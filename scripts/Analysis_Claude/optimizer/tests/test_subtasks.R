@@ -1526,6 +1526,12 @@ local({
   # Both layouts at once: the nested copy wins, as in .cache_existing.
   dir.create(file.path(fdir, "acc"))
   saveRDS(c("p", "NESTED"), file.path(fdir, "acc", "acc_f1.rds"))
+  # Force every mtime equal before re-reading. Dedup by basename already leaves the file
+  # COUNT unchanged, so this makes the memo signature's other component useless too -- which
+  # is what a filesystem with coarse timestamp granularity does for free. This test passed on
+  # APFS by luck and failed on SciNet; pinning the mtimes makes it deterministic everywhere.
+  stamp <- as.POSIXct("2026-08-06 12:00:00", tz = "UTC")
+  for (f in list.files(fdir, recursive = TRUE, full.names = TRUE)) Sys.setFileTime(f, stamp)
   bidx <- .trial_index(list(cache_dir = fdir))
   check("NESTED" %in% names(bidx) && setequal(bidx[["p"]], c("f1")),
         "with both layouts present the nested file takes precedence")

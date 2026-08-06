@@ -659,8 +659,15 @@ get_trial_accessions <- function(study_id, conn, settings) {
   # The memo key includes cache_dir: two settings objects pointing at different caches must
   # not share an entry, or a coincidental count+mtime match would serve the wrong index.
   mkey <- paste0(category, "@", settings$cache_dir)
-  sig  <- paste0(length(fs), "|",
-                 format(suppressWarnings(max(file.mtime(fs))), "%Y-%m-%d %H:%M:%OS6"))
+  # Signature over the full PATHS plus each file's size and mtime. Count-and-newest-mtime is
+  # not enough: .index_files dedups by basename, so a flat cache file replaced by its nested
+  # twin leaves the count unchanged, and on a filesystem with coarse timestamp granularity
+  # (or two writes inside one second) the newest mtime is unchanged too -- the memo then
+  # serves a stale index for the rest of the session. The paths differ even when neither of
+  # those does. Formatted to strings and compared with identical(), never all.equal().
+  inf  <- file.info(fs)
+  sig  <- rlang::hash(list(fs, inf$size,
+                           format(inf$mtime, "%Y-%m-%d %H:%M:%OS6")))
   memo <- .index_memo[[mkey]]
   if (!is.null(memo) && identical(memo$sig, sig)) return(memo$index)
 
