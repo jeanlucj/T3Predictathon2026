@@ -151,6 +151,29 @@ backup_store <- function(con, dest) {
   invisible(isTRUE(ok))
 }
 
+# Age of the backup in minutes; Inf when there is none, or when no backup is configured.
+# The throttle keys on this rather than on a per-process timestamp so that every worker shares
+# one interval -- see should_backup_now(). Also what the report reads to say whether backups
+# are actually happening.
+backup_age_minutes <- function(dest) {
+  if (is.null(dest) || !nzchar(dest) || !file.exists(dest)) return(Inf)
+  as.numeric(difftime(Sys.time(), file.mtime(dest), units = "mins"))
+}
+
+# Is it time to back the store up? A predicate rather than an inline condition so the rule is
+# testable on its own.
+#
+# Two things it deliberately does NOT do: consult is_leader, and track its own last-backup
+# time. The caller runs this between evaluations that can last many hours, so gating on one
+# worker makes the interval a floor of that worker's slowest evaluation; and a per-process
+# timestamp would let N workers each honour the interval separately. See LESSONS #25.
+should_backup_now <- function(settings) {
+  dest   <- settings$db_backup_path
+  db_min <- settings$db_backup_minutes %||% 0
+  if (is.null(dest) || !nzchar(dest) || db_min <= 0) return(FALSE)
+  backup_age_minutes(dest) >= db_min
+}
+
 # Append one evaluation. `score` may be NA when the pipeline failed (status
 # records why); failures are recorded too, so the optimizer learns not to revisit
 # configurations that reliably break.

@@ -8,7 +8,7 @@
 # (0.7.1 -> 0.7.2) and the middle one for a major one (0.7.x -> 0.8.1). Whenever a bump
 # changes what a configuration COMPUTES, add a matching entry to BUILD_CHANGES
 # (R/optimizer.R) so filter_evals_to_build can retire exactly the rows it invalidated.
-OPTIMIZER_BUILD <- "0.8.1"
+OPTIMIZER_BUILD <- "0.8.2"
 
 # remote_server: when TRUE, permanent files (state / logs / cache backup) go to
 # durable HOME storage instead of the work directory (see the paths section and

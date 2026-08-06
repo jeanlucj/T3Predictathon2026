@@ -343,7 +343,34 @@ each other's in-flight multi-GB VCF and neither finishes.
 **Now.** WAL + a 60 s busy timeout, migrations that tolerate losing the race, atomic
 cache writes (temp + `rename`), and a per-project download lock where the loser waits for the
 winner's result instead of repeating the download. The remaining constraint is real and worth
-stating plainly: **WAL cannot work over NFS**, so the live store must be on local disk with the
-leader worker backing it up via `VACUUM INTO`.
+stating plainly: **WAL cannot work over NFS**, so the live store must be on local disk, backed up
+via `VACUUM INTO` (by any worker -- see #25).
 **Lives in.** `R/store.R`, `R/data_access.R::.with_cache_lock` / `.cache_save`, `run_workers.sh`,
 `tests/test_concurrency.R`.
+
+### 25. A periodic task at the bottom of a long loop has the loop's period, not its own
+
+**Trap.** `db_backup_minutes = 30` reads like "back up every 30 minutes". The call sat at the
+bottom of the evaluation loop and was gated on `leader`, so its real period was
+`max(30 min, duration of worker 1's current evaluation)`. With evaluations running 30 min to 33 h,
+those are different numbers by three orders of magnitude.
+**Symptom.** Found by hand on 2026-08-05: the `/workdir` store's backup was **24 h stale** while
+worker 1 sat inside one `em_combine` evaluation. Every completed evaluation since existed only in
+the WAL, on the disk the backup exists to protect against losing. Nothing logged a problem,
+because from the code's point of view nothing had gone wrong -- the condition simply had not been
+reached. The same trap had already been found and fixed for `report.md` (the comment above
+`write_report` in `run_optimizer.R` records it) and the reasoning was not carried across to the
+backup, which is the file whose loss actually costs work.
+**Now.** `should_backup_now()` does not consult `is_leader`, and throttles on the **backup file's
+own mtime** rather than a per-process timestamp -- so N workers share one interval instead of each
+honouring it separately, and the interval survives a restart. The final on-exit backup is likewise
+every-worker: a leader-only one does nothing if worker 1 is the process that gets OOM-killed. The
+report prints the backup's age and flags it stale past `2 x db_backup_minutes`, because
+`write_report` is *not* leader-gated and so keeps updating while a long evaluation runs -- it is
+the one artefact that can report the stall while the stall is happening.
+**Generalise.** Any periodic work placed at the bottom of a loop inherits the loop's period. If
+the loop body can run longer than the interval, the interval is a floor and nothing more; and if
+the work is also gated on one process, one slow process disables it entirely. Ask what the *worst*
+iteration costs, not the median.
+**Lives in.** `R/store.R::should_backup_now` / `backup_age_minutes`, `run_optimizer.R`,
+`R/report.R`, `tests/test_concurrency.R` §5.

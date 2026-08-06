@@ -122,6 +122,22 @@ write_report <- function(con, settings) {
     paste0("_", format(Sys.time(), tz = "UTC", usetz = TRUE), "_"),
     "",
     paste0("- optimizer build: ", settings$build %||% OPTIMIZER_BUILD),
+    # Whether the store is actually being backed up. This belongs in the report because the
+    # report is NOT leader-gated: it keeps updating while a long evaluation runs, so it is the
+    # one artefact that can report a stalled backup while the stall is happening.
+    local({
+      bp <- settings$db_backup_path
+      if (is.null(bp) || !nzchar(bp)) return(NULL)   # local mode: no backup configured
+      db_min <- settings$db_backup_minutes %||% 0
+      age <- backup_age_minutes(bp)
+      paste0("- store backup: ",
+             if (!is.finite(age)) "_never_"
+             else if (age < 90) sprintf("%.0f min ago", age)
+             else sprintf("%.1f h ago", age / 60),
+             # Only a FINITE age can be stale: a run's first report legitimately finds no
+             # backup yet, and flagging that would be a false alarm on every fresh start.
+             if (is.finite(age) && db_min > 0 && age > 2 * db_min) "  ** STALE **" else "")
+    }),
     # Which estimator ranked the configs, and -- when the random-effects fit ran -- the
     # variance components. sd_trial vs sd_config is the number that says whether adjusting for
     # trials is worth anything on this data; it used to have to be computed by hand.

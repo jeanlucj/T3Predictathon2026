@@ -152,7 +152,6 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
 
   start <- Sys.time()
   last_cache_sync <- start
-  last_db_backup  <- start
   start_n <- n_evals(con)
   iter <- 0
   consec_sample_fail <- 0L
@@ -218,27 +217,29 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
     # Copy the store to durable storage. Needed because running several workers puts db_path
     # on local disk (WAL cannot work over NFS -- see settings$worker_id), and the store is the
     # one file whose loss costs real work.
-    db_min <- settings$db_backup_minutes %||% 0
-    if (leader && db_min > 0 && !is.null(settings$db_backup_path) &&
-        as.numeric(difftime(Sys.time(), last_db_backup, units = "mins")) >= db_min) {
+    #
+    # NOT leader-only, and throttled on the backup file's own mtime so N workers share one
+    # interval rather than each honouring it separately -- see should_backup_now() in R/store.R
+    # for why. Two workers can still both find it stale and both back up; that is harmless,
+    # since backup_store writes to dest.tmp<PID> and renames.
+    if (should_backup_now(settings)) {
       # backup_store reports its own failure; note the consequence here so a run whose backups
       # are all failing says so in the log rather than only at the moment /workdir is wiped.
       if (!backup_store(con, settings$db_backup_path))
         message("  the store is NOT being backed up -- a loss of ", dirname(settings$db_path),
                 " would lose this run")
-      last_db_backup <- Sys.time()
     }
   }
 
   write_report(con, settings)          # every worker, as in the loop
-  if (leader) {
-    # The final backup is the one that matters most -- say plainly whether it happened.
-    if (!is.null(settings$db_backup_path)) {
-      if (backup_store(con, settings$db_backup_path))
-        message("store backed up to ", settings$db_backup_path)
-      else
-        message("FINAL STORE BACKUP FAILED -- copy ", settings$db_path, " off this disk by hand")
-    }
+  # The final backup is the one that matters most -- say plainly whether it happened. Every
+  # worker, not just the leader: if worker 1 is the one that gets OOM-killed, a leader-only
+  # final backup means no worker takes one at all.
+  if (!is.null(settings$db_backup_path)) {
+    if (backup_store(con, settings$db_backup_path))
+      message("store backed up to ", settings$db_backup_path)
+    else
+      message("FINAL STORE BACKUP FAILED -- copy ", settings$db_path, " off this disk by hand")
   }
   message(sprintf("[%s] optimizer stop; %d evaluations in store (this run: %d)",
                   format(Sys.time()), n_evals(con), n_evals(con) - start_n))
