@@ -133,11 +133,22 @@ EOF
 %help
     T3 pipeline optimizer runtime: R 4.5.3 plus pinned packages.
 
-    The optimizer code is NOT in this image -- bind it at run time:
+    The optimizer code is NOT in this image -- bind it at run time. REPO is the
+    optimizer directory: the folder holding settings.R, run_workers.sh, .Renviron.
 
-      apptainer exec --bind /path/to/optimizer:/opt/optimizer \
-                     --bind $OPTIMIZER_HOME:$OPTIMIZER_HOME \
-                     optimizer.sif bash -c 'cd /opt/optimizer && ./run_workers.sh 8 2'
+      REPO=/project/<account>/T3Predictathon2026/scripts/Analysis_Claude/optimizer
 
-    The cd is load-bearing: R reads .Renviron (T3 credentials) from the working
-    directory only. See container/run_in_container.sh.
+      apptainer exec --bind "$REPO:$REPO" \
+                     --bind "$OPTIMIZER_HOME:$OPTIMIZER_HOME" \
+                     --bind "$TMPDIR:$TMPDIR" \
+                     optimizer.sif bash -c "cd '$REPO' && ./run_workers.sh 8 2"
+
+    Bind each path ONTO ITSELF, as above. settings.R computes cache_dir and db_path
+    from the repo location and OPTIMIZER_HOME; mount either one at a different path
+    inside and those computed paths land in the container's ephemeral overlay, which
+    is discarded at exit. Nothing errors -- the cache simply disappears.
+
+    The cd is load-bearing too: R reads .Renviron (T3 credentials) from the working
+    directory only.
+
+    Easier: use container/run_in_container.sh, which sets all of this for you.

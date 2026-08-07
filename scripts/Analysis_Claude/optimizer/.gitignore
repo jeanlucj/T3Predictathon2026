@@ -16,6 +16,7 @@ CODE_ASSESSMENT.md
 NEXT_STEPS.md
 USDA_ARS_SCINET.md
 nohup.out
-# Cluster packaging: specific to one person's SciNet/BioHPC accounts, not to the algorithm.
-# NOTE: being ignored, `git pull` does NOT deliver these to a build host -- scp the folder.
-# container/
+# The container RECIPE is tracked, so `git pull` delivers it to any build host. The BUILT
+# IMAGE never is: build.sh writes optimizer.sif into container/, and that is 1-2 GB of binary
+# that would otherwise be swept up by `git add -A` on the build machine.
+container/*.sif

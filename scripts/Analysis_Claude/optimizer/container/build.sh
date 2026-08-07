@@ -24,8 +24,8 @@ SIF="${1:-optimizer.sif}"
 
 command -v apptainer >/dev/null 2>&1 || {
   echo "apptainer not on PATH." >&2
-  echo "  BioHPC Rocky 9: it should be present; CentOS 7 hosts have 'singularity' instead." >&2
-  echo "  SciNet Atlas  : module load apptainer" >&2
+  echo "  SciNet Ceres  : should already be present, no module load needed." >&2
+  echo "  BioHPC Rocky 9: present; CentOS 7 hosts have 'singularity' instead." >&2
   exit 1
 }
 [ -f "$DEF" ] || { echo "no $DEF in $(pwd)" >&2; exit 1; }
@@ -40,7 +40,7 @@ case "$(hostname -s)" in
 esac
 
 # Image layers land in ~/.apptainer unless redirected, and a 30 GB home fills fast.
-# Ceres sets these for SLURM jobs; Atlas and BioHPC do NOT.
+# Ceres sets these for SLURM jobs; BioHPC does not.
 export APPTAINER_CACHEDIR="${APPTAINER_CACHEDIR:-${TMPDIR:-/tmp}/apptainer_cache}"
 export APPTAINER_TMPDIR="${APPTAINER_TMPDIR:-${TMPDIR:-/tmp}/apptainer_tmp}"
 mkdir -p "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR"
