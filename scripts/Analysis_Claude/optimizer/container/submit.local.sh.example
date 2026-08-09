@@ -1,0 +1,59 @@
+#!/bin/bash
+# submit.local.sh -- YOUR machine's submission settings. Copy this file once:
+#
+#   cd <repo>/scripts/Analysis_Claude/optimizer/container
+#   cp submit.local.sh.example submit.local.sh
+#   chmod +x submit.local.sh
+#   # edit the values below, then:
+#   ./submit.local.sh
+#
+# WHY THIS FILE EXISTS. t3opt_ceres.sh is tracked in git, so editing it on the server means a
+# conflict on every `git pull`. This file is gitignored, so your account, paths and sizing live
+# here and the tracked script is never touched. Same arrangement as settings.R +
+# settings.local.R, and .Renviron.example + .Renviron.
+#
+# The mechanism: sbatch COMMAND-LINE flags override #SBATCH directives inside the script. So
+# the directives in t3opt_ceres.sh act as documented defaults, and whatever is set here wins.
+#
+# Chaining works because extra arguments are passed through to sbatch:
+#
+#   jid=$(./submit.local.sh --parsable)
+#   ./submit.local.sh --dependency=afterany:$jid
+#
+# Dry run -- prints the allocation it WOULD get, queues nothing:
+#
+#   ./submit.local.sh --test-only
+
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+
+# ---- who you are ---------------------------------------------------------
+# sacctmgr -Pns show user format=account,defaultaccount
+ACCOUNT=CHANGEME
+
+# ---- where things live ---------------------------------------------------
+# Project storage, never home: home is 30 GB and the dosage cache alone can exceed it.
+export OPTIMIZER_HOME=/project/CHANGEME/t3_optimizer
+export REPO=/project/CHANGEME/T3Predictathon2026/scripts/Analysis_Claude/optimizer
+export SIF="$OPTIMIZER_HOME/optimizer.sif"
+
+# ---- how big -------------------------------------------------------------
+# Memory is the binding resource, not cores: measured 19 GB median and 82 GB peak per worker.
+# MEM should be at least N_WORKERS x 82 GB. Raise the worker count only after report_memory.R
+# shows real headroom -- SLURM kills a job that exceeds its allocation, it does not throttle it.
+export N_WORKERS=22
+export N_THREADS=1
+NTASKS=32
+MEM=1800G
+TIME=21-00:00:00          # 3 weeks, the ceres maximum
+
+# ---- submit --------------------------------------------------------------
+# "$@" comes before the script path so extra arguments reach sbatch, not the job.
+exec sbatch \
+  --account="$ACCOUNT" \
+  --ntasks="$NTASKS" \
+  --mem="$MEM" \
+  --time="$TIME" \
+  --export=ALL \
+  "$@" \
+  "$HERE/t3opt_ceres.sh"

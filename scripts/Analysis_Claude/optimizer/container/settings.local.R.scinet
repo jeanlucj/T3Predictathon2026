@@ -15,11 +15,18 @@
 .tmp  <- Sys.getenv("TMPDIR")
 .home <- Sys.getenv("OPTIMIZER_HOME")
 
-# Refuse to run rather than silently fall back. Without $TMPDIR the store would land on a
-# network filesystem shared by every worker, which is the one configuration that corrupts it.
-if (!nzchar(.tmp))
-  stop("TMPDIR is unset. On Ceres it is set inside a SLURM job (/local/bgfs/<jobid>).\n",
-       "  Running on a login node? Get an allocation first: salloc -N1 -n4 -t 1:00:00 -A <account>")
+# Refuse to run rather than silently fall back.
+#
+# Testing nzchar() alone is NOT enough, and that mistake is easy to make: outside a SLURM job
+# TMPDIR is set to "/tmp", which is non-empty and therefore passes a presence check while
+# being exactly the wrong disk -- shared between users and jobs, and not the job-scoped SSD.
+# What matters is that TMPDIR is a per-job directory, so that is what gets checked.
+if (!nzchar(.tmp) || identical(sub("/+$", "", .tmp), "/tmp"))
+  stop("TMPDIR is \"", .tmp, "\", which is not job-scoped local scratch.\n",
+       "  Inside a Ceres job it is /local/bgfs/<jobid>. You are probably on a login node,\n",
+       "  or outside an allocation. Get one first:\n",
+       "    salloc -N1 -n4 --mem=16G -t 1:00:00 -A <account>\n",
+       "  (find your account with: sacctmgr -Pns show user format=account,defaultaccount)")
 if (!nzchar(.home))
   stop("OPTIMIZER_HOME is unset -- set it in .Renviron to your /project path.")
 

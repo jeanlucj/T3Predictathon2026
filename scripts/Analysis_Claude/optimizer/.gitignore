@@ -14,9 +14,12 @@ settings.local.R
 EM_COMBINE_COMPARISON.md
 CODE_ASSESSMENT.md
 NEXT_STEPS.md
-USDA_ARS_SCINET.md
 nohup.out
 # The container RECIPE is tracked, so `git pull` delivers it to any build host. The BUILT
 # IMAGE never is: build.sh writes optimizer.sif into container/, and that is 1-2 GB of binary
 # that would otherwise be swept up by `git add -A` on the build machine.
 container/*.sif
+# Per-machine submission settings (account, /project paths, node sizing). Same reason as
+# settings.local.R above: the tracked t3opt_ceres.sh then stays identical everywhere and
+# `git pull` never conflicts on it. Copy submit.local.sh.example to create it.
+container/submit.local.sh

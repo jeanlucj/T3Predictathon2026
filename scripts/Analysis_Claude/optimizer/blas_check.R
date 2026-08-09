@@ -21,7 +21,7 @@
 #   2. REFERENCE BLAS. A BLAS path containing "libRblas" is single-threaded by construction
 #      and no environment variable changes that. On BioHPC, R builds from 4.4.3 onward are
 #      compiled with OpenBLAS; 4.0.5-4.4.2 are not.
-#   3. NOTHING TO THREAD. This pipeline is not BLAS-bound -- see RUNBOOK.md section 1.
+#   3. NOTHING TO THREAD. This pipeline is not BLAS-bound -- see RUNBOOK_INTERACTIVE.md §1.
 
 cat("R version   :", R.version.string, "\n")
 cat("BLAS        :", extSoftVersion()[["BLAS"]], "\n")

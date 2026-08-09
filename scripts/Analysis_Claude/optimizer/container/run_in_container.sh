@@ -36,7 +36,9 @@ SIF="${OPTIMIZER_SIF:-$HERE/optimizer.sif}"
 MODE="${1:-workers}"; shift || true
 
 [ -f "$SIF" ] || { echo "no image at $SIF -- run ./build.sh first" >&2; exit 1; }
-command -v apptainer >/dev/null 2>&1 || { echo "apptainer not on PATH" >&2; exit 1; }
+# Performs Ceres's required `module load apptainer`; a no-op where it is already on PATH.
+. "$HERE/lib_apptainer.sh"
+ensure_apptainer || exit 1
 
 # Check REPO really is the optimizer directory. Without this the mistake surfaces much
 # later and much less helpfully -- as "cannot open file 'tests/run_all.R'" from inside the
@@ -69,7 +71,13 @@ BINDS="--bind $REPO:$REPO"
 
 # --cleanenv would drop OPTIMIZER_HOME and the BLAS thread settings, so it is deliberately
 # not used; APPTAINERENV_ passthrough keeps the few variables that matter explicit.
+#
+# TMPDIR is forced through rather than left to Apptainer's defaults because settings.local.R
+# computes db_path from it. If the container saw a different TMPDIR than the host -- /tmp, say
+# -- the store would land on shared disk instead of the job's local SSD, and the only visible
+# sign would be a db_path that looks subtly wrong.
 export APPTAINERENV_OPTIMIZER_HOME="${OPTIMIZER_HOME:-}"
+[ -n "${TMPDIR:-}" ] && export APPTAINERENV_TMPDIR="$TMPDIR"
 
 echo "image : $SIF"
 echo "repo  : $REPO"

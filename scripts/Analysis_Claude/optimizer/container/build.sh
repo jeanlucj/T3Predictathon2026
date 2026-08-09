@@ -22,12 +22,10 @@ cd "$(dirname "$0")"
 DEF="optimizer.def"
 SIF="${1:-optimizer.sif}"
 
-command -v apptainer >/dev/null 2>&1 || {
-  echo "apptainer not on PATH." >&2
-  echo "  SciNet Ceres  : should already be present, no module load needed." >&2
-  echo "  BioHPC Rocky 9: present; CentOS 7 hosts have 'singularity' instead." >&2
-  exit 1
-}
+# On Ceres this performs the `module load apptainer` that Ceres requires; elsewhere it is a
+# no-op. See container/lib_apptainer.sh.
+. "$(dirname "$0")/lib_apptainer.sh"
+ensure_apptainer || exit 1
 [ -f "$DEF" ] || { echo "no $DEF in $(pwd)" >&2; exit 1; }
 
 # Build on a compute node, not a login node. SciNet documents this explicitly, and a build
