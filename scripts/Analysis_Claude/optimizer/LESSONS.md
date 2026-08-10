@@ -372,5 +372,25 @@ the one artefact that can report the stall while the stall is happening.
 the loop body can run longer than the interval, the interval is a floor and nothing more; and if
 the work is also gated on one process, one slow process disables it entirely. Ask what the *worst*
 iteration costs, not the median.
-**Lives in.** `R/store.R::should_backup_now` / `backup_age_minutes`, `run_optimizer.R`,
-`R/report.R`, `tests/test_concurrency.R` §5.
+
+**And it recurred, which is the part worth remembering.** The fix above was applied to the store
+backup only. The **cache** backup had the identical shape — `leader &&` at the bottom of the same
+loop, plus an `on.exit` flush registered *inside* the `if (leader)` block — and was left in place
+for another four days, until the user asked why the reasoning did not apply to it equally. When a
+defect is a *shape* rather than a line, grep for the shape: every periodic, leader-gated call in
+the same loop was suspect the moment the first one was.
+
+The cache needed one thing the store did not. A `VACUUM INTO` of a 250 KB file is harmless N
+times over, so `should_backup_now()` needs no mutual exclusion; an rsync over thousands of files
+is not, and dropping the leader gate alone would have traded a stall for a stampede. So
+`sync_cache_to_backup()` throttles on a **stamp file** in `cache_backup_dir` and touches it
+*before* transferring — claiming afterwards leaves the whole transfer as a window in which every
+other worker also starts one. `tests/test_concurrency.R` §6 pins that ordering: with the claim
+moved after the rsync, three concurrent workers produce three transfers instead of one.
+
+**What the leader still does, and why it is different.** Restoring the cache at startup stays
+leader-only. That is not a throughput throttle but a correctness one: the others must not read a
+half-populated tree, which is what `cache_ready_file` exists to signal.
+**Lives in.** `R/store.R::should_backup_now` / `backup_age_minutes`,
+`R/data_access.R::sync_cache_to_backup`, `run_optimizer.R`, `R/report.R`,
+`tests/test_concurrency.R` §5-6.

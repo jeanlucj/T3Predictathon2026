@@ -455,9 +455,16 @@ disk and is backed up to `$HOME/T3optimizer/cache`. It is large but regenerable.
 
 ## 5. Monitoring
 
+**Where the logs are depends on the mode.** `run_workers.sh` writes to `settings$log_dir`,
+which `settings.R` derives from `perm_dir`: `./logs` on a laptop, but **`$OPTIMIZER_HOME/logs`
+whenever `OPTIMIZER_HOME` is set** — which includes a rented BioHPC server. `optimizer_paths.sh`
+exports it as `$LOG_DIR`, so `source ./optimizer_paths.sh` first and the commands below work in
+either case. (Logs living on durable storage is the point: they outlive a purged work disk.)
+
 ``` bash
+source ./optimizer_paths.sh               # $LOG_DIR, $REPORT_PATH, $STOP_FILE, ...
 cat  "$REPORT_PATH"                       # best pipeline so far + learning curve
-tail -f logs/run_w1.out                   # live log (one per worker)
+tail -f "$LOG_DIR/run_w1.out"             # live log (one per worker)
 Rscript report_memory.R                   # peak per evaluation, workers-that-fit table
 Rscript report_timing.R                   # where the wall time goes
 sort -k3 -n logs/memory_*.tsv | tail -5   # most memory-intensive moments

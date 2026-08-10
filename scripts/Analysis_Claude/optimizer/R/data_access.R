@@ -290,7 +290,24 @@ t3_connect <- function(settings) {
 # purely ADDITIVE -- rsync ships only new files -- hence cheap to call often. --delete is
 # deliberately omitted (never remove a file the run still needs), and the transient
 # raw_project/ VCFs are excluded. No-op if cache_backup_dir is unset or rsync is missing.
-sync_cache_to_backup <- function(settings, quiet = TRUE) {
+#
+# SELF-THROTTLING, and not gated on the leader. `min_age_minutes` is the interval; callers just
+# call, and this decides whether the work is due. Two reasons it lives here rather than at the
+# call site:
+#
+#  * Leader-only was wrong for the same reason it was wrong for the store (LESSONS #25): the
+#    call sits between evaluations, so gating it on worker 1 made the true period
+#    max(interval, duration of worker 1's current evaluation) -- 36 h for an em_combine run.
+#  * But unlike the store's millisecond VACUUM INTO, this is an rsync over thousands of files.
+#    Simply dropping the leader test would trade a stall for N workers rsyncing one tree at
+#    once. So the throttle keys on a STAMP FILE every worker can see, and the stamp is touched
+#    BEFORE the rsync: claiming after it would leave the whole transfer as a window in which
+#    everyone else also starts one.
+#
+# A worker dying mid-rsync leaves a fresh stamp, so nothing retries for one interval. That is
+# the same trade the store makes, and harmless here because the sync is additive.
+sync_cache_to_backup <- function(settings, quiet = TRUE,
+                                 min_age_minutes = settings$cache_sync_minutes %||% 0) {
   dst <- settings$cache_backup_dir
   if (is.null(dst) || !nzchar(dst)) return(invisible(FALSE))
   src <- settings$cache_dir
@@ -298,6 +315,14 @@ sync_cache_to_backup <- function(settings, quiet = TRUE) {
   rsync <- Sys.which("rsync")
   if (!nzchar(rsync)) { message("cache backup: rsync not on PATH -- skipping"); return(invisible(FALSE)) }
   dir.create(dst, showWarnings = FALSE, recursive = TRUE)
+
+  # backup_age_minutes() (R/store.R) is just "age of a file in minutes"; a missing stamp reads
+  # as infinitely old, so the first call always syncs.
+  stamp <- file.path(dst, ".last_sync")
+  if (min_age_minutes > 0 && backup_age_minutes(stamp) < min_age_minutes)
+    return(invisible(FALSE))
+  file.create(stamp)                      # claim BEFORE the work, not after
+
   code <- suppressWarnings(system2(rsync,
     c("-a", "--exclude", "raw_project/", paste0(src, "/"), paste0(dst, "/")),
     stdout = if (quiet) FALSE else "", stderr = if (quiet) FALSE else ""))

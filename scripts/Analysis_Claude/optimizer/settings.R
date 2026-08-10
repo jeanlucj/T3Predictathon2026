@@ -8,7 +8,7 @@
 # (0.7.1 -> 0.7.2) and the middle one for a major one (0.7.x -> 0.8.1). Whenever a bump
 # changes what a configuration COMPUTES, add a matching entry to BUILD_CHANGES
 # (R/optimizer.R) so filter_evals_to_build can retire exactly the rows it invalidated.
-OPTIMIZER_BUILD <- "0.8.3"
+OPTIMIZER_BUILD <- "0.8.4"
 
 # remote_server: when TRUE, permanent files (state / logs / cache backup) go to
 # durable HOME storage instead of the work directory (see the paths section and
@@ -421,9 +421,13 @@ optimizer_settings <- function(local_overrides = TRUE) {
     # work cache is empty (e.g. a fresh node after a scratch purge). An in-process sync cannot
     # survive a SIGKILL of R -- see the README for an external cron/systemd safety net.
     cache_backup_dir   = if (remote_server) file.path(Sys.getenv("OPTIMIZER_HOME"), "cache") else NULL,
-    # Minimum minutes between in-process cache backups (0 disables). Throttled on wall time,
-    # not iterations, so checkpoint_every = 1 doesn't rsync every step.
-    cache_sync_minutes = 120,
+    # Minimum minutes between cache backups (0 disables). Throttled on wall time, not
+    # iterations, so checkpoint_every = 1 doesn't rsync every step -- and on a STAMP FILE in
+    # cache_backup_dir rather than a per-process clock, so the interval is shared by every
+    # worker and one worker's long evaluation cannot hold up the backup (LESSONS #25).
+    # Matched to db_backup_minutes: now that no single worker can block it, the interval is
+    # what actually bounds the loss, and an incremental rsync over an unchanged tree is cheap.
+    cache_sync_minutes = 30,
 
     # ---- several workers on one store -------------------------------------
     # Multiple worker processes may run against ONE db_path and ONE cache_dir, each

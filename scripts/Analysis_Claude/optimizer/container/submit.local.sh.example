@@ -85,11 +85,24 @@ MEM=1800G
 TIME=21-00:00:00          # 3 weeks, the ceres maximum
 
 # ---- submit --------------------------------------------------------------
+# Logs go to OPTIMIZER_HOME, on durable storage, so they outlive the node -- matching where
+# run_workers.sh puts the per-worker logs (settings$log_dir). The #SBATCH directives in
+# t3opt_ceres.sh use RELATIVE paths, which SLURM resolves against whatever directory you
+# happened to submit from; passing an absolute path here removes that dependence.
+#
+# The mkdir is not optional: SLURM does not create the directory, and a job whose output file
+# cannot be opened dies at launch with the error going nowhere -- because the output file is
+# where it would have gone. That failure looks exactly like "nothing happened".
+mkdir -p "$OPTIMIZER_HOME/logs"
+
 # "$@" comes before the script path so extra arguments reach sbatch, not the job.
 exec sbatch \
   --account="$ACCOUNT" \
   --job-name="$JOB_NAME" \
   --dependency=singleton \
+  --chdir="$REPO" \
+  --output="$OPTIMIZER_HOME/logs/slurm-%j.out" \
+  --error="$OPTIMIZER_HOME/logs/slurm-%j.err" \
   --ntasks="$NTASKS" \
   --mem="$MEM" \
   --time="$TIME" \

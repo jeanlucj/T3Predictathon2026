@@ -11,6 +11,8 @@
 #   4. Atomic cache writes: a reader never sees a partial file.
 #   5. The store backup happens even when no worker is the leader, and its interval is shared
 #      across processes rather than honoured N times over.
+#   6. The cache sync likewise needs no leader, but -- being an rsync rather than a millisecond
+#      copy -- exactly ONE worker performs it per interval.
 #
 # Run: Rscript tests/test_concurrency.R
 
@@ -228,6 +230,46 @@ check(!gate(NULL, 30, FALSE), "no backup path configured (local mode) means no b
 check(!gate(missing_bk, 0, FALSE), "db_backup_minutes = 0 disables backups")
 Sys.setFileTime(bk_dest, Sys.time() - 3600)     # one hour old, interval 30 min
 check(gate(bk_dest, 30, leader = FALSE), "a stale backup is refreshed by a non-leader")
+
+cat("6. cache sync: every worker, but ONE at a time ----------------------\n")
+# The store backup can be done by all N workers at once harmlessly (a millisecond VACUUM INTO).
+# The cache sync cannot -- it is an rsync over thousands of files -- so dropping the leader gate
+# had to come with a stamp-file claim taken BEFORE the transfer. This checks the claim really
+# does precede the work: a fake, slow `rsync` on PATH logs each invocation, so concurrent
+# workers that both decided to sync would show up as two lines. LESSONS #25.
+unlink(list.files(tmp, "^done_", full.names = TRUE))
+cs_src <- file.path(tmp, "cs_cache"); cs_dst <- file.path(tmp, "cs_backup")
+dir.create(cs_src, showWarnings = FALSE); writeLines("payload", file.path(cs_src, "a.rds"))
+cs_bin <- file.path(tmp, "bin"); dir.create(cs_bin, showWarnings = FALSE)
+writeLines(c("#!/bin/sh",
+             sprintf('echo run >> "%s"', file.path(tmp, "rsyncs.log")),
+             "sleep 4", "exit 0"), file.path(cs_bin, "rsync"))
+Sys.chmod(file.path(cs_bin, "rsync"), "0755")
+
+n_done <- spawn(3L, c(
+  sprintf('Sys.setenv(PATH = paste("%s", Sys.getenv("PATH"), sep = ":"))', cs_bin),
+  sprintf('st <- list(cache_dir = "%s", cache_backup_dir = "%s", cache_sync_minutes = 30)',
+          cs_src, cs_dst),
+  # is_leader deliberately absent: none of these is the leader, and the sync must still happen.
+  'invisible(sync_cache_to_backup(st))',
+  'file.create(file.path(TMP, paste0("done_", ARG[1])))'))
+check(n_done == 3L, sprintf("all 3 cache-sync workers finished (got %d)", n_done))
+n_rsync <- if (file.exists(file.path(tmp, "rsyncs.log")))
+  length(readLines(file.path(tmp, "rsyncs.log"))) else 0L
+check(n_rsync == 1L,
+      sprintf("exactly ONE rsync ran despite 3 concurrent workers (got %d)", n_rsync))
+check(file.exists(file.path(cs_dst, ".last_sync")),
+      "the stamp was written, so the interval is shared across processes")
+
+# The stamp is what throttles, so a second call inside the interval must be a no-op...
+check(!isTRUE(sync_cache_to_backup(list(cache_dir = cs_src, cache_backup_dir = cs_dst,
+                                        cache_sync_minutes = 30))),
+      "a sync inside the interval is skipped")
+# ...and ageing it past the interval must let the next one through.
+Sys.setFileTime(file.path(cs_dst, ".last_sync"), Sys.time() - 31 * 60)
+check(isTRUE(sync_cache_to_backup(list(cache_dir = cs_src, cache_backup_dir = cs_dst,
+                                       cache_sync_minutes = 30))),
+      "a stale stamp lets the next sync through")
 
 cat(sprintf("\n%d checks passed, %d failed\n", ok, fail))
 quit(status = if (fail > 0) 1L else 0L)

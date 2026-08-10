@@ -87,7 +87,7 @@ your life easier editting these in RStudio with Ceres ondemand
   queueing
 - [ ] Shakeout first:
   `./submit.local.sh --qos=debug --time=00:30:00 --ntasks=4 --mem=200G`
-- [ ] `squeue -u $USER` shows it running; `logs/slurm-<jid>.out` has no
+- [ ] `squeue -u $USER` shows it running; `$OPTIMIZER_HOME/logs/slurm-<jid>.out` has no
   WAL warning
 - [ ] Only then the real submission: `./submit.local.sh`
 - [ ] Queue more: just submit again. `--dependency=singleton` makes them
@@ -223,7 +223,7 @@ from an empty store and silently re-runs work already paid for.
 Two things that still work from the **login node** while a job runs:
 
 ``` bash
-tail -f logs/run_w1.out                             # watch a worker
+tail -f "$OPTIMIZER_HOME/logs/run_w1.out"           # watch a worker
 source ./optimizer_paths.sh && touch "$STOP_FILE"   # clean stop; workers finish and exit
 ```
 
@@ -631,7 +631,7 @@ recipe to hand:
 
 ``` bash
 $ apptainer inspect optimizer.sif
-    Optimizer.Build       0.8.3
+    Optimizer.Build       0.8.4
     R.Version             4.5.3
     CRAN.Snapshot         2026-08-01
     T3BrapiHelpers.Sha    6c756462b5a315a992bdd7a26585d912a5452013

@@ -169,9 +169,9 @@ settings_override <- list(
 This is the one step you cannot skip. `open_store` puts SQLite in WAL mode, which is
 what lets workers write concurrently, and WAL *cannot* work over NFS — it coordinates
 through an mmap'd `-shm` file. A home directory on a cluster is usually NFS. The
-leader copies the store to `db_backup_path` every `db_backup_minutes` using
-`VACUUM INTO` (safe on a live database), so a wiped `/workdir` costs at most one
-interval.
+store is copied to `db_backup_path` every `db_backup_minutes` using `VACUUM INTO`
+(safe on a live database) by whichever worker reaches the check first, so a wiped
+`/workdir` costs at most one interval.
 
 If you have an existing store on `/home`, copy it to the new path first — the workers
 continue from whatever is there:
@@ -260,10 +260,15 @@ launching again — `run_workers.sh` refuses to start if it is still there.
 
 #### What makes it safe
 
-- **Worker 1 is the leader.** It alone rsyncs the cache and backs up the store; eight
-  processes doing that to the same files is pure waste. (`state/report.md` is written by
-  *every* worker, atomically — a worker can only write it between evaluations, so leaving it
-  to worker 1 alone left it stale for hours at a time.)
+- **Worker 1 is the leader, and by now that means one thing only: it restores the cache at
+  startup** and signals when it is ready, so the others do not read a half-populated tree.
+  Everything else — `state/report.md`, the store backup, the cache backup — is done by *every*
+  worker, deliberately. All three can only happen *between* evaluations, so assigning any of
+  them to worker 1 alone made the real interval `max(setting, worker 1's current evaluation)`:
+  observed at a day and a half against a 30-minute setting. See LESSONS #25.
+- **The cache backup is still one-at-a-time**, just not one-*worker*. It is an rsync over
+  thousands of files, so unlike the store's millisecond copy it would be wasteful in parallel;
+  whichever worker finds the shared timestamp stale claims it first, then transfers.
   It also restores the cache from backup at startup and signals when it is done, which
   the other workers wait for. So worker 1 should be running — the others tolerate its
   absence but nothing will write a report.

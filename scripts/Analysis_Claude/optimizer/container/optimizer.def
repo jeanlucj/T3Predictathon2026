@@ -12,7 +12,7 @@ From: rocker/r-ver:4.5.3
 # keeps working without a rebuild. Only R and the packages are frozen here.
 
 %labels
-    Optimizer.Build       0.8.3
+    Optimizer.Build       0.8.4
     R.Version             4.5.3
     CRAN.Snapshot         2026-08-01
     T3BrapiHelpers.Sha    6c756462b5a315a992bdd7a26585d912a5452013

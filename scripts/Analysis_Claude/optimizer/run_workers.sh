@@ -24,8 +24,10 @@
 #    workers x N cores oversubscribe the machine and everything slows down together. The
 #    product (workers x threads) should be at most the core count.
 #  * WORKER IDENTITY. OPTIMIZER_WORKER tells settings.R which worker this is. Worker 1 is
-#    the "leader" and is the only one that rsyncs the cache -- see settings$is_leader.
-#    The STORE backup is every worker, deliberately (LESSONS #25).
+#    the "leader", and its ONLY remaining exclusive job is RESTORING the cache at startup --
+#    see settings$is_leader. Both backups (store and cache) are done by every worker,
+#    deliberately: leader-only meant one worker's long evaluation stalled everyone else's
+#    backup. See LESSONS #25.
 #
 # PREREQUISITE: db_path must be on LOCAL disk. SQLite's WAL mode, which is what makes
 # concurrent writers safe, cannot work on NFS. open_store warns if the pragma did not take;
@@ -39,7 +41,6 @@ N_WORKERS="${1:-4}"
 N_THREADS="${2:-2}"
 
 cd "$(dirname "$0")" || exit 1
-mkdir -p logs
 
 # One thread setting for every BLAS R might be linked against.
 export OMP_NUM_THREADS="$N_THREADS"
@@ -53,6 +54,13 @@ export VECLIB_MAXIMUM_THREADS="$N_THREADS"
 # stop dead. (See optimizer_paths.sh.)
 . "$(dirname "$0")/optimizer_paths.sh"
 STOP_FILE="${STOP_FILE:-./state/STOP}"
+
+# Worker logs go to settings$log_dir, which is <OPTIMIZER_HOME>/logs on a server and ./logs on
+# a laptop (settings.R derives both from perm_dir) -- so this is unchanged locally, and on a
+# cluster the logs land on durable storage and survive the node instead of vanishing with it.
+# The fallback covers optimizer_paths.sh failing to reach R, which must not stop a launch.
+LOG_DIR="${LOG_DIR:-logs}"
+mkdir -p "$LOG_DIR"
 if [ -f "$STOP_FILE" ]; then
   echo "run_workers.sh: $STOP_FILE exists -- the workers would exit at once. Remove it first." >&2
   exit 1
@@ -64,9 +72,10 @@ fi
 #   ./run_workers.sh 4                             # workers 1-4 (1 is the leader)
 #   OPTIMIZER_FIRST_WORKER=5 ./run_workers.sh 4    # add workers 5-8, no second leader
 #
-# Running `./run_workers.sh 4` twice would instead start a second worker 1 -- two leaders
-# both writing the report and rsyncing the cache, ambiguous `worker` values in the store,
-# and, because the redirect below truncates, the second batch wiping the first batch's logs.
+# Running `./run_workers.sh 4` twice would instead start a second worker 1 -- two leaders both
+# restoring the cache into a directory the other workers are reading, ambiguous `worker` values
+# in the store, and, because the redirect below truncates, the second batch wiping the first
+# batch's logs.
 FIRST="${OPTIMIZER_FIRST_WORKER:-1}"
 LAST=$((FIRST + N_WORKERS - 1))
 
@@ -78,11 +87,11 @@ fi
 # Refuse to truncate a log that a live worker is writing to: a log touched in the last two
 # minutes almost certainly belongs to a running worker with this id.
 for i in $(seq "$FIRST" "$LAST"); do
-  if [ -n "$(find "logs/run_w${i}.out" -mmin -2 2>/dev/null)" ]; then
+  if [ -n "$(find "$LOG_DIR/run_w${i}.out" -mmin -2 2>/dev/null)" ]; then
     # Suggest the next FREE id, taken from the highest run_w<id>.out on disk -- not from the
     # process count, which says nothing about which ids are in use.
-    max_id=$(ls logs/run_w*.out 2>/dev/null | sed 's/.*run_w\([0-9]*\)\.out/\1/' | sort -n | tail -1)
-    echo "run_workers.sh: logs/run_w${i}.out was written to seconds ago -- worker $i looks" >&2
+    max_id=$(ls "$LOG_DIR"/run_w*.out 2>/dev/null | sed 's/.*run_w\([0-9]*\)\.out/\1/' | sort -n | tail -1)
+    echo "run_workers.sh: $LOG_DIR/run_w${i}.out was written to seconds ago -- worker $i looks" >&2
     echo "  like it is already running. To ADD workers, start above the running ids:" >&2
     echo "    OPTIMIZER_FIRST_WORKER=$(( ${max_id:-0} + 1 )) $0 $N_WORKERS $N_THREADS" >&2
     exit 1
@@ -92,8 +101,8 @@ done
 echo "run_workers.sh: starting $N_WORKERS worker(s) (ids $FIRST-$LAST), $N_THREADS BLAS thread(s) each"
 for i in $(seq "$FIRST" "$LAST"); do
   # </dev/null so an archived-VCF download can never block on an interactive prompt.
-  OPTIMIZER_WORKER="$i" nohup Rscript run_optimizer.R </dev/null > "logs/run_w${i}.out" 2>&1 &
-  echo "  worker $i -> pid $! -> logs/run_w${i}.out$([ "$i" = 1 ] && echo '  (leader: backs up the store, rsyncs the cache)')"
+  OPTIMIZER_WORKER="$i" nohup Rscript run_optimizer.R </dev/null > "$LOG_DIR/run_w${i}.out" 2>&1 &
+  echo "  worker $i -> pid $! -> $LOG_DIR/run_w${i}.out$([ "$i" = 1 ] && echo '  (leader: restores the cache at startup)')"
   # Stagger the starts. The workers would otherwise hit the trial catalogue and the same
   # uncached genotyping projects simultaneously; the download lock makes that correct but
   # waiting is still wasted time, and a thundering herd on the T3 server is worth avoiding.

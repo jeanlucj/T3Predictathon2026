@@ -88,12 +88,13 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
   dir.create(settings$log_dir, showWarnings = FALSE, recursive = TRUE)
   dir.create(settings$cache_dir, showWarnings = FALSE, recursive = TRUE)
 
-  # Warm the work cache from its durable backup if it is empty (fresh node), and flush it back
-  # on exit (covers a clean stop and an R-level error; a SIGKILL needs the external safety net
-  # in the README). Periodic in-loop backups below bound what an abrupt kill can lose.
+  # Warm the work cache from its durable backup if it is empty (fresh node). Flushing it BACK
+  # is not here -- that is every worker's job now (the on.exit below and the in-loop call).
   #
-  # Leader only. Workers share one cache_dir, so N of them rsyncing the same tree in parallel
-  # buys nothing and fights for the disk; worker 1 does it on everyone's behalf.
+  # RESTORING is leader-only and must stay that way, for a different reason than the backup
+  # was: the workers share one cache_dir, and a restore is not idempotent in the way an
+  # additive backup is -- N of them pulling the same tree at startup fight for the disk while
+  # the others are trying to read it.
   #
   # The others must WAIT for it. On a fresh node the restore takes minutes, and a worker that
   # starts before it finishes sees an empty cache and re-downloads the very projects the rsync
@@ -108,7 +109,6 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
       dir.create(dirname(ready_file), showWarnings = FALSE, recursive = TRUE)
       file.create(ready_file)
     }
-    on.exit(sync_cache_to_backup(settings), add = TRUE)
   } else if (!is.null(ready_file) && !is.null(settings$cache_backup_dir) &&
              nzchar(settings$cache_backup_dir)) {
     # Bounded wait: if the leader is absent or its restore failed, start anyway rather than
@@ -122,6 +122,14 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
       message(sprintf("worker %s: no cache-ready signal after %.0f min -- starting anyway",
                       settings$worker_id %||% "?", limit / 60))
   }
+
+  # Flush the cache on the way out -- EVERY worker, not just the leader. A leader-only exit
+  # hook does nothing when worker 1 is mid-evaluation at the wall clock (SIGKILL: on.exit never
+  # runs) or was OOM-killed earlier, which is precisely when a final flush is wanted. The short
+  # floor guarantees a last capture even if a periodic sync just ran, while leaving the stamp
+  # to cap the end-of-job stampede at about one extra rsync -- and at that moment the scheduler
+  # is about to kill everything, so a queue of full tree-walks is the wrong thing to start.
+  on.exit(sync_cache_to_backup(settings, min_age_minutes = 2), add = TRUE)
 
   # Real mode needs a live BrAPI connection (made once, reused), logged in from the
   # T3_USERNAME/T3_PASSWORD environment credentials. Simulate mode never touches the network.
@@ -151,7 +159,6 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
   })
 
   start <- Sys.time()
-  last_cache_sync <- start
   start_n <- n_evals(con)
   iter <- 0
   consec_sample_fail <- 0L
@@ -207,13 +214,11 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
       tryCatch(write_report(con, settings),
                error = function(e) message("report error: ", conditionMessage(e)))
     }
-    # Time-throttled cache backup (additive rsync; cheap). Bounds what an abrupt kill loses to
-    # roughly one interval of freshly-downloaded cache.
-    sync_min <- settings$cache_sync_minutes %||% 0
-    if (leader && sync_min > 0 &&
-        as.numeric(difftime(Sys.time(), last_cache_sync, units = "mins")) >= sync_min) {
-      sync_cache_to_backup(settings); last_cache_sync <- Sys.time()
-    }
+    # Cache backup (additive rsync). Bounds what an abrupt kill loses to roughly one interval
+    # of freshly-downloaded cache. Called unconditionally: sync_cache_to_backup() decides
+    # whether it is due, from a stamp file every worker can see, so no worker's long evaluation
+    # can hold up everyone else's backup. Not leader-gated -- see LESSONS #25.
+    sync_cache_to_backup(settings)
     # Copy the store to durable storage. Needed because running several workers puts db_path
     # on local disk (WAL cannot work over NFS -- see settings$worker_id), and the store is the
     # one file whose loss costs real work.

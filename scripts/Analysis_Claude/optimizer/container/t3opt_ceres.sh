@@ -6,6 +6,8 @@
 #SBATCH --mem=1800G                  # ~22 workers x 82 GB measured worst case
 #SBATCH --time=21-00:00:00           # 3 weeks, the ceres maximum
 #SBATCH --account=CHANGEME
+# Relative, so they follow the submitting directory -- a fallback only. submit.local.sh passes
+# absolute paths under $OPTIMIZER_HOME/logs on the command line, which override these.
 #SBATCH --output=logs/slurm-%j.out
 #SBATCH --error=logs/slurm-%j.err
 #
@@ -65,7 +67,7 @@ ensure_apptainer || exit 1
 N_WORKERS="${N_WORKERS:-22}"
 N_THREADS="${N_THREADS:-1}"
 
-mkdir -p "$OPTIMIZER_HOME/state" "$OPTIMIZER_HOME/logs" logs
+mkdir -p "$OPTIMIZER_HOME/state" "$OPTIMIZER_HOME/logs"
 
 # ---- restore the store into node-local scratch ---------------------------
 # The optimizer does NOT restore the store by itself -- restore_cache_from_backup() covers the
