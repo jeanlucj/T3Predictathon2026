@@ -33,23 +33,16 @@
 
 set -euo pipefail
 
-# ---- paths ---------------------------------------------------------------
-# OPTIMIZER_HOME must be PROJECT storage, never home: home is 30 GB and the dosage cache
-# alone can exceed that.
-export OPTIMIZER_HOME="${OPTIMIZER_HOME:-/project/CHANGEME/t3_optimizer}"
-REPO="${REPO:-/project/CHANGEME/T3Predictathon2026/scripts/Analysis_Claude/optimizer}"
-SIF="${SIF:-$OPTIMIZER_HOME/optimizer.sif}"
-
-# Submitted directly instead of through submit.local.sh, the placeholders above survive and the
-# job fails much later on a path that does not exist -- after it has queued. Catch it here.
-case "$OPTIMIZER_HOME$REPO" in
-  *CHANGEME*)
-    echo "OPTIMIZER_HOME / REPO still contain CHANGEME." >&2
-    echo "  This script is a template and is not meant to be edited." >&2
-    echo "  cd $(dirname "$0") && cp submit.local.sh.example submit.local.sh" >&2
-    echo "  chmod +x submit.local.sh, fill in your values, then: ./submit.local.sh" >&2
-    exit 1 ;;
-esac
+# ---- paths: supplied, never invented --------------------------------------
+# These arrive from submit.local.sh via `sbatch --export=ALL`. REQUIRED rather than defaulted:
+# submit.local.sh reads OPTIMIZER_HOME from .Renviron, which is the single source, and a
+# default here could silently contradict it. Fail instead.
+: "${OPTIMIZER_HOME:?not set -- submit through container/submit.local.sh, which reads it from .Renviron}"
+: "${REPO:?not set -- submit through container/submit.local.sh}"
+export OPTIMIZER_HOME
+# Beside the recipe, matching build.sh and run_in_container.sh -- not in OPTIMIZER_HOME, which
+# is for state that cannot be regenerated.
+SIF="${SIF:-$REPO/container/optimizer.sif}"
 
 # apptainer is NOT on PATH by default on Ceres; it needs `module load apptainer`, and a batch
 # shell may not even have the `module` function defined. Do this BEFORE anything expensive:

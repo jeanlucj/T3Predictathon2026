@@ -50,21 +50,22 @@ NOTE: make your life easier editting these in RStudio with Ceres ondemand
 - [ ] Settings resolve, inside an allocation:
       `Rscript -e 'source("settings.R"); s <- optimizer_settings(); cat(s$db_path, "\n")'`
       → must print a path under `$TMPDIR` (node-local), not `/project`
-- [ ] `./run_in_container.sh exec prewarm_indices.R --only=projects --limit=5` — credentials
+- [ ] `container/run_in_container.sh exec prewarm_indices.R --only=projects --limit=5` — credentials
       and outbound HTTPS together
 - [ ] Store seeded so the search resumes rather than restarts. `db_path` is
       `$TMPDIR/t3opt_<user>/evals.sqlite`, so take the destination from the check above rather
       than assuming it — and create the directory, which only exists once a job has run:
 
       ```bash
+      source ./optimizer_paths.sh
       STORE=$TMPDIR/t3opt_$(id -un)/evals.sqlite
       mkdir -p "$(dirname "$STORE")"
       cp "$OPTIMIZER_HOME/state/evals_backup.sqlite" "$STORE"
-      ./run_in_container.sh exec peek_failures.R      # confirms the rows arrived
+      container/run_in_container.sh exec peek_failures.R  # confirms the rows arrived
       ```
-
-      A batch job does this for itself (`t3opt_ceres.sh`); this is only for checking by hand
-      before you submit.
+      
+      A batch job does this for itself (`t3opt_ceres.sh`); this is only for
+      checking by hand before you submit.
 
 **Submit**
 
@@ -649,12 +650,27 @@ file instead means a merge conflict on every `git pull`, forever.
 
 | you edit (gitignored) | copied from (tracked) | carries |
 |---|---|---|
-| `container/submit.local.sh` | `submit.local.sh.example` | account, paths, node sizing |
+| `container/submit.local.sh` | `submit.local.sh.example` | Slurm account, node sizing |
 | `settings.local.R` | `container/settings.local.R.scinet` | `db_path`, `cache_dir` on `$TMPDIR` |
-| `.Renviron` | `.Renviron.example` | T3 credentials, `OPTIMIZER_HOME` |
+| `.Renviron` | `.Renviron.example` | T3 credentials, **`OPTIMIZER_HOME`** |
 
 This is the arrangement `settings.R:31-32` already describes for `settings.local.R`: the
 tracked file stays identical on every machine, so `git pull` can never conflict on it.
+
+**`.Renviron` is the single source for `OPTIMIZER_HOME`** — `submit.local.sh` reads it from
+there rather than restating it, and derives `REPO` from its own location. So the only things
+you edit in `submit.local.sh` are the account and the sizing.
+
+That direction is forced, not a preference: **R overrides the inherited environment from
+`.Renviron` at startup** (see the note in `optimizer_paths.sh`). A second value set in the
+shell would lose to it inside the container, so the shell would bind and restore one directory
+while R wrote to another — and the symptom looks like a permissions fault, not a config
+mismatch. `t3opt_ceres.sh` therefore *requires* `OPTIMIZER_HOME` and `REPO` in its environment
+rather than defaulting them; a default there could contradict `.Renviron` just as easily.
+
+One constraint follows: the value in `.Renviron` must be a **literal absolute path**. R would
+expand `${HOME}` or `~` and the shell read does not, so `submit.local.sh` refuses those rather
+than letting the two disagree.
 
 It works for the batch script because **`sbatch` command-line flags override `#SBATCH`
 directives**. The directives inside `t3opt_ceres.sh` are documented defaults;
