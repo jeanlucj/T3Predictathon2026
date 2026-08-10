@@ -82,6 +82,9 @@ export N_WORKERS=22
 export N_THREADS=1
 NTASKS=32
 MEM=1800G
+# The ONLY wall-clock declaration. The job is meant to run until SLURM kills it here; do not
+# add a matching max_hours to settings.local.R, which would be a second copy to keep in step
+# for no benefit -- see the note at the bottom of container/settings.local.R.scinet.
 TIME=21-00:00:00          # 3 weeks, the ceres maximum
 
 # ---- submit --------------------------------------------------------------

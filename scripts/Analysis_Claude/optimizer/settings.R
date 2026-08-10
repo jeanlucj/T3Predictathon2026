@@ -157,7 +157,14 @@ optimizer_settings <- function(local_overrides = TRUE) {
 
     # ---- budget / background control -------------------------------------
     max_iters     = Inf,         # stop after this many evaluations
-    max_hours     = Inf,         # ... or this much wall-clock, whichever first
+    # ... or this much wall-clock, whichever first. Tested only BETWEEN evaluations, so it
+    # bounds when a worker stops taking new work, not how long one evaluation may run
+    # (max_eval_minutes below does that).
+    #
+    # For INTERACTIVE runs, where nothing external ends the job. Under a scheduler leave it at
+    # Inf and let the wall clock do it: the periodic backups already bound what a kill costs,
+    # and a margin only makes every worker idle for it. See container/settings.local.R.scinet.
+    max_hours     = Inf,
     # Wall-clock cap on ONE evaluation, in minutes. Inf = no cap, and that is the default.
     #
     # PITFALL: a cap CENSORS NON-RANDOMLY. The slow configurations are the thorough ones

@@ -391,6 +391,22 @@ moved after the rsync, three concurrent workers produce three transfers instead 
 **What the leader still does, and why it is different.** Restoring the cache at startup stays
 leader-only. That is not a throughput throttle but a correctness one: the others must not read a
 half-populated tree, which is what `cache_ready_file` exists to signal.
+
+**Then the fix removed the need for a second mechanism.** Once both backups were every-worker
+and on a 30-minute interval, `max_hours` — set below the SLURM `--time` so the loop could stop
+"cleanly" before the scheduler killed it — stopped earning its place, and was dropped from the
+cluster config. A hard kill now costs at most one backup interval and corrupts nothing
+(tmp-then-rename backups; WAL is crash-safe). Against that, a margin idles every worker for its
+duration and still cannot save the in-flight evaluation, which is only ever checked *between*
+evaluations. It had also been silently wrong in the one place it was meant to be exercised:
+`--qos=debug --time=00:30:00` left `max_hours = 480`, so the shakeout never rehearsed the
+shutdown at all. **A safety net that duplicates a stronger one is not free — it is another
+number to keep in step, and it was already out of step.**
+
+*Considered and rejected:* `#SBATCH --signal=B:USR1@300` fires five minutes before the wall
+clock and could flush with no idle margin. It needs signal handling in a non-interactive
+`Rscript` under `bash … wait`, and it buys back the same ≤30 minutes the periodic backups
+already bound. Not worth the machinery.
 **Lives in.** `R/store.R::should_backup_now` / `backup_age_minutes`,
 `R/data_access.R::sync_cache_to_backup`, `run_optimizer.R`, `R/report.R`,
 `tests/test_concurrency.R` §5-6.

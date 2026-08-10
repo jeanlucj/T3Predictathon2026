@@ -171,9 +171,27 @@ err low.
 
 Clusters cap job length (commonly 1–3 weeks); the optimizer is designed
 to run indefinitely. This is not a problem, because the store is
-resumable: a job that hits its limit loses only the evaluations in
-flight. Queue several jobs instead, each picking up where the last left
-off. Configurations already run are skipped by hash.
+resumable. Queue several jobs instead, each picking up where the last
+left off. Configurations already run are skipped by hash.
+
+**The job is *meant* to be killed at its wall clock.** There is no clean
+shutdown and no `max_hours` on a cluster, deliberately. What a kill costs:
+
+- **≤30 minutes of stored results.** Both the store and the cache are
+  backed up every 30 minutes, by whichever worker reaches the check
+  first — not by a designated leader that might be mid-evaluation.
+- **The evaluations in flight**, about 29 minutes each at the median.
+  No shutdown scheme saves those: a wall-clock stop is only ever tested
+  *between* evaluations, so whatever is running is lost either way.
+- **Nothing else.** `backup_store()` writes to a temp file and renames,
+  so a killed backup leaves the previous good one; and SQLite in WAL
+  mode is crash-safe by design.
+
+Setting a `max_hours` below `--time` would buy back only that ≤30-minute
+window, while making *every* worker idle for the margin — around 11
+worker-hours per job at 22 workers. It also cannot tell whether the next
+evaluation needs 29 minutes or 33 hours, so it cannot avoid starting one
+that will not finish.
 
 The simplest way is **`--dependency=singleton`** with a fixed
 `--job-name`, which is what `submit.local.sh` sets. SLURM then refuses

@@ -61,10 +61,21 @@ settings_override <- list(
   # ---- sizing ------------------------------------------------------------
   # Memory is the binding resource: measured 19 GB median, 82 GB peak per worker. Raise only
   # after report_memory.R shows headroom on a real Ceres run.
-  dosage_budget_bytes = 16e9,
-
-  # Stop cleanly before SLURM kills the job, so the final backup actually happens. Set this
-  # BELOW the #SBATCH --time value; the difference is the margin for one in-flight evaluation
-  # to finish (median 29 min, so an hour of margin is not excessive).
-  max_hours = 20 * 24
+  dosage_budget_bytes = 16e9
 )
+
+# NO max_hours HERE, DELIBERATELY -- the job is meant to be killed at its wall clock, and the
+# wall clock is declared once, in submit.local.sh. Do not add a second copy of it.
+#
+# A clean stop would buy nothing worth having:
+#   * Both backups run every 30 min from WHICHEVER worker gets there first, so a hard kill
+#     costs at most one interval.
+#   * Nothing is corrupted by it. backup_store() writes dest.tmp<PID> and renames, so a killed
+#     backup leaves the previous good one; and SQLite in WAL mode is crash-safe by design.
+#   * max_hours is only tested BETWEEN evaluations, so it cannot save the in-flight one -- that
+#     is lost either way.
+# Against that, a margin makes every worker idle for it (22 workers x 0.5 h = 11 worker-hours a
+# job), and it cannot know whether the next evaluation needs 29 minutes or 33 hours.
+#
+# It is still the right setting for an INTERACTIVE run, where nothing external ends the job --
+# see RUNBOOK_INTERACTIVE.md.
