@@ -112,6 +112,18 @@ cat("  R               :", R.version.string, "\n")
 if (dry_run) { cat("\n--dry-run: nothing installed.\n"); quit(status = 0) }
 
 dir.create(lib, recursive = TRUE, showWarnings = FALSE)
+
+# PUT IT ON THE SEARCH PATH, not just create it. R builds .libPaths() at STARTUP and silently
+# drops entries that do not exist -- so on the first run, when R_LIBS_USER pointed at a
+# directory this script had yet to create, `lib` was absent from .libPaths() for the whole
+# session. install.packages(lib = lib) still wrote there correctly, and the completeness check
+# below still found the files, but `remotes::install_github` a few lines on could not see the
+# package it had just installed. Prepending here fixes it for this session; the next R start
+# picks it up on its own, because by then the directory exists.
+.libPaths(c(lib, .libPaths()))
+if (!lib %in% .libPaths())
+  stop("could not add ", lib, " to .libPaths() -- is it writable?")
+
 options(repos = c(CRAN = repo),
         # PPM serves binaries only when the User-Agent identifies the platform; without this
         # it silently falls back to source and the install takes hours instead of minutes.
@@ -121,8 +133,16 @@ options(repos = c(CRAN = repo),
         Ncpus = max(1L, parallel::detectCores()))
 
 t0 <- Sys.time()
-cat("\n== installing CRAN packages ==\n"); utils::flush.console()
-install.packages(pkgs, lib = lib)
+
+# Install only what is absent, so re-running after an interruption costs seconds rather than
+# another hour. install.packages() would otherwise re-download and rebuild everything.
+todo <- setdiff(pkgs, rownames(installed.packages(lib.loc = lib)))
+if (length(todo)) {
+  cat("\n== installing", length(todo), "CRAN packages ==\n"); utils::flush.console()
+  install.packages(todo, lib = lib)
+} else {
+  cat("\n== all", length(pkgs), "CRAN packages already present ==\n")
+}
 
 missing <- setdiff(pkgs, rownames(installed.packages(lib.loc = lib)))
 if (length(missing))
@@ -138,7 +158,7 @@ remotes::install_github(paste0("jeanlucj/T3BrapiHelpers@", sha_helpers),
 cat("\n== verifying ==\n")
 for (p in c(pkgs, "BrAPI", "T3BrapiHelpers")) {
   if (p == "remotes") next
-  ok <- suppressMessages(require(p, character.only = TRUE, quietly = TRUE, lib.loc = .libPaths()))
+  ok <- suppressMessages(require(p, character.only = TRUE, quietly = TRUE))
   if (!ok) stop("installed but will not load: ", p)
 }
 # The private function R/data_access.R reaches for. A pin that drifted shows up here.
