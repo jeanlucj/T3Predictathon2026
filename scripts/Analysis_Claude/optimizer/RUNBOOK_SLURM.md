@@ -52,9 +52,19 @@ NOTE: make your life easier editting these in RStudio with Ceres ondemand
       → must print a path under `$TMPDIR` (node-local), not `/project`
 - [ ] `./run_in_container.sh exec prewarm_indices.R --only=projects --limit=5` — credentials
       and outbound HTTPS together
-- [ ] Store seeded so the search resumes rather than restarts:
-      `cp $OPTIMIZER_HOME/state/evals_backup.sqlite $TMPDIR/evals.sqlite`, then
-      `./run_in_container.sh exec peek_failures.R` to confirm the rows arrived
+- [ ] Store seeded so the search resumes rather than restarts. `db_path` is
+      `$TMPDIR/t3opt_<user>/evals.sqlite`, so take the destination from the check above rather
+      than assuming it — and create the directory, which only exists once a job has run:
+
+      ```bash
+      STORE=$TMPDIR/t3opt_$(id -un)/evals.sqlite
+      mkdir -p "$(dirname "$STORE")"
+      cp "$OPTIMIZER_HOME/state/evals_backup.sqlite" "$STORE"
+      ./run_in_container.sh exec peek_failures.R      # confirms the rows arrived
+      ```
+
+      A batch job does this for itself (`t3opt_ceres.sh`); this is only for checking by hand
+      before you submit.
 
 **Submit**
 
@@ -374,7 +384,7 @@ reached through `$TMPDIR`. That is genuine node-local disk, so WAL works, and it
 ``` r
 .base <- file.path(Sys.getenv("TMPDIR"), paste0("t3opt_", Sys.info()[["user"]]))
 
-db_path   = file.path(.base, paste0("job_", Sys.getenv("SLURM_JOB_ID")), "evals.sqlite")
+db_path   = file.path(.base, "evals.sqlite")
 cache_dir = file.path(.base, "cache")
 db_backup_path = file.path(Sys.getenv("OPTIMIZER_HOME"), "state", "evals_backup.sqlite")
 ```
