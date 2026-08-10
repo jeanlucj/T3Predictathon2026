@@ -6,19 +6,19 @@ editor_options:
 
 # Runbook: SLURM clusters (and USDA-ARS SciNet)
 
-**Use this when a scheduler decides where and when your work runs.** If you can `ssh` to a
-machine and start things on it directly — your laptop, or a reserved BioHPC server — use
+**Use this when a SLURM decides where and when your work runs.** If you `ssh` to a
+machine and use the command line there — use
 **`RUNBOOK_INTERACTIVE.md`** instead.
 
-The *why* behind any of it is in **`README.md`**. Sections 1–6 apply to any SLURM cluster;
-**§7 is SciNet (Ceres)** in full, which is the cluster this project actually targets.
+The *why* behind these commands is in **`README.md`**. Sections 1–6 apply to any 
+SLURM cluster;
+**§7 applies to SciNet (Ceres)**, the cluster this project targets.
 
 ------------------------------------------------------------------------
 
-## The complete checklist
+## A checklist
 
-End to end, from no account to a running search. Concrete commands are the Ceres ones, since
-that is the target; §§1–6 give the generic form for any other cluster.
+From no account to a running search. Concrete commands are for Ceres; §§1–6 give the generic form for any  cluster.
 
 **Access**
 
@@ -34,21 +34,22 @@ that is the target; §§1–6 give the generic form for any other cluster.
 - [ ] `module load apptainer` — **not** on `PATH` by default
 - [ ] `cd .../optimizer/container && ./build.sh` (20–45 min)
 - [ ] `apptainer test optimizer.sif` passes
-- [ ] `./run_in_container.sh test` → 32 / 8007 / 317
+- [ ] `./run_in_container.sh test`
 
-**The three `.local` files** — never edit a tracked file (§7.5)
+**The three `.local` files** — these are untracked (§7.5)
+NOTE: make your life easier editting these in RStudio with Ceres ondemand
 
 - [ ] `.Renviron` from `.Renviron.example`: `T3_USERNAME`, `T3_PASSWORD`, `OPTIMIZER_HOME`
-      (project storage, never home)
-- [ ] `settings.local.R` from `container/settings.local.R.scinet`
-- [ ] `container/submit.local.sh` from `submit.local.sh.example`: account, paths, sizing
+      (project storage, not node drive)
+- [ ] `settings.local.R` optimizer settings tailored to the cluster node. From `container/settings.local.R.scinet`
+- [ ] `container/submit.local.sh` what SLURM runs. From `submit.local.sh.example`
 
 **Prove the environment**
 
 - [ ] `curl -sI https://wheat.triticeaetoolbox.org | head -1` from a compute node
 - [ ] Settings resolve, inside an allocation:
       `Rscript -e 'source("settings.R"); s <- optimizer_settings(); cat(s$db_path, "\n")'`
-      → must print a path under `/local/bgfs/<jobid>`, not `/project`
+      → must print a path under `$TMPDIR` (node-local), not `/project`
 - [ ] `./run_in_container.sh exec prewarm_indices.R --only=projects --limit=5` — credentials
       and outbound HTTPS together
 - [ ] Store seeded so the search resumes rather than restarts:
@@ -61,8 +62,8 @@ that is the target; §§1–6 give the generic form for any other cluster.
 - [ ] Shakeout first: `./submit.local.sh --qos=debug --time=00:30:00 --ntasks=4 --mem=200G`
 - [ ] `squeue -u $USER` shows it running; `logs/slurm-<jid>.out` has no WAL warning
 - [ ] Only then the real submission: `./submit.local.sh`
-- [ ] Chain it: `jid=$(./submit.local.sh --parsable)` then
-      `./submit.local.sh --dependency=afterany:$jid`
+- [ ] Queue more: just submit again. `--dependency=singleton` makes them run in sequence
+      (`./submit.local.sh; ./submit.local.sh` → a second three-week block)
 
 **After the first job finishes**
 
@@ -135,13 +136,40 @@ raise it. Because SLURM kills rather than swaps, err low.
 
 Clusters cap job length (commonly 1–3 weeks); the optimizer is designed to run indefinitely.
 This is not a problem, because the store is resumable: a job that hits its limit loses only the
-evaluations in flight. Chain jobs instead —
+evaluations in flight. Queue several jobs instead, each picking up where the last left off.
+Configurations already run are skipped by hash.
+
+The simplest way is **`--dependency=singleton`** with a fixed `--job-name`, which is what
+`submit.local.sh` sets. SLURM then refuses to start a job while an earlier one of the same name
+and user is still going, so submitting three times gives three consecutive blocks:
 
 ``` bash
-sbatch --dependency=afterany:<previous_jobid> myjob.sh
+./submit.local.sh; ./submit.local.sh; ./submit.local.sh
 ```
 
-— each one picking up from the store. Configurations already run are skipped by hash.
+No job ids to capture, and it doubles as a guarantee that **only one optimization runs at a
+time** — worth having, since several concurrent runs would each back up to the same
+`db_backup_path` and overwrite one another.
+
+<details>
+<summary>The other dependency types, and why <code>afterany</code> is the one you would reach for</summary>
+
+| type | releases the successor when the predecessor… |
+|---|---|
+| `after` | merely **starts** |
+| `afterok` | finishes **successfully** (exit 0) |
+| `afternotok` | **fails** |
+| `afterany` | ends **for any reason** — success, failure, timeout, cancellation |
+| `singleton` | …and every earlier job of the same name and user has ended |
+
+If you ever chain explicitly — `sbatch --dependency=afterany:<jobid> myjob.sh` — it must be
+`afterany`, not `afterok`. **A job that runs to its wall clock ends in SLURM state `TIMEOUT`,
+which counts as a failure**, and that is the *normal* ending here. Under `afterok` the successor
+would never be released and the chain would stop silently after one link.
+
+A held job shows in `squeue` as `PD` with reason `Dependency`.
+
+</details>
 
 **But the store must be *put back* first.** Node-local scratch is wiped between jobs, and the
 optimizer does **not** restore the store by itself: `restore_cache_from_backup()` covers the
@@ -217,7 +245,13 @@ see §6.
 ## 6. Diagnostics
 
 What each script answers is in `README.md`. On a cluster they run inside the container, from an
-interactive allocation:
+interactive allocation.
+
+> **A bare `Rscript` will not work.** The module's R has no packages, so you get
+> `there is no package called 'here'`. Everything below goes through
+> `run_in_container.sh`. The one exception is RStudio via Ceres OnDemand, which hands you the
+> module's R and cannot easily reach the container — for that, populate a personal library once
+> with `Rscript setup_fallback_libs.R` — see `container/FALLBACK_modules.md`.
 
 ``` bash
 salloc -N1 -n4 --mem=32G -t 1:00:00 -A <account>
@@ -321,16 +355,27 @@ SQLite's WAL mode coordinates through an mmap'd `-shm` file, which network files
 provide. `open_store()` (`R/store.R`) already warns when the pragma fails to take, and the
 consequence of proceeding is a corrupted store shared between workers.
 
-**Ceres gives us a good resolution.** Every compute node has **1.5 TB of local SSD scratch**,
-reached through `$TMPDIR`, which SLURM sets per job to `/local/bgfs/<jobid>`
-([scratch space](https://scinet.usda.gov/guides/use/scratch)). That is genuine node-local disk,
-so WAL works, and it is faster than `/project` besides.
+**Ceres gives us a good resolution.** Every compute node has **1.5 TB of local NVMe SSD**,
+reached through `$TMPDIR`. That is genuine node-local disk, so WAL works, and it is faster than
+`/project` besides.
+
+> **Where it actually is.** The [scratch-space docs](https://scinet.usda.gov/guides/use/scratch)
+> describe a per-job `/local/bgfs/<jobid>`. **That path does not exist on the nodes checked**
+> (2026-08-10): `$TMPDIR` is `/tmp`, `mount` shows `/dev/nvme0n1p1 on /tmp type xfs`, and
+> `df -h /tmp` reports the full 1.5 TB. So `/tmp` *is* the local SSD there. Trust `$TMPDIR`
+> rather than any documented literal — same lesson as the R version, where the published page
+> was stale.
+>
+> A consequence: `/tmp` is a plain partition, not visibly a per-job namespace, so it may be
+> shared with anything else running on the node. Hence the directory layout below.
 
 `container/settings.local.R.scinet` is the ready-made config:
 
 ``` r
-db_path        = file.path(Sys.getenv("TMPDIR"), "evals.sqlite")   # node-local SSD
-cache_dir      = file.path(Sys.getenv("TMPDIR"), "cache")          # 1.5 TB -- it fits
+.base <- file.path(Sys.getenv("TMPDIR"), paste0("t3opt_", Sys.info()[["user"]]))
+
+db_path   = file.path(.base, paste0("job_", Sys.getenv("SLURM_JOB_ID")), "evals.sqlite")
+cache_dir = file.path(.base, "cache")
 db_backup_path = file.path(Sys.getenv("OPTIMIZER_HOME"), "state", "evals_backup.sqlite")
 ```
 
@@ -357,12 +402,30 @@ which is the one place the store must not be. Confirm it took, inside an allocat
 Rscript -e 'source("settings.R"); s <- optimizer_settings(); cat(s$db_path, "\n")'
 ```
 
-That must print a path under `/local/bgfs/<jobid>`. A path under `/project` means the copy did
-not land where `here::here()` looks.
+That must print a path under `$TMPDIR`. A path under `/project` means the copy did not land
+where `here::here()` looks.
 
-Paths are computed at runtime, never hardcoded — `$TMPDIR` contains the job id and so differs
-every job. The file refuses to load unless `$TMPDIR` is genuinely job-scoped: a bare `/tmp`,
-which is what you get outside an allocation, is rejected rather than silently accepted.
+**Nothing is scoped by job id, and that is deliberate.** Only one optimization runs at a time
+(`--dependency=singleton`, §2), so the paths only have to be *stable*, not unique. The store is
+restored from the durable backup at the start of every job regardless.
+
+To be clear about what is and is not a hazard here, because it is easy to over-worry:
+
+- **Several workers sharing one store is fully supported.** That is what WAL on node-local disk
+  is for, and it is the ordinary N-worker configuration. Nor is the *archive* single-purpose:
+  `filter_evals_to_domain` / `filter_evals_to_scheme` / `filter_evals_to_build`
+  (`R/optimizer.R:32-45`) exist precisely so runs with different domains and schemes coexist in
+  one file.
+- **What genuinely does not work is two concurrent runs**, because both would `VACUUM INTO` the
+  same `db_backup_path` and the later one would win, dropping the other's evaluations from the
+  only durable copy. `singleton` is what prevents that.
+
+The **cache** is shared across jobs on a node: if `/tmp` survives, the next job reuses multi-GB
+downloads rather than re-fetching them; if it does not, `restore_cache_from_backup()`
+repopulates it from `cache_backup_dir` at startup.
+
+Paths are computed at runtime rather than hardcoded, and the file refuses to load when
+`SLURM_JOB_ID` is unset — outside a job `$TMPDIR` is shared storage, where WAL cannot work.
 
 `backup_store()` uses `VACUUM INTO`, which emits a self-contained file with no WAL sidecar, so
 the durable copy is directly usable. It runs every `db_backup_minutes` (default 30), from
@@ -596,13 +659,13 @@ cp submit.local.sh.example submit.local.sh && chmod +x submit.local.sh
 ./submit.local.sh
 ```
 
-Extra arguments pass straight through to `sbatch`, so chaining and one-off overrides need no
-new files either:
+Extra arguments pass straight through to `sbatch`, so queueing more work and one-off overrides
+need no new files either:
 
 ``` bash
-jid=$(./submit.local.sh --parsable)
-./submit.local.sh --dependency=afterany:$jid
-./submit.local.sh --qos=debug --time=00:30:00 --ntasks=4 --mem=200G   # 30-min shakeout
+./submit.local.sh; ./submit.local.sh          # two blocks, run in sequence via singleton
+./submit.local.sh --job-name=t3opt-debug \
+  --qos=debug --time=00:30:00 --ntasks=4 --mem=200G   # 30-min shakeout, alongside
 ```
 
 Submitting `t3opt_ceres.sh` directly, with its placeholders intact, stops immediately and
@@ -730,9 +793,11 @@ below asks only the remaining three and its numbering does not match this list.*
 - [x] **1. Outbound HTTPS from compute nodes** — **YES.** `optimizer.def` built on a Ceres
       compute node on 2026-08-06, reaching Docker Hub, PPM and GitHub. The cache-staging
       redesign is not needed. Still confirm `wheat.triticeaetoolbox.org` specifically.
-- [x] **2. `$TMPDIR` size / lifetime** — **1.5 TB local SSD at `/local/bgfs/<jobid>`, erased at
-      job exit.** Cache *and* store both go there. The erasure is why `t3opt_ceres.sh` restores
-      the store from backup at job start.
+- [x] **2. `$TMPDIR` size / lifetime** — **1.5 TB of local NVMe**, and on the nodes checked
+      (2026-08-10) `$TMPDIR` is `/tmp`, *not* the documented `/local/bgfs/<jobid>`. Cache *and*
+      store both go there, under a per-user directory. Whether it survives between jobs is
+      still unconfirmed, so the store is job-scoped and `t3opt_ceres.sh` restores it from
+      backup at job start either way.
 - [ ] **3. `/project` filesystem type** — confirms the WAL constraint and the backup pattern.
       Lower stakes now that both hot paths sit on `$TMPDIR`; it only governs the backups.
 - [ ] **4. Project storage granted** — quota and path.
@@ -789,10 +854,11 @@ questions about software and outbound network access are settled. What remains:
    enough.)
 
 3. **Long jobs.** The `ceres` partition allows 3 weeks and QOS `long` allows 60 days but caps
-   at 144 cores. For a months-long job my plan is to chain 3-week jobs with
-   `--dependency=afterany`, since the work is checkpointed. Is that the preferred approach, or
-   would QOS `long` be more appropriate? Is there any guidance on repeatedly occupying most of
-   a large-memory node for an extended period?
+   at 144 cores. For a months-long job my plan is to submit successive 3-week jobs sharing a
+   job name with `--dependency=singleton`, so they run one after another; the work is
+   checkpointed, so a job ending at its wall clock loses almost nothing. Is that the preferred
+   approach, or would QOS `long` be more appropriate? Is there any guidance on repeatedly
+   occupying most of a large-memory node for an extended period?
 
 Thank you,
 Jean-Luc Jannink

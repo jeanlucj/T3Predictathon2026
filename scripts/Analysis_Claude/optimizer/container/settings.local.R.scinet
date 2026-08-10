@@ -2,47 +2,61 @@
 #
 #   cp container/settings.local.R.scinet settings.local.R
 #
-# Ceres compute nodes each have 1.5 TB of local SSD scratch, reached through $TMPDIR, which
-# SLURM sets per job to /local/bgfs/<jobid>. That is genuinely node-local disk, which is what
-# SQLite's WAL requires -- /project and /home are network filesystems and WAL cannot work on
-# them (open_store() warns, and the consequence of ignoring it is a corrupted store).
+# WHERE THE LOCAL SCRATCH ACTUALLY IS. Ceres compute nodes have 1.5 TB of local NVMe SSD, and
+# on the nodes checked (2026-08-10) it is mounted at /tmp -- `mount` shows
+# /dev/nvme0n1p1 on /tmp type xfs, and `df -h /tmp` reports the full 1.5 TB. $TMPDIR is /tmp.
+# The published docs describe a per-job /local/bgfs/<jobid>; that path does not exist on these
+# nodes. Trust $TMPDIR, not the documented literal.
 #
-# $TMPDIR IS ERASED WHEN THE JOB EXITS. Nothing here survives on its own; the durable copies
-# under OPTIMIZER_HOME are what persist, and t3opt_ceres.sh restores from them at job start.
-
-# Paths are computed at RUNTIME from the environment, never hardcoded: $TMPDIR contains the
-# job id, so it is different for every job.
-.tmp  <- Sys.getenv("TMPDIR")
-.home <- Sys.getenv("OPTIMIZER_HOME")
-
-# Refuse to run rather than silently fall back.
+# What matters for correctness is only that it is genuinely node-local disk, which it is:
+# SQLite's WAL coordinates through an mmap'd -shm file that network filesystems do not provide,
+# so /project and /home are excluded (open_store() warns; the consequence is a corrupted store).
 #
-# Testing nzchar() alone is NOT enough, and that mistake is easy to make: outside a SLURM job
-# TMPDIR is set to "/tmp", which is non-empty and therefore passes a presence check while
-# being exactly the wrong disk -- shared between users and jobs, and not the job-scoped SSD.
-# What matters is that TMPDIR is a per-job directory, so that is what gets checked.
-if (!nzchar(.tmp) || identical(sub("/+$", "", .tmp), "/tmp"))
-  stop("TMPDIR is \"", .tmp, "\", which is not job-scoped local scratch.\n",
-       "  Inside a Ceres job it is /local/bgfs/<jobid>. You are probably on a login node,\n",
-       "  or outside an allocation. Get one first:\n",
+# BECAUSE $TMPDIR MAY BE SHARED with other users on the node -- it is a plain XFS partition,
+# not a private namespace -- everything below lives under its own per-user directory.
+#
+# Nothing here is scoped by job id, because only ONE optimization runs at a time:
+# submit.local.sh passes --dependency=singleton, so SLURM will not start a second job of the
+# same name until the first has ended. (Several workers sharing one store is a different
+# matter and is fully supported -- that is what WAL on node-local disk is for.)
+
+.tmp   <- Sys.getenv("TMPDIR")
+.home  <- Sys.getenv("OPTIMIZER_HOME")
+
+# Refuse rather than silently fall back.
+#
+# The real requirement is "inside a SLURM job", not any particular path: on a compute node
+# $TMPDIR is the local SSD, on a login node it is shared storage, and the two look identical
+# as strings. SLURM_JOB_ID is what actually distinguishes them.
+if (!nzchar(.tmp))
+  stop("TMPDIR is unset -- cannot place the store on node-local disk.")
+if (!nzchar(Sys.getenv("SLURM_JOB_ID")))
+  stop("SLURM_JOB_ID is unset, so this is not running inside a job.\n",
+       "  On a login node $TMPDIR is shared storage, and SQLite's WAL cannot work there.\n",
+       "  Get an allocation first:\n",
        "    salloc -N1 -n4 --mem=16G -t 1:00:00 -A <account>\n",
        "  (find your account with: sacctmgr -Pns show user format=account,defaultaccount)")
 if (!nzchar(.home))
   stop("OPTIMIZER_HOME is unset -- set it in .Renviron to your /project path.")
 
+# Our own corner of the node's scratch, so nothing here can collide with another user's files
+# or another tool's temp directory.
+.base <- file.path(.tmp, paste0("t3opt_", Sys.info()[["user"]]))
+
 settings_override <- list(
 
-  # ---- the live store: node-local SSD ------------------------------------
-  # Backed up to OPTIMIZER_HOME every db_backup_minutes by whichever worker gets there first
-  # (not just the leader -- see LESSONS #25), and once more when the job ends.
-  db_path = file.path(.tmp, "evals.sqlite"),
+  # ---- the live store: node-local SSD --------------------------------------
+  # t3opt_ceres.sh restores this from the durable backup at the start of every job, so the
+  # path only has to be stable, not unique. Backed up to OPTIMIZER_HOME every
+  # db_backup_minutes by whichever worker gets there first (not just the leader --
+  # see LESSONS #25), and once more when the job ends.
+  db_path = file.path(.base, "evals.sqlite"),
 
-  # ---- the cache: also node-local, because it fits -------------------------
-  # 1.5 TB of local SSD is far more than the cache needs, and it is much faster than /project
-  # for the dosage matrices, which dominate evaluation time. restore_cache_from_backup()
-  # repopulates this from cache_backup_dir at startup, so a fresh node warms itself.
-  # Drop this line to keep the cache on /project instead -- slower, but it survives the job.
-  cache_dir = file.path(.tmp, "cache"),
+  # ---- the cache: node-local, reused across jobs ---------------------------
+  # If /tmp survives between jobs on a node, the next job reuses these downloads instead of
+  # re-fetching multi-GB VCFs; if it does not, restore_cache_from_backup() repopulates from
+  # cache_backup_dir at startup. Either way this is the right place for it.
+  cache_dir = file.path(.base, "cache"),
 
   # ---- sizing ------------------------------------------------------------
   # Memory is the binding resource: measured 19 GB median, 82 GB peak per worker. Raise only

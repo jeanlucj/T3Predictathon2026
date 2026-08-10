@@ -15,10 +15,16 @@
 # The mechanism: sbatch COMMAND-LINE flags override #SBATCH directives inside the script. So
 # the directives in t3opt_ceres.sh act as documented defaults, and whatever is set here wins.
 #
-# Chaining works because extra arguments are passed through to sbatch:
+# ONE RUN AT A TIME. --dependency=singleton (below) tells SLURM not to start this job while an
+# earlier job of the same name and user is still going. So to queue a month of work, just
+# submit it three times -- they run in sequence, no job ids to capture:
 #
-#   jid=$(./submit.local.sh --parsable)
-#   ./submit.local.sh --dependency=afterany:$jid
+#   ./submit.local.sh; ./submit.local.sh; ./submit.local.sh
+#
+# To deliberately run something alongside -- a debug shakeout, say -- give it a different name,
+# which overrides the default:
+#
+#   ./submit.local.sh --job-name=t3opt-debug --qos=debug --time=00:30:00 --ntasks=4 --mem=200G
 #
 # Dry run -- prints the allocation it WOULD get, queues nothing:
 #
@@ -30,6 +36,9 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # ---- who you are ---------------------------------------------------------
 # sacctmgr -Pns show user format=account,defaultaccount
 ACCOUNT=CHANGEME
+
+# singleton keys on this name. Keep it stable, or the one-run-at-a-time guarantee is lost.
+JOB_NAME=t3opt
 
 # ---- where things live ---------------------------------------------------
 # Project storage, never home: home is 30 GB and the dosage cache alone can exceed it.
@@ -51,6 +60,8 @@ TIME=21-00:00:00          # 3 weeks, the ceres maximum
 # "$@" comes before the script path so extra arguments reach sbatch, not the job.
 exec sbatch \
   --account="$ACCOUNT" \
+  --job-name="$JOB_NAME" \
+  --dependency=singleton \
   --ntasks="$NTASKS" \
   --mem="$MEM" \
   --time="$TIME" \

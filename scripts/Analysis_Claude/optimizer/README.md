@@ -380,6 +380,18 @@ differs**, so the commands live in your runbook rather than here.
 | `blas_check.R` | is R's linear algebra actually threaded? | interactive §1 |
 | `report_memory.R` | how much memory did evaluations really use, and how many workers fit? | interactive §5 · SLURM §2 |
 
+**On a cluster these run inside the container**, which is where the packages are:
+
+``` bash
+./container/run_in_container.sh exec peek_failures.R     # any script, plus its arguments
+./container/run_in_container.sh shell                    # interactive R inside the image
+```
+
+A bare `Rscript` uses the cluster module's R, which has **no packages installed** — the symptom
+is `there is no package called 'here'`. Either go through the container as above, or populate a
+personal library once with `Rscript setup_fallback_libs.R` (see
+`container/FALLBACK_modules.md`); the container is the better answer unless you need RStudio.
+
 Two properties hold in both environments:
 
 - **All are read-only against the store except `prewarm_indices.R`**, which writes cache files.

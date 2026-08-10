@@ -45,23 +45,29 @@ Rscript -e '.libPaths()'        # your project path must be FIRST
 
 ## Installing the packages
 
+One script does it:
+
 ```bash
-mkdir -p /project/<account>/R_packages/4.5
 cd <repo>/scripts/Analysis_Claude/optimizer
-
-Rscript -e 'install.packages(c(
-  "tidyverse","here","DBI","RSQLite","jsonlite","rlang","Matrix",
-  "lme4","rrBLUP","sommer","rpart","MASS","janitor","httr",
-  "RhpcBLASctl","remotes"),
-  repos = "https://packagemanager.posit.co/cran/2026-08-01")'
-
-# Pinned to the same commits as optimizer.def -- R/data_access.R reaches a PRIVATE function
-# in T3BrapiHelpers, so a branch install can break it with no warning.
-Rscript -e 'remotes::install_github("TriticeaeToolbox/BrAPI.R@51d8d450d8ec4f9fc13248165b6382f4a24030b0", upgrade = "never")'
-Rscript -e 'remotes::install_github("jeanlucj/T3BrapiHelpers@6c756462b5a315a992bdd7a26585d912a5452013", upgrade = "never")'
+module load r/4.5.3
+Rscript setup_fallback_libs.R --dry-run     # what it would install, and from where
+Rscript setup_fallback_libs.R               # 30-60 min: lme4, sommer, Matrix compile
 ```
 
-Expect 30–60 minutes: `lme4`, `sommer` and `Matrix` all compile.
+It **reads the package list, the CRAN snapshot date and both git SHAs out of
+`container/optimizer.def`** rather than restating them, so this route and the container cannot
+drift apart. If that parse ever fails it stops rather than quietly installing today's CRAN.
+
+It also refuses in the two situations where it would do harm: run inside the container (where
+everything is already present, and anything installed lands in the ephemeral overlay), or with
+`R_LIBS_USER` unset or pointing into your 30 GB home.
+
+Afterwards it verifies with the same assertions `optimizer.def`'s `%test` makes — every package
+loads, and the private `make_row_from_trial_result` still exists in `T3BrapiHelpers`.
+
+> The script is deliberately written in **base R only**: no `library(tidyverse)`, no
+> `here::i_am()`. It runs precisely when those packages are missing, so depending on them would
+> make it fail in the one situation it exists for.
 
 ## Then verify
 

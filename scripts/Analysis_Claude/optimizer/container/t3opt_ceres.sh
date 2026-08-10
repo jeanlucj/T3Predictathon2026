@@ -58,14 +58,14 @@ esac
 . "$REPO/container/lib_apptainer.sh"
 ensure_apptainer || exit 1
 
-# The live store goes on node-local disk. SQLite's WAL coordinates through an mmap'd -shm
-# file that network filesystems do not provide; settings.local.R points db_path at $TMPDIR,
-# and backup_store() VACUUM INTOs to project storage from there.
+# The live store goes on node-local disk. SQLite's WAL coordinates through an mmap'd -shm file
+# that network filesystems do not provide; settings.local.R puts db_path under $TMPDIR, which
+# on a Ceres compute node is the 1.5 TB local NVMe (mounted at /tmp, whatever the docs say).
 #
-# On Ceres SLURM sets TMPDIR to /local/bgfs/<jobid> -- 1.5 TB of node-local SSD, erased when
-# the job exits. Unset means we are not inside a job, and proceeding would put the store on a
-# network filesystem shared by every worker: the one configuration that corrupts it.
+# Unset TMPDIR, or no SLURM_JOB_ID, means we are not inside a job -- and then $TMPDIR is shared
+# storage, which is the one configuration that corrupts the store.
 : "${TMPDIR:?TMPDIR is unset -- not inside a SLURM job? The store MUST be on node-local disk}"
+: "${SLURM_JOB_ID:?SLURM_JOB_ID is unset -- this must run as a SLURM job, not on a login node}"
 
 # Workers x threads <= ntasks. Memory, not cores, is the binding constraint: raise the
 # worker count only after report_memory.R confirms headroom.
@@ -75,12 +75,19 @@ N_THREADS="${N_THREADS:-1}"
 mkdir -p "$OPTIMIZER_HOME/state" "$OPTIMIZER_HOME/logs" logs
 
 # ---- restore the store into node-local scratch ---------------------------
-# $TMPDIR is empty at job start and erased at job end, and the optimizer does NOT restore the
-# store by itself -- restore_cache_from_backup() covers the cache, but there is no equivalent
-# for evals.sqlite. Without this copy every chained job would start from an empty store and
-# re-run work already paid for.
+# The optimizer does NOT restore the store by itself -- restore_cache_from_backup() covers the
+# cache, but there is no equivalent for evals.sqlite. Without this copy a chained job starts
+# from an empty store and re-runs work already paid for.
+#
+# This must match db_path in settings.local.R (from container/settings.local.R.scinet).
+# Both are "$TMPDIR/t3opt_<user>/evals.sqlite" -- deliberately simple, so the two agree by
+# inspection. If you change one, change the other: a mismatch restores the backup to a path
+# nobody reads, and the run starts empty without complaining.
 BACKUP="$OPTIMIZER_HOME/state/evals_backup.sqlite"
-STORE="$TMPDIR/evals.sqlite"
+STORE="$TMPDIR/t3opt_$(id -un)/evals.sqlite"
+mkdir -p "$(dirname "$STORE")"
+echo "store     : $STORE"
+
 if [ -f "$BACKUP" ]; then
   cp "$BACKUP" "$STORE"
   # VACUUM INTO emits a self-contained file with no -wal sidecar, so the copy is complete as
