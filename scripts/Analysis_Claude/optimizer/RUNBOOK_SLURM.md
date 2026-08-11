@@ -765,12 +765,41 @@ means a merge conflict on every `git pull`, forever.
 | you edit (gitignored) | copied from (tracked) | carries |
 |------------------------|------------------------|------------------------|
 | `container/submit.local.sh` | `submit.local.sh.example` | Slurm account, node sizing |
-| `settings.local.R` | `container/settings.local.R.scinet` | `db_path`, `cache_dir` on `$TMPDIR` |
+| `settings.local.R` | `container/settings.local.R.scinet` | `dosage_budget_bytes` |
 | `.Renviron` | `.Renviron.example` | T3 credentials, **`OPTIMIZER_HOME`** |
 
 This is the arrangement `settings.R:31-32` already describes for
 `settings.local.R`: the tracked file stays identical on every machine,
 so `git pull` can never conflict on it.
+
+### `.local` files hold values. Tracked files hold logic.
+
+The rule has a sharp edge worth stating, because it has already cost a
+debugging session. **A `.local` file is gitignored, so `git pull` never
+updates it.** Any *mechanism* copied into one is frozen at the moment you
+copied it, and later fixes silently do not reach you — with no conflict,
+no warning, and a run that works but behaves like an older version.
+
+That is exactly what happened on the first shakeout: `run_workers.sh` is
+tracked, so its new log location arrived, while the `submit.local.sh` in
+use predated the `--output`/`--chdir` flags and quietly wrote
+`slurm-<jid>.out` to the repo instead.
+
+So both templates now carry values only, and source their mechanism from
+tracked files:
+
+| your file sets | mechanism lives in |
+|---|---|
+| `submit.local.sh` — account, sizes | `container/lib_submit.sh` → `submit_optimizer()` |
+| `settings.local.R` — `dosage_budget_bytes` | `settings.R` → `cluster_scratch_paths()` |
+
+Fix a flag or a path rule in the tracked file, `git pull`, and your
+unchanged local file picks it up. If you find yourself pasting logic into
+a `.local` file, that is the signal it belongs in a tracked one.
+
+As a backstop, `t3opt_ceres.sh` warns when a job was submitted by a
+`submit.local.sh` predating `lib_submit.sh` — the check that would have
+caught the log problem at submission rather than afterwards.
 
 **`.Renviron` is the single source for `OPTIMIZER_HOME`** —
 `submit.local.sh` reads it from there rather than restating it, and

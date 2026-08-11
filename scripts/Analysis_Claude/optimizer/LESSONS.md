@@ -17,6 +17,7 @@ The code cites these by number (`see LESSONS.md #11`). Numbers are stable: appen
 | §3 Search space and design | #15–#17 |
 | §4 Testing and validation | #18–#20 |
 | §5 Numerical robustness | #21–#22 |
+| §6 Running it: resources, concurrency, configuration | #23–#26 |
 
 ---
 
@@ -306,6 +307,14 @@ is recorded rather than silent. `.oracle_degenerate()` no longer excuses the cel
 test again.
 **Lives in.** `R/pipeline.R::predict_test`, `R/diagnostics.R::.oracle_degenerate`.
 
+---
+
+## §6. Running it: resources, concurrency and configuration
+
+Not statistics. These are the traps of operating the thing — memory, parallel workers, backups
+and config files — and every one of them produced a run that worked while quietly doing the
+wrong thing.
+
 ### 23. A per-project budget is not a process budget
 
 **Trap.** `dosage_budget_bytes` reads like a memory cap, and the obvious way to use a big-memory
@@ -410,3 +419,28 @@ already bound. Not worth the machinery.
 **Lives in.** `R/store.R::should_backup_now` / `backup_age_minutes`,
 `R/data_access.R::sync_cache_to_backup`, `run_optimizer.R`, `R/report.R`,
 `tests/test_concurrency.R` §5-6.
+
+### 26. A gitignored config file is frozen at the moment you copied it
+
+**Trap.** The `.local` pattern -- tracked `X.example`, gitignored `X` -- keeps `git pull` from
+conflicting on machine-specific values. It is right for that. But `git pull` also never
+*updates* the copy, so anything mechanical living in it is pinned to the day it was made.
+**Symptom.** After the log directory moved to `$OPTIMIZER_HOME/logs`, a shakeout wrote
+`run_wXX.out` to the new place and `slurm-<jid>.out` to the old one. `run_workers.sh` is
+tracked, so its half of the change arrived; `container/submit.local.sh` is not, and the copy in
+use predated the `--output`/`--chdir` flags, so SLURM fell back to a relative `#SBATCH`
+directive. No conflict, no warning, a run that worked -- just an older one. In two days that
+one file had drifted four times over.
+**Now.** The templates hold values only and source their mechanism from tracked files:
+`submit.local.sh` (account, sizes) calls `submit_optimizer()` from `container/lib_submit.sh`;
+`settings.local.R` (`dosage_budget_bytes`) splices in `cluster_scratch_paths()` from
+`settings.R`. `cluster_scratch_paths()` has to sit in `settings.R` rather than `R/`, because
+`.local_overrides()` reads `settings.local.R` before anything in `R/` is sourced. As a
+backstop, `lib_submit.sh` exports `OPTIMIZER_SUBMIT_LIB=1` and `t3opt_ceres.sh` warns when it
+is absent -- a stale copy still runs, it just says so.
+**Generalise.** Ask of every gitignored file: *if I fix a bug in the thing this was copied
+from, does the fix reach the copy?* If not, only values belong in it. The tell is a template
+that keeps needing edits -- that is not a template, it is code living in the wrong place.
+**Lives in.** `container/lib_submit.sh`, `container/submit.local.sh.example`,
+`settings.R::cluster_scratch_paths`, `container/settings.local.R.scinet`,
+`container/t3opt_ceres.sh`.

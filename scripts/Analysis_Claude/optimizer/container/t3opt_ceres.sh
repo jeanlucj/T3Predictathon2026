@@ -44,6 +44,16 @@ set -euo pipefail
 # default here could silently contradict it. Fail instead.
 : "${OPTIMIZER_HOME:?not set -- submit through container/submit.local.sh, which reads it from .Renviron}"
 : "${REPO:?not set -- submit through container/submit.local.sh}"
+
+# submit.local.sh is gitignored, so `git pull` never updates it. A copy predating
+# lib_submit.sh still submits, but with the old flags -- which is how slurm-<jid>.out once
+# landed in the repo instead of $OPTIMIZER_HOME/logs. Warn rather than refuse: the run is
+# usable, it is only the log location and binds that may surprise you.
+if [ -z "${OPTIMIZER_SUBMIT_LIB:-}" ]; then
+  echo "WARNING: this job was submitted by a submit.local.sh that predates lib_submit.sh." >&2
+  echo "  Logs and binds may not be where the runbook says. To update, keep your values and" >&2
+  echo "  re-copy: cp container/submit.local.sh.example container/submit.local.sh" >&2
+fi
 export OPTIMIZER_HOME
 # Beside the recipe, matching build.sh and run_in_container.sh -- not in OPTIMIZER_HOME, which
 # is for state that cannot be regenerated.

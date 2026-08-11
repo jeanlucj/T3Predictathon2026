@@ -79,6 +79,51 @@ remote_server <- .detect_remote_server()
 }
 
 # The filename each file setting defaults to, used only to make the error message actionable.
+# Store and cache paths for a run inside a SLURM job, for settings.local.R to splice in:
+#
+#   settings_override <- c(cluster_scratch_paths(), list(dosage_budget_bytes = 16e9))
+#
+# Lives HERE, in the tracked file, rather than being written out in each machine's
+# settings.local.R. That file is gitignored, so a fix to these rules would never reach a copy
+# already in use -- the same trap that left a submit.local.sh submitting with year-old flags.
+# It must be in settings.R specifically, not R/: .local_overrides() reads settings.local.R
+# before anything in R/ has been sourced.
+#
+# WHY THESE PATHS. SQLite's WAL coordinates through an mmap'd -shm file that network
+# filesystems do not provide, so the live store must sit on node-local disk. Inside a Ceres job
+# that is $TMPDIR -- 1.5 TB of local NVMe, mounted at /tmp on the nodes checked (2026-08-10),
+# NOT the /local/bgfs/<jobid> the published docs describe. Trust $TMPDIR, not the literal.
+#
+# Everything goes under a per-user subdirectory because $TMPDIR may be shared with other users
+# on the node. Nothing is scoped by job id: only one optimization runs at a time
+# (--dependency=singleton), so the paths need to be stable, not unique.
+cluster_scratch_paths <- function(subdir = paste0("t3opt_", Sys.info()[["user"]])) {
+  tmp <- Sys.getenv("TMPDIR")
+  # The real requirement is "inside a job", not any particular path: on a compute node $TMPDIR
+  # is local disk, on a login node it is shared storage, and the two are indistinguishable as
+  # strings. SLURM_JOB_ID is what actually separates them.
+  if (!nzchar(tmp))
+    stop("TMPDIR is unset -- cannot place the store on node-local disk.")
+  if (!nzchar(Sys.getenv("SLURM_JOB_ID")))
+    stop("SLURM_JOB_ID is unset, so this is not running inside a job.\n",
+         "  On a login node $TMPDIR is shared storage, and SQLite's WAL cannot work there.\n",
+         "  Get an allocation first:\n",
+         "    salloc -N1 -n4 --mem=16G -t 1:00:00 -A <account>\n",
+         "  (find your account with: sacctmgr -Pns show user format=account,defaultaccount)")
+  if (!nzchar(Sys.getenv("OPTIMIZER_HOME")))
+    stop("OPTIMIZER_HOME is unset -- set it in .Renviron to your /project path.")
+
+  base <- file.path(tmp, subdir)
+  list(
+    # Restored from the durable backup at the start of every job by t3opt_ceres.sh, and backed
+    # up to OPTIMIZER_HOME every db_backup_minutes by whichever worker gets there first.
+    db_path = file.path(base, "evals.sqlite"),
+    # If $TMPDIR survives between jobs on a node the next job reuses these downloads; if not,
+    # restore_cache_from_backup() repopulates from cache_backup_dir at startup.
+    cache_dir = file.path(base, "cache")
+  )
+}
+
 .default_basename <- function(k)
   switch(k, db_path = "evals.sqlite", db_backup_path = "evals_backup.sqlite",
          report_path = "report.md", stop_file = "STOP", cache_ready_file = ".cache_ready", "file")

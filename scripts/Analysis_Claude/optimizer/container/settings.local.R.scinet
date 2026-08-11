@@ -2,66 +2,24 @@
 #
 #   cp container/settings.local.R.scinet settings.local.R
 #
-# WHERE THE LOCAL SCRATCH ACTUALLY IS. Ceres compute nodes have 1.5 TB of local NVMe SSD, and
-# on the nodes checked (2026-08-10) it is mounted at /tmp -- `mount` shows
-# /dev/nvme0n1p1 on /tmp type xfs, and `df -h /tmp` reports the full 1.5 TB. $TMPDIR is /tmp.
-# The published docs describe a per-job /local/bgfs/<jobid>; that path does not exist on these
-# nodes. Trust $TMPDIR, not the documented literal.
+# VALUES ONLY. The store and cache paths, and the guards that keep them on node-local disk,
+# come from cluster_scratch_paths() in the TRACKED settings.R. That split matters: this file is
+# gitignored, so `git pull` never updates it, and a copy made earlier would keep whatever rules
+# were current then -- silently. Keeping the logic in settings.R means fixes reach you.
 #
-# What matters for correctness is only that it is genuinely node-local disk, which it is:
-# SQLite's WAL coordinates through an mmap'd -shm file that network filesystems do not provide,
-# so /project and /home are excluded (open_store() warns; the consequence is a corrupted store).
-#
-# BECAUSE $TMPDIR MAY BE SHARED with other users on the node -- it is a plain XFS partition,
-# not a private namespace -- everything below lives under its own per-user directory.
-#
-# Nothing here is scoped by job id, because only ONE optimization runs at a time:
-# submit.local.sh passes --dependency=singleton, so SLURM will not start a second job of the
-# same name until the first has ended. (Several workers sharing one store is a different
-# matter and is fully supported -- that is what WAL on node-local disk is for.)
+# Read cluster_scratch_paths() if you want to know why db_path lands where it does; the short
+# version is that SQLite's WAL needs genuinely local disk, which inside a Ceres job is $TMPDIR.
 
-.tmp   <- Sys.getenv("TMPDIR")
-.home  <- Sys.getenv("OPTIMIZER_HOME")
+settings_override <- c(
 
-# Refuse rather than silently fall back.
-#
-# The real requirement is "inside a SLURM job", not any particular path: on a compute node
-# $TMPDIR is the local SSD, on a login node it is shared storage, and the two look identical
-# as strings. SLURM_JOB_ID is what actually distinguishes them.
-if (!nzchar(.tmp))
-  stop("TMPDIR is unset -- cannot place the store on node-local disk.")
-if (!nzchar(Sys.getenv("SLURM_JOB_ID")))
-  stop("SLURM_JOB_ID is unset, so this is not running inside a job.\n",
-       "  On a login node $TMPDIR is shared storage, and SQLite's WAL cannot work there.\n",
-       "  Get an allocation first:\n",
-       "    salloc -N1 -n4 --mem=16G -t 1:00:00 -A <account>\n",
-       "  (find your account with: sacctmgr -Pns show user format=account,defaultaccount)")
-if (!nzchar(.home))
-  stop("OPTIMIZER_HOME is unset -- set it in .Renviron to your /project path.")
+  cluster_scratch_paths(),
 
-# Our own corner of the node's scratch, so nothing here can collide with another user's files
-# or another tool's temp directory.
-.base <- file.path(.tmp, paste0("t3opt_", Sys.info()[["user"]]))
-
-settings_override <- list(
-
-  # ---- the live store: node-local SSD --------------------------------------
-  # t3opt_ceres.sh restores this from the durable backup at the start of every job, so the
-  # path only has to be stable, not unique. Backed up to OPTIMIZER_HOME every
-  # db_backup_minutes by whichever worker gets there first (not just the leader --
-  # see LESSONS #25), and once more when the job ends.
-  db_path = file.path(.base, "evals.sqlite"),
-
-  # ---- the cache: node-local, reused across jobs ---------------------------
-  # If /tmp survives between jobs on a node, the next job reuses these downloads instead of
-  # re-fetching multi-GB VCFs; if it does not, restore_cache_from_backup() repopulates from
-  # cache_backup_dir at startup. Either way this is the right place for it.
-  cache_dir = file.path(.base, "cache"),
-
-  # ---- sizing ------------------------------------------------------------
-  # Memory is the binding resource: measured 19 GB median, 82 GB peak per worker. Raise only
-  # after report_memory.R shows headroom on a real Ceres run.
-  dosage_budget_bytes = 16e9
+  list(
+    # ---- sizing ----------------------------------------------------------
+    # Memory is the binding resource: measured 19 GB median, 82 GB peak per worker. Raise only
+    # after report_memory.R shows headroom on a real Ceres run.
+    dosage_budget_bytes = 16e9
+  )
 )
 
 # NO max_hours HERE, DELIBERATELY -- the job is meant to be killed at its wall clock, and the
