@@ -11,9 +11,9 @@
 # difference the current store can actually resolve.
 #
 # THE ARMS
-#   A  pooled    per-config mean scores, forest on config features only (pre-0.7.5 behaviour)
-#   B  blocked   one row per (config, trial), trial_id a factor, marginalised when scoring
-#                (0.7.5; settings$surrogate_block_trial)
+#   A  pooled    per-config mean scores, forest on config features only
+#   B  blocked   one row per (config, trial), trial_id a factor, marginalised when scoring.
+#                What choose_config() uses.
 #   C  merf      mixed-effects random forest -- trial as a SHRUNKEN random effect OUTSIDE the
 #                tree: fit the forest to y - Zb, refit b on y - f(X), iterate. This is the
 #                actual analogue of fitting a many-level factor as random in an LMM, where the

@@ -1,22 +1,15 @@
 # optimizer.R
 #
-# The model-based + evolutionary search. One call to choose_config() decides
-# which pipeline configuration to evaluate next, given everything tried so far:
+# The model-based + evolutionary search. choose_config() decides which configuration to
+# evaluate next, given everything tried so far:
 #
-#   1. While any of the five seeds is unevaluated, run that seed (baseline).
-#   2. While there are too few scored configurations to fit a surrogate, run
-#      fresh random configurations (exploration).
-#   3. Otherwise: fit the random-forest surrogate on the per-configuration mean
-#      scores, generate candidates by CROSSOVER and MUTATION of the current
-#      elites plus fresh RANDOM draws, and pick the candidate with the highest
-#      Expected Improvement.
-#   4. With small probability, instead re-evaluate the incumbent on a new trial
-#      to reduce the noise on the current leader.
+#   1. Any unevaluated seed, for a baseline.
+#   2. Fresh random configurations until there are enough scores to fit a surrogate.
+#   3. Otherwise fit the random-forest surrogate, generate candidates by crossover and
+#      mutation of the elites plus fresh random draws, and take the highest Expected
+#      Improvement.
 #
-# The driver (run_optimizer.R) supplies the trial; this module only chooses the
-# configuration. Aggregating to a per-configuration mean before fitting the
-# surrogate denoises the across-trial variability so the model sees each pipeline
-# once with its average quality.
+# The driver supplies the trial; this module only chooses the configuration.
 
 library(tidyverse)
 
@@ -121,19 +114,14 @@ aggregate_scores <- function(evals, min_n_test = 10L, adjust_trial = TRUE) {
   out$mean_score <- out$pooled
   attr(out, "estimator") <- "pooled"
 
-  # Trial-adjusted estimate. `pooled` above is confounded with WHICH trials a config happened
-  # to draw, and trials differ about twice as much as configs do (measured on the real store:
-  # sd_trial 0.078 vs sd_config 0.036). So a config that drew easy trials outranks a better
-  # one that drew hard trials, in get_elites() and incumbent_config() alike.
+  # Trial-adjusted estimate. `pooled` is confounded with WHICH trials a config drew, and
+  # trials vary more than configs -- LESSONS #19 -- so a config that drew easy trials
+  # outranks a better one that drew hard ones. A two-way random-effects fit removes that, and
+  # shrinks the config BLUPs in proportion to replication, so a single lucky draw cannot post
+  # an extreme value.
   #
-  # A two-way random-effects fit removes that and does a second wanted thing at the same time:
-  # the config BLUPs are SHRUNK toward the mean in proportion to replication, so a config seen
-  # on one trial cannot post an extreme value on the strength of a single draw. A plain mean
-  # cannot express either property.
-  #
-  # Falls back to `pooled` whenever the model is unavailable or the design cannot support it
-  # -- with one config per trial, trial and residual are confounded and lme4 refuses the fit
-  # outright. This must never take a run down, so every failure path returns the pooled value.
+  # Falls back to `pooled` whenever lme4 is unavailable or the design cannot support the fit.
+  # Every failure path must return a value: this cannot take a run down.
   if (isTRUE(adjust_trial)) {
     adj <- tryCatch(.blup_scores(evals), error = function(e) NULL, warning = function(w) NULL)
     if (!is.null(adj)) {
@@ -236,14 +224,9 @@ incumbent_config <- function(agg, min_reps = 2) {
 # Decide the trial for the next evaluation.
 #
 # A trial must reach settings$trial_replication DISTINCT configurations before the search
-# spends steps on fresh trials. This is the PRECONDITION for using trial_id as a surrogate
-# feature, not a refinement of it: with one observation per trial, an rpart split on a
-# many-level trial_id fits pure noise to an in-sample R^2 of 0.98 (measured with this
-# project's own rpart.control), so the feature would hurt. At two observations per trial the
-# same fit recovers the real trial effect (cor 0.85 with truth).
-#
-# Revisits are also cheaper than fresh trials -- that trial's observations and dosage
-# matrices are already cached.
+# spends steps on fresh trials. This is the PRECONDITION for trial_id as a surrogate feature,
+# not a refinement of it -- LESSONS #19. Revisits are also cheaper: that trial's observations
+# and dosage matrices are already cached.
 choose_trial <- function(con, settings, conn = NULL) {
   r <- suppressWarnings(as.integer(settings$trial_replication %||% 1L))
   if (!is.finite(r) || r <= 1L) return(sample_trial(settings, conn))
@@ -323,29 +306,12 @@ choose_config <- function(con, settings) {
     return(list(cfg = fresh_random(done_hashes), source = "random_init"))
   }
 
-  # Occasional re-evaluation of a top config on a new trial to denoise the leaders.
-  # We re-run a random ELITE, not only the incumbent: each step scores ONE scheme
-  # (one rep), so a config needs several selections to reach incumbent_min_reps. If
-  # only the incumbent were ever re-run, no challenger could accumulate the reps to
-  # overtake it and the incumbent would freeze on whichever config was denoised first.
-  # Sampling across the elite pack lets challengers reach the reps bar and win.
-  re_elites <- get_elites(agg, settings$n_elites)
-  if (length(re_elites) && stats::runif(1) < settings$reeval_prob) {
-    return(list(cfg = re_elites[[sample(length(re_elites), 1)]], source = "reeval_elite"))
-  }
-
-  # Phase 3: surrogate-guided.
-  #
-  # Two fits are possible, and which one is safe depends on the DESIGN of the store:
-  #   BLOCKED  one row per (config, trial), with trial_id as a factor. Trials differ far more
-  #            than configs (sd 0.078 vs 0.036) and idiosyncratically, so blocking on the id
-  #            removes that variance from every config's estimate, and the forest can also
-  #            learn config x trial structure -- 38% of the residual (R/optimizer.R history,
-  #            EM-style decomposition in the plan). Training on ROWS additionally restores the
-  #            replication weighting that collapsing to config means throws away: a config run
-  #            on ten trials contributes ten rows.
-  #   POOLED   the previous behaviour, one row per config mean. Used when the design cannot
-  #            support trial_id (see trial_feature_usable).
+  # Phase 3: surrogate-guided. Which fit is safe depends on the DESIGN of the store:
+  #   BLOCKED  one row per (config, trial), trial_id a factor. Removes the trial variance from
+  #            every config's estimate and keeps the replication weighting that collapsing to
+  #            means throws away -- LESSONS #19.
+  #   POOLED   one row per config mean, when the design cannot support trial_id
+  #            (trial_feature_usable).
   scored  <- agg |> dplyr::filter(is.finite(mean_score))
   rows    <- dplyr::filter(evals, is.finite(score))
   # Drop rows whose trial has not yet been replicated, keeping trial_id in the model for the
@@ -355,8 +321,7 @@ choose_config <- function(con, settings) {
     n_cfg <- tapply(rows$config_hash, rows$trial_id, function(x) length(unique(x)))
     rows  <- rows[n_cfg[as.character(rows$trial_id)] >= 2L, , drop = FALSE]
   }
-  blocked <- isTRUE(settings$surrogate_block_trial %||% TRUE) &&
-             nrow(rows) > 0 && dplyr::n_distinct(rows$trial_id) >= 2L
+  blocked <- nrow(rows) > 0 && dplyr::n_distinct(rows$trial_id) >= 2L
   if (blocked) {
     feats  <- configs_to_features(lapply(rows$config_json, config_from_json))
     feats$trial_id <- factor(rows$trial_id)

@@ -6,8 +6,7 @@
 #SBATCH --mem=1800G                  # ~22 workers x 82 GB measured worst case
 #SBATCH --time=21-00:00:00           # 3 weeks, the ceres maximum; submit.local.sh overrides it
                                      # and is the single place the wall clock is declared.
-                                     # The job is EXPECTED to be killed here -- there is no
-                                     # matching max_hours, deliberately.
+                                     # The job is EXPECTED to be killed here.
 #SBATCH --account=CHANGEME
 # Relative, so they follow the submitting directory -- a fallback only. submit.local.sh passes
 # absolute paths under $OPTIMIZER_HOME/logs on the command line, which override these.

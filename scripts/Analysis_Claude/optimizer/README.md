@@ -60,7 +60,7 @@ All knobs live in `optimizer_settings()` in `settings.R`. The ones you will set:
 | `optimize_scheme` | The **one** CV scheme this run optimizes (`"CV0"` or `"CV00"`). CV0 and CV00 are distinct prediction tasks with potentially different optimal pipelines, so a run targets one; to optimize both, run twice (see below). Must be a member of `schemes`. |
 | `schemes` | The CV schemes the **diagnostics** (`check_canaries`, `sweep_rich_trials`) sanity-check — kept at `c("CV0","CV00")` so bug checks cover both; this does **not** control what the optimizer targets (that's `optimize_scheme`). |
 | `focal_trait`, `focal_trait_db_id` | The trait to optimize prediction of (defaults to grain yield, T3 variable id `84527`). |
-| `max_iters`, `max_hours` | Stop after this many evaluations / this much wall-clock, whichever first. |
+| `max_iters` | Stop after this many evaluations. There is no wall-clock limit: an interactive run is ended with the stop-file, a cluster run by the scheduler. |
 | `db_path`, `cache_dir`, `report_path`, `stop_file`, `log_dir` | Where state, cache, the report, the stop-file, and logs go. Splitting these across disks is environment-specific — see your runbook. |
 
 **Machine-specific values never go in `settings.R`.** Put them in `settings.local.R`, which is

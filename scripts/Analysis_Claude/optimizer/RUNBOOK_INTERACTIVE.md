@@ -37,7 +37,6 @@ numbered section that follows.
 - [ ] `settings.local.R` created from `settings.local.R.example` (never edit `settings.R`)
 - [ ] `simulate = FALSE`
 - [ ] `optimize_scheme` set to one scheme
-- [ ] `max_hours` under your reservation length
 - [ ] `target_domain` matches your target trial
 - [ ] Memory budget: `dosage_budget_bytes`, `dosage_total_budget_bytes`
 - [ ] **⑂** `db_path` on `/workdir` (local disk — WAL cannot work over NFS)
@@ -243,8 +242,8 @@ to start.
 - [ ] `optimize_scheme` — **one** scheme per run (`"CV0"` or `"CV00"`). They are different
   tasks with different best pipelines; to do both, run twice against the same store.
   (`schemes` is a different setting, used only by the diagnostics.)
-- [ ] `max_hours` — a little **under** your reservation, so the loop exits and writes a final
-  report before the scheduler kills it
+- [ ] `max_iters` — leave unset (unbounded) unless you want a short bounded run; end a
+  long one with `touch state/STOP`, which stops it cleanly between evaluations
 - [ ] `target_domain` — the trial list appropriate for your target trial
 - [ ] **Memory budget** — `dosage_budget_bytes` and `dosage_total_budget_bytes`, from the table
   just below
@@ -266,7 +265,6 @@ to start.
 settings_override <- list(
   simulate                  = FALSE,
   optimize_scheme           = "CV00",
-  max_hours                 = 23.5,
   dosage_budget_bytes       = 16e9,     # keep at whatever the CACHE was built with
   dosage_total_budget_bytes = 18e9,     # 512 GB, 8 workers -- this is what bounds memory
   db_path        = "/workdir/<user>/T3optimizer/evals.sqlite",
@@ -347,7 +345,7 @@ running it before you have set the settings only tells you the code was fine yes
 
     ``` bash
     Rscript -e 'source("settings.R"); str(optimizer_settings()[c("db_path","simulate",
-      "optimize_scheme","max_hours","dosage_budget_bytes","dosage_total_budget_bytes","stop_file")])'
+      "optimize_scheme","dosage_budget_bytes","dosage_total_budget_bytes","stop_file")])'
     ```
 
 - [ ] **Tests pass.**

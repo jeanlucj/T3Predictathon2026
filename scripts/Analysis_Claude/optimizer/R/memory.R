@@ -1,30 +1,20 @@
 # memory.R
 #
-# How much memory does ONE evaluation take? The answer decides two things that cannot be
-# settled by reading the code: what `dosage_budget_bytes` this machine can afford, and how
-# many workers fit in its RAM (see README "Running several workers").
+# Peak memory for ONE evaluation, which is what decides dosage_budget_bytes and how many
+# workers fit in RAM. The PEAK is the measure: dosage matrices are allocated, merged, QC'd and
+# discarded within one evaluation, so a sample taken between evaluations sees almost nothing.
 #
-# The measure that matters here is the PEAK, not the footprint at any instant: the dosage
-# matrices are allocated, merged, QC'd and discarded inside a single evaluation, so a sample
-# taken between evaluations sees almost nothing. gc(reset = TRUE) at the start of an
-# evaluation and gc() at the end brackets exactly that peak.
+# SIZE A MACHINE FROM mem_peak_rss_mb(), NOT mem_peak_mb(). On one 8-worker run the two
+# disagreed by 2.7x (33.6 GB heap vs 89.4 GB RSS): gc() sees only what R allocated itself, and
+# misses the BLAS workspace behind tcrossprod, sommer's Armadillo objects, stats::dist, pages
+# R has not returned, and the interpreter itself.
 #
-# WHICH NUMBER TO SIZE A MACHINE FROM: mem_peak_rss_mb(), not mem_peak_mb().
-#
-# Measured on one 8-worker run, the two disagreed by 2.7x -- 33.6 GB of R heap against 89.4 GB
-# of RSS for the same evaluations. gc() can only see memory R allocated ITSELF, so the heap
-# figure misses (a) compiled-code allocations -- the BLAS workspace behind tcrossprod in
-# .vanraden, sommer's Armadillo objects, stats::dist in the RKHS branch, all of which malloc
-# outside R's heap; (b) pages R has taken from the OS and not returned; (c) the interpreter,
-# shared libraries and BLAS itself. So:
-#
-#   mem_peak_mb()       peak R heap since the last reset. A LOWER BOUND on the real cost.
-#                       Kept because the ratio to the RSS peak measures what gc() cannot see.
-#   mem_peak_rss_mb()   peak RSS since the last reset -- the honest per-evaluation figure, and
-#                       what the OOM killer acts on. Linux only; NA elsewhere.
-#   proc_rss_mb()       resident size right now (not a peak). A cheap sanity check.
-#   proc_peak_rss_mb()  the raw VmHWM read. MONOTONIC over the process's life unless reset --
-#                       prefer mem_peak_rss_mb(), which only returns it when the reset works.
+#   mem_peak_mb()       peak R heap since reset. A LOWER BOUND; kept because its ratio to the
+#                       RSS peak measures what gc() cannot see.
+#   mem_peak_rss_mb()   peak RSS since reset -- the honest figure, and what the OOM killer
+#                       acts on. Linux only; NA elsewhere.
+#   proc_rss_mb()       resident size now, not a peak. A cheap sanity check.
+#   proc_peak_rss_mb()  the raw VmHWM read, monotonic over the process life unless reset.
 #
 # The per-evaluation RSS peak is possible because Linux lets a process reset its own high-water
 # mark: writing "5" to /proc/self/clear_refs (CLEAR_REFS_MM_HIWATER_RSS, kernel >= 4.0) sets

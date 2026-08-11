@@ -1,17 +1,14 @@
 # surrogate.R
 #
-# The surrogate model at the heart of the SMAC-style optimizer: a random forest
-# that predicts a configuration's score from its features, written transparently
-# as a bag of regression trees (rpart) rather than pulled from a black-box
-# package. Each tree sees a bootstrap sample of the evaluations and a random
-# subset of the features (row + feature bagging = a random forest). The ensemble
-# MEAN is the predicted score; the spread ACROSS trees is the model's
-# uncertainty. Trees handle categorical method choices and NA (inapplicable)
-# parameters natively, which is exactly why SMAC uses a forest instead of a
-# Gaussian process for this kind of mixed search space.
+# The SMAC-style surrogate: a random forest predicting a configuration's score from its
+# features, written out as a bag of rpart regression trees rather than taken from a package.
+# Each tree sees a bootstrap sample of the evaluations and a random subset of the features. The
+# ensemble MEAN is the predicted score, the spread ACROSS trees the uncertainty. Trees handle
+# categorical method choices and NA (inapplicable) parameters natively -- why SMAC uses a forest
+# rather than a Gaussian process on a mixed search space.
 #
-# We then turn (mean, uncertainty) into an Expected Improvement acquisition score
-# that the optimizer maximizes when choosing which configuration to run next.
+# (mean, uncertainty) then becomes the Expected Improvement score the optimizer maximizes when
+# choosing what to run next.
 
 library(tidyverse)
 
@@ -49,25 +46,22 @@ fit_surrogate <- function(features, y,
 
 # Is the eval slice replicated enough for trial_id to be a SAFE surrogate feature?
 #
-# rpart splits a many-level factor by ordering its levels on the response and cutting along
-# that order -- so with one observation per trial the ordering IS the noise, and the split
-# memorises it (in-sample R^2 0.98 against a pure-noise response, measured with this
-# project's rpart.control; minbucket = 3 does not prevent it). With >= 2 configurations per
-# trial the same fit recovers the real trial effect. Gate on that rather than trusting
-# settings$trial_replication to have been in force for the whole store.
+# rpart splits a many-level factor by ordering its levels on the response and cutting along that
+# order, so with one observation per trial the ordering IS the noise and the split memorises it;
+# minbucket does not prevent it. At >= 2 configurations per trial the same fit recovers the real
+# trial effect. Gate on the store's actual replication, not on settings$trial_replication, which
+# need not have been in force throughout.
 trial_feature_usable <- function(evals, min_cfg = 2L) {
   if (!nrow(evals) || !all(c("trial_id", "config_hash") %in% names(evals))) return(FALSE)
   n <- tapply(evals$config_hash, evals$trial_id, function(x) length(unique(x)))
   length(n) >= 2L && all(n >= min_cfg)
 }
 
-# Expected score of each candidate over the TRIAL POPULATION, when trial_id is a feature.
-#
-# The objective is "best on a random trial", so a candidate is scored by predicting it on
-# every observed trial and averaging -- no unseen factor level is ever needed. Marginalise
-# WITHIN each tree first, so the reported sd is the uncertainty of the marginal estimate
-# across trees, not the trial-to-trial spread (which is a property of the trials, not of how
-# well we know the configuration).
+# Expected score of each candidate over the TRIAL POPULATION, when trial_id is a feature. The
+# objective is "best on a random trial", so a candidate is predicted on every observed trial and
+# averaged; no unseen factor level is ever needed. Marginalise WITHIN each tree first, so the
+# reported sd is the uncertainty of the marginal estimate across trees rather than the
+# trial-to-trial spread, which is a property of the trials.
 predict_surrogate_marginal <- function(model, newfeatures, trials) {
   trials <- factor(trials, levels = levels(model$trial_levels %||% factor(trials)))
   n_c <- nrow(newfeatures); n_t <- length(trials)
@@ -92,8 +86,8 @@ predict_surrogate <- function(model, newfeatures) {
 
   mean_hat <- rowMeans(preds)
   sd_hat   <- apply(preds, 1, stats::sd)
-  # Floor the uncertainty so a candidate the forest happens to agree on is not
-  # treated as known with certainty (keeps exploration alive).
+  # Floor the uncertainty, so a candidate the forest happens to agree on is not treated as
+  # known with certainty.
   sd_floor <- 0.25 * stats::sd(model$y_obs)
   sd_hat   <- pmax(sd_hat, sd_floor)
   list(mean = mean_hat, sd = sd_hat)

@@ -1,8 +1,8 @@
 # report.R
 #
-# Make the run interpretable, not a black box: the learning curve, the current
-# best pipeline, and which subtask METHODS most raise the score. Written after
-# every checkpoint so you can watch progress while it runs in the background.
+# The Markdown snapshot of a run: learning curve, current best pipeline, and which subtask
+# METHODS most raise the score. Rewritten at every checkpoint, so a background run can be
+# watched from the file.
 
 library(tidyverse)
 
@@ -23,9 +23,8 @@ format_config <- function(cfg) {
   paste(parts, collapse = "\n")
 }
 
-# Marginal effect of each subtask METHOD: mean score of all configs using it,
-# minus the overall mean. Positive = that method tends to help. This is the
-# "which submitted ideas actually win" view.
+# Marginal effect of each subtask METHOD: mean score of the configs using it, minus the overall
+# mean. Positive = the method tends to help.
 method_importance <- function(evals) {
   if (!nrow(evals)) return(tibble::tibble())
   cfgs <- lapply(evals$config_json, config_from_json)
@@ -44,11 +43,9 @@ method_importance <- function(evals) {
     dplyr::arrange(subtask, dplyr::desc(mean_score))
 }
 
-# Failure-log analysis. Every (config, trial, scheme) attempt is one eval row;
-# status is "ok" | "infeasible" | "error". This summarises (a) how attempts break
-# down by status, (b) which infeasibility reasons dominate, and (c) the failure
-# rate of each subtask METHOD -- i.e. which (often demanding) method choices fail
-# most often. Returns a list of tibbles; write_report() renders a compact view.
+# Failure-log analysis over the eval rows: the breakdown by status, the dominant infeasibility
+# reasons, and each subtask METHOD's failure rate. Returns a list of tibbles; write_report()
+# renders them.
 failure_summary <- function(evals) {
   empty <- list(by_status = tibble::tibble(), by_reason = tibble::tibble(),
                 by_method = tibble::tibble(), suspect = tibble::tibble())
@@ -63,8 +60,7 @@ failure_summary <- function(evals) {
     dplyr::count(status, reason, name = "n") |>
     dplyr::arrange(dplyr::desc(n))
 
-  # The rows that most likely indicate a BUG (data that should be visible isn't):
-  # the actual trial + reason + funnel, so they can be drilled into directly.
+  # The rows that most likely indicate a BUG: trial + reason + funnel, ready to drill into.
   suspect <- if ("detail" %in% names(evals)) {
     evals |>
       dplyr::filter(status == "suspect") |>
@@ -94,8 +90,8 @@ failure_summary <- function(evals) {
 # Write a Markdown snapshot to disk.
 write_report <- function(con, settings) {
   all_evals <- read_evals(con)
-  # Report on this optimization's own domain + scheme (what the surrogate actually
-  # learns from); keep the global count for context.
+  # This optimization's own domain + scheme -- what the surrogate learns from. n_other keeps
+  # the global count for context.
   td      <- if (isTRUE(settings$simulate)) NULL else settings$target_domain
   evals   <- filter_evals_to_domain(all_evals, td) |>
                filter_evals_to_scheme(settings$optimize_scheme) |>
@@ -122,12 +118,12 @@ write_report <- function(con, settings) {
     paste0("_", format(Sys.time(), tz = "UTC", usetz = TRUE), "_"),
     "",
     paste0("- optimizer build: ", settings$build %||% OPTIMIZER_BUILD),
-    # Whether the store is actually being backed up. This belongs in the report because the
-    # report is NOT leader-gated: it keeps updating while a long evaluation runs, so it is the
-    # one artefact that can report a stalled backup while the stall is happening.
+    # Whether the store is actually being backed up. It belongs here because the report is not
+    # leader-gated, so it keeps updating while a long evaluation runs -- the one artefact that
+    # can report a stalled backup as it happens.
     local({
       bp <- settings$db_backup_path
-      if (is.null(bp) || !nzchar(bp)) return(NULL)   # local mode: no backup configured
+      if (is.null(bp) || !nzchar(bp)) return(NULL)   # no backup configured
       db_min <- settings$db_backup_minutes %||% 0
       age <- backup_age_minutes(bp)
       paste0("- store backup: ",
@@ -135,12 +131,11 @@ write_report <- function(con, settings) {
              else if (age < 90) sprintf("%.0f min ago", age)
              else sprintf("%.1f h ago", age / 60),
              # Only a FINITE age can be stale: a run's first report legitimately finds no
-             # backup yet, and flagging that would be a false alarm on every fresh start.
+             # backup yet.
              if (is.finite(age) && db_min > 0 && age > 2 * db_min) "  ** STALE **" else "")
     }),
-    # Which estimator ranked the configs, and -- when the random-effects fit ran -- the
-    # variance components. sd_trial vs sd_config is the number that says whether adjusting for
-    # trials is worth anything on this data; it used to have to be computed by hand.
+    # Which estimator ranked the configs and, when the random-effects fit ran, the variance
+    # components. sd_trial vs sd_config says whether adjusting for trials buys anything here.
     local({
       est <- attr(agg, "estimator") %||% "pooled"
       vc  <- attr(agg, "var_comps")
@@ -181,8 +176,6 @@ write_report <- function(con, settings) {
     lines <- c(lines, "```", imp_tbl, "```")
   }
 
-  # Failure log: status breakdown, dominant infeasibility reasons, and the
-  # failure rate of each subtask method (which method choices break most often).
   fs <- failure_summary(evals)
   if (nrow(fs$by_status)) {
     lines <- c(lines, "", "## Failure log",
@@ -202,9 +195,8 @@ write_report <- function(con, settings) {
     }
     lines <- c(lines, "```")
 
-    # Suspected bugs get their own section: these failed with a funnel cliff
-    # (data that should be visible was not), so they are the ones to investigate
-    # with diagnose_trial() before trusting the "infeasible" verdict.
+    # Suspected bugs get their own section: these failed with a funnel cliff, so investigate
+    # them with diagnose_trial() before trusting the "infeasible" verdict.
     n_suspect <- fs$by_status$n[fs$by_status$status == "suspect"]
     n_suspect <- if (length(n_suspect)) n_suspect else 0L
     if (n_suspect > 0) {
@@ -232,11 +224,8 @@ write_report <- function(con, settings) {
                "```")
   }
 
-  # ATOMIC: every worker writes this file (see run_optimizer.R -- keying it to the leader's
-  # iteration count meant the report only refreshed when worker 1 finished an evaluation,
-  # which with 8 workers is an eighth of the activity and can be hours apart). Concurrent
-  # writeLines() to one path would interleave, and a `cat report.md` could catch a half-written
-  # file, so render to a sibling temp and rename into place.
+  # ATOMIC, because every worker writes this file: concurrent writeLines() to one path would
+  # interleave and a reader could catch a half-written file. Render to a sibling temp and rename.
   tmp <- paste0(settings$report_path, ".tmp", Sys.getpid())
   writeLines(lines, tmp)
   if (!isTRUE(file.rename(tmp, settings$report_path))) {

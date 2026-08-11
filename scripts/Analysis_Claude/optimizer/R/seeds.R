@@ -1,13 +1,10 @@
 # seeds.R
 #
-# The five Predictathon submissions, expressed as six-subtask configurations. These
-# seed the optimizer so the submitted algorithms are an explicit baseline the
-# search must beat, and so crossover has good building blocks from iteration one.
-# Each seed sets the methods and the parameters that apply to them, plus the
-# always-on parameters; repair_config() then NA-fills anything inapplicable and
-# enforces canonical key order. These are faithful-but-approximate encodings: the
-# point is to start the search near the submissions, not to reproduce them
-# bit-for-bit.
+# The five Predictathon submissions as six-subtask configurations. They give the search an
+# explicit baseline to beat and crossover good building blocks from iteration one. Each seed
+# sets its methods and their parameters; repair_config() NA-fills the inapplicable ones and
+# enforces canonical key order. The encodings are approximate -- the point is to start near the
+# submissions, not to reproduce them bit-for-bit.
 
 library(tidyverse)
 
@@ -30,23 +27,18 @@ library(tidyverse)
   repair_config(cfg)
 }
 
-# The five submissions as configurations, reconciled against each submission's source code and
+# Reconciled against each submission's source code and
 # writing/notes/algorithm_characterization_by_subtask.md. `scheme` matters because Prediction5
-# submitted a DIFFERENT model per cross-validation scenario; the other four ran one algorithm
-# under both.
+# submitted a DIFFERENT model per cross-validation scenario; the other four ran one under both.
 #
-# Residual gaps -- what the search space cannot express, so these seeds only approximate:
-#   * P2 and P4 applied no trial-level exclusion at all. The closest expressible encoding is
-#     accession_overlap with both tiers at their loosest thresholds. (For P4 this is in fact
-#     faithful: it consumed the challenge-provided training packages, which are the same
-#     germplasm-overlap selection P1's curated list was derived from.)
-#   * P3 took the UNION of the top 15 genomically-similar and top 15 environmentally-similar
-#     trials; `similarity = "both"` here ranks on the SUM of the two scores and takes the top k,
-#     which is a different set. No union option exists.
-#   * P3 chose genotyping projects by greedy set-cover over training-accession coverage; the
-#     closest available method is focal_plus_onehop.
-#   * P2 solved its ridge at lambda = 1e-5; `lambda_fixed` bottoms out at 1e-2, so the seed
-#     sits at the floor and is more regularized than the submission.
+# What the search space cannot express, so these seeds only approximate:
+#   * P2 and P4 applied no trial-level exclusion; the closest encoding is accession_overlap with
+#     both tiers at their loosest thresholds.
+#   * P3 took the UNION of the top 15 genomically- and top 15 environmentally-similar trials;
+#     `similarity = "both"` ranks on the SUM and takes the top k, a different set.
+#   * P3 chose genotyping projects by greedy set-cover; the closest method is focal_plus_onehop.
+#   * P2 solved its ridge at lambda = 1e-5, below the `lambda_fixed` floor of 1e-2, so the seed
+#     is more regularized than the submission.
 #   * P5 fitted location and year as FIXED effects under CV0; no subtask-E method does that.
 seed_configs <- function(scheme = c("CV0", "CV00")) {
   scheme <- match.arg(scheme)
@@ -70,11 +62,10 @@ seed_configs <- function(scheme = c("CV0", "CV00")) {
       predict_post.method       = "cond_expectation"
     )),
 
-    # P2 -- end-to-end GBLUP on a global union GRM. NO trial-level selection (a broad
-    # historical phenotype database plus the challenge packages), so the loosest tiers here.
-    # Phenotypes are z-scored WITHIN each trial and used directly as the target -- no BLUE
-    # step -- hence raw_mean + per_trial_z. Closed-form ridge at a fixed lambda. Predictions
-    # are mu + G_um alpha, i.e. the conditional expectation, over all genotyped lines.
+    # P2 -- end-to-end GBLUP on a global union GRM. No trial-level selection, hence the loosest
+    # tiers. Phenotypes are z-scored within each trial and used directly as the target (no BLUE
+    # step), hence raw_mean + per_trial_z. Closed-form ridge at a fixed lambda; predictions are
+    # mu + G_um alpha over all genotyped lines.
     Prediction2 = .make_seed(list(
       train_select.method       = "accession_overlap",
       train_select.primary_only = "no",
@@ -110,10 +101,9 @@ seed_configs <- function(scheme = c("CV0", "CV00")) {
     )),
 
     # P4 -- environmentally weighted GBLUP with blending. Consumed the challenge training
-    # packages whole (the same overlap-based selection behind P1's list, hence both tiers);
-    # trial means removed, then environment-weighted per-accession means; focal VCF plus
-    # supplementary training VCFs; LOO-tuned ridge; predictions for every line in the focal
-    # VCF (conditional expectation), then blended with the observed BLUE where one exists.
+    # packages whole (hence both tiers); trial means removed, then environment-weighted
+    # per-accession means; focal plus supplementary training VCFs; LOO-tuned ridge; conditional
+    # expectation for every line in the focal VCF, blended with the observed BLUE where one exists.
     Prediction4 = .make_seed(list(
       train_select.method       = "accession_overlap",
       train_select.primary_only = "no",
@@ -134,10 +124,10 @@ seed_configs <- function(scheme = c("CV0", "CV00")) {
       predict_post.blend_obs_w  = 0.70
     )),
 
-    # P5 -- SCHEME-DEPENDENT, and the reason this function takes `scheme`. Same-program trial
-    # selection; per-environment BLUEs with within-environment standardization after dropping
-    # suspect environments; the single best-covering genotyping project per trial; per-project
-    # GRMs combined by covariance_combiner.
+    # P5 -- SCHEME-DEPENDENT, and why this function takes `scheme`. Same-program trial
+    # selection; per-environment BLUEs standardized within environment after dropping suspect
+    # ones; the single best-covering genotyping project per trial; GRMs combined by
+    # covariance_combiner.
     #   CV0  : GBLUP with location and year as fixed effects.
     #   CV00 : the combined GRM turned into a Gaussian kernel, fitted as RKHS with BRR
     #          environmental effects.

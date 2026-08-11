@@ -1,18 +1,14 @@
 # diagnostics.R
 #
-# Tools to answer: "is this trial REALLY infeasible, or is a bug hiding the data?"
+# Tools to answer: "is this trial REALLY infeasible, or is a bug hiding the data?" The loop
+# continues past infeasible pairs, so a name mismatch or parse error can masquerade as a trial
+# that cannot be predicted. Three defences:
 #
-# The optimizer continues past infeasible (trial, config) pairs, so a silent bug
-# -- a name/key mismatch, a parsing error, a wrong column -- can masquerade as a
-# trial that "can't be predicted". Three lines of defence:
-#
-#   1. The failure log flags funnel CLIFFS (many accessions in, ~zero genotyped
-#      overlap out) as status "suspect" rather than "infeasible" (see pipeline.R).
-#   2. check_canaries(): run the most permissive config on KNOWN-feasible trials.
-#      A canary that comes back infeasible can only mean a bug -- it is an oracle.
-#   3. diagnose_trial(): replay one trial with the full data funnel printed AND an
-#      independent re-derivation of the raw counts, so a discrepancy between "what
-#      the pipeline saw" and "what is actually on T3" is staring you in the face.
+#   1. The failure log flags funnel CLIFFS as "suspect" rather than "infeasible" (pipeline.R).
+#   2. check_canaries() runs a permissive config on KNOWN-feasible trials -- an oracle, since a
+#      failure there can only be a bug.
+#   3. diagnose_trial() replays one trial with the funnel printed beside an independent
+#      re-derivation of the raw counts from T3.
 
 library(tidyverse)
 
@@ -38,22 +34,16 @@ canary_config <- function() {
 }
 
 # ---------------------------------------------------------------------------
-# FROZEN coverage canary configs (Stage 2 of the calibrate-then-freeze bootstrap).
+# FROZEN coverage canary configs, one per focal trial, assigned so that across the canaries
+# every subtask method and every behaviour-changing parameter level is exercised at least once
+# -- a bug in ANY branch then trips the oracle.
 #
-# One config per focal trial, assigned from the calibration so that across the
-# canaries every one of the 18 subtask methods AND every behaviour-changing
-# parameter level is exercised at least once -- so a bug in ANY branch trips the
-# oracle, not just the one a single permissive config happens to take.
+# Coverage rests on four data-rich trials (Aurora 10673, Big6 10675, CornellMaster 10676,
+# YT_Urb 10677), which between them carry every demanding branch; the rest get a light filler
+# that only confirms "still predictable". Keyed by studyDbId.
 #
-# Coverage is driven by FOUR strong, data-rich trials -- Aurora 10673, Big6 10675,
-# CornellMaster 10676, YT_Urb 10677 (all verified feasible and anchor-agreeing at
-# calibration) -- which between them carry every demanding branch. The rest (strong OHRWW
-# 10679 / TCAP 10680 and the three weak ones) get a light best_single_project filler: they
-# confirm "still predictable" and are not needed for coverage. Keyed by studyDbId.
-#
-# Which trial exercises which branch is tabulated in EVALUATION.md sec. 9 (kept there rather
-# than duplicated here, since a config edit below must be reflected in the reader's table).
-# `canary_coverage()` is the machine-checkable version and is what to trust.
+# EVALUATION.md sec. 9 tabulates which trial exercises which branch; canary_coverage() is the
+# machine-checkable version and is what to trust.
 canary_configs <- function() {
   mk <- function(...) .make_seed(list(...))
   list(
@@ -111,10 +101,9 @@ canary_configs <- function() {
     predict_post.method = "direct_blup"))
 }
 
-# Coverage assertion: across canary_configs(), which subtask methods and key
-# branch-levels are exercised, and which (if any) are not. Run offline; a gap is a
-# documented oracle blind spot, not an error (those methods are still exercised by
-# seed_configs() in the main loop).
+# Which subtask methods and branch-levels canary_configs() exercises, and which it misses. Run
+# offline; a gap is a documented oracle blind spot, not an error -- seed_configs() still
+# exercises those methods in the main loop.
 canary_coverage <- function(cfgs = canary_configs()) {
   methods_hit <- function(st) unique(vapply(cfgs, function(c) as.character(c[[paste0(st, ".method")]]), character(1)))
   level_hit   <- function(key, val) any(vapply(cfgs, function(c) identical(as.character(c[[key]]), val), logical(1)))
@@ -141,14 +130,11 @@ canary_coverage <- function(cfgs = canary_configs()) {
   list(methods = method_rows, levels = levels)
 }
 
-# Run each canary trial under its OWN frozen coverage config (canary_configs()),
-# across every CV scheme. Together the configs exercise all 19 methods + branch-
-# levels, so a failure implicates whichever method that trial's config uses.
-# Two severity tiers: a failure on a STRONG trial is a hard CANARY ALARM; a
-# failure on a weak trial (settings$canary_weak_trials) is a soft warning only.
-# Returns a tibble of (trial, scheme, status, reason, detail, n_test, score,
-# method_signature). Any non-"ok" on a strong trial -- especially "suspect" --
-# means investigate the code, not the trial.
+# Run each canary trial under its OWN frozen coverage config, across every CV scheme, so a
+# failure implicates whichever method that trial's config uses. Two severity tiers: a failure on
+# a STRONG trial is a hard CANARY ALARM; one on a weak trial (settings$canary_weak_trials) is a
+# soft warning. Returns a tibble of (trial, scheme, status, reason, detail, n_test, score,
+# method_signature); any non-"ok" on a strong trial means investigate the code, not the trial.
 check_canaries <- function(settings, conn, configs = canary_configs()) {
   if (is.null(configs) || !length(configs)) {
     message("no canary configs; nothing to check"); return(invisible(NULL))
@@ -193,19 +179,13 @@ check_canaries <- function(settings, conn, configs = canary_configs()) {
 # ===========================================================================
 # Rich-trial config sweep (a CODE-correctness oracle)
 # ===========================================================================
-# check_canaries runs ONE frozen config per trial across nine trials -- a COVERAGE test that
-# conflates a code bug with data-adequacy (a demanding config can legitimately fail on a
-# data-poor trial). This does the complement: it varies ONE method/branch at a time from a
-# robust baseline and runs each variant on a couple of DATA-RICH trials (default Big6 10675 +
-# YT_Urb 10677). On trials rich enough to satisfy every method's data needs, feasibility is a
-# property of the CODE, not the data -- so a branch that cannot produce a prediction on EITHER
-# rich trial is a genuine bug signal. Known-degenerate cells are excluded (see .oracle_degenerate).
+# The complement to check_canaries, which conflates a code bug with data adequacy. This varies
+# ONE method or branch at a time from a robust baseline and runs each variant on DATA-RICH
+# trials, where feasibility is a property of the CODE rather than the data -- so a branch that
+# cannot predict on EITHER is a genuine bug signal. Known-degenerate cells are excluded.
 #
-# Verdict per variant:
-#   * an `error` (a crash) on any (trial, scheme) is ALWAYS a bug.
-#   * otherwise the variant is HEALTHY if it produced `ok` on >=1 non-degenerate (trial, scheme);
-#     if it never did (all infeasible/constant/too_few_overlap across both rich trials), it is
-#     SUSPECT -- the branch could not predict even on rich data.
+# Verdict per variant: an `error` on any (trial, scheme) is always a bug; otherwise HEALTHY if
+# it produced `ok` on >= 1 non-degenerate cell, and SUSPECT if it never did.
 
 # The robust baseline every variant perturbs by exactly one field.
 .oracle_baseline <- function()
@@ -255,10 +235,8 @@ check_canaries <- function(settings, conn, configs = canary_configs()) {
 }
 
 # Cells EXPECTED to be degenerate (not bugs). There are none.
-#
-# PITFALL: do not re-add `direct_blup` x CV00 here. It looks degenerate -- the focal lines are
-# masked out of training -- but predict_test() predicts them through the kernel (LESSONS.md #22),
-# so it is a real test. Excusing it would hide a regression in exactly that guard.
+# PITFALL: `direct_blup` x CV00 looks degenerate but is not -- predict_test() predicts the masked
+# focal lines through the kernel (LESSONS #22). Excusing it would hide a regression in that guard.
 .oracle_degenerate <- function(cfg, scheme) FALSE
 
 # Keep the variants whose label matches any `only` pattern (fixed substring, so "em_combine"
@@ -272,9 +250,8 @@ check_canaries <- function(settings, conn, configs = canary_configs()) {
   variants[keep]
 }
 
-# `only`: run just the variants whose label contains any of these strings (e.g.
-# only = "em_combine", or c("kernel=", "model=")). Handy for re-checking one branch after a
-# fix without re-running the whole sweep. See .oracle_variants() for the labels.
+# `only`: run just the variants whose label contains any of these strings (e.g. "em_combine", or
+# c("kernel=", "model=")) -- re-check one branch without the whole sweep. Labels: .oracle_variants().
 sweep_rich_trials <- function(settings, conn,
                               trials = settings$oracle_trials %||% c("10675", "10677"),
                               only = NULL) {
@@ -329,15 +306,10 @@ sweep_rich_trials <- function(settings, conn,
   invisible(list(rows = rows, verdict = verdict))
 }
 
-# Replay ONE trial and print the data funnel stage by stage, alongside an
-# independent re-derivation of the raw counts straight from T3. The pipeline's
-# numbers and the independent numbers should agree; where they diverge -- or
-# where a stage cliffs to ~zero despite plentiful input -- is the bug.
-# The configs a trial actually FAILED under, recovered from the store, ready to hand back to
-# diagnose_trial(). A failure is a property of (trial x config), not of the trial alone: the
-# default canary_config() is deliberately permissive and uses geno_select = "all_projects", so
-# diagnosing with it does not reproduce (say) a focal_plus_onehop failure and can return a false
-# clean bill of health. Recover the real thing:
+# The configs a trial actually FAILED under, recovered from the store for diagnose_trial(). A
+# failure is a property of (trial x config): the permissive default canary_config() will not
+# reproduce, say, a focal_plus_onehop failure, and returns a false clean bill of health.
+# Recover the real thing:
 #
 #   con <- open_store(settings$db_path)
 #   bad <- failed_configs(con, "10260")
@@ -358,21 +330,25 @@ failed_configs <- function(con, trial_id,
                  detail = e$detail, cfg = lapply(e$config_json, config_from_json))
 }
 
-# COST. Two parts of this are expensive, and both are optional because the panel table is the
-# part that actually discriminates a name problem from a panel-selection problem:
-#   max_projects  the per-project attribution loop loads each project's WHOLE dosage matrix
-#                 (there is no project -> sample-name lookup), which on a 16e9 cache is up to
-#                 ~10 GB apiece. It only attributes a cliff to individual projects; the panel
-#                 probe below already answers whether ANY panel covers the focal lines. Capped.
-#   replay        the final run_pipeline() is a COMPLETE evaluation -- hours on a big trial --
-#                 and only confirms an outcome the store already recorded. FALSE skips it.
+# Replay ONE trial, printing the data funnel stage by stage beside an independent re-derivation
+# of the raw counts from T3. Where the two diverge -- or where a stage cliffs to ~zero despite
+# plentiful input -- is the bug.
+#
+# Two parts are expensive and optional, since the panel table is what discriminates a name
+# problem from a panel-selection problem:
+#   max_projects  caps the per-project attribution loop, which loads each project's whole dosage
+#                 matrix (up to ~10 GB apiece). It only attributes a cliff to individual
+#                 projects; the panel probe below already says whether ANY panel covers the focal
+#                 lines.
+#   replay        FALSE skips the final run_pipeline(), a complete evaluation costing hours on a
+#                 big trial, which only confirms an outcome the store already recorded.
 diagnose_trial <- function(study_id, settings, conn,
                            cfg = canary_config(), scheme = settings$schemes[1],
                            max_projects = 8L, replay = TRUE) {
   id <- as.character(study_id)
   cat("=== diagnose trial ", id, " (scheme ", scheme, ") ===\n", sep = "")
-  # Print the config being diagnosed. Which one it is decides what the output means, and the
-  # default is NOT the one that failed -- see failed_configs() above.
+  # Which config this is decides what the output means, and the default is NOT the one that
+  # failed -- see failed_configs() above.
   cat("  config under test", if (identical(cfg, canary_config()))
         " (DEFAULT canary_config -- permissive, may NOT reproduce a stored failure)" else "", ":\n", sep = "")
   cat(format_config(cfg), sep = "\n")
@@ -387,14 +363,10 @@ diagnose_trial <- function(study_id, settings, conn,
   projs <- tryCatch(projects_for_accessions(acc, conn, settings), error = function(e) character())
   cat(sprintf("  genotyping projects covering:   %d  (%s)\n",
               length(projs), paste(utils::head(projs, 8), collapse = ", ")))
-  # The decisive check for the synonym/name-mismatch class of bug: do the dosage
-  # matrix rownames actually intersect the trial's accession names?
-  #
-  # PITFALL this check was blind to until 2026-07-30: it passed `keep_samples = acc`, and
-  # get_project_dosage's subset_samples returns NULL when NOTHING matches. So the cliff it exists
-  # to catch was swallowed and printed as "download/parse failed", and on the non-NULL branch
-  # `ov == nrow(d) > 0` by construction, so the CLIFF line could not fire either way. Load the
-  # project's WHOLE population and intersect here instead.
+  # The decisive check for the synonym/name-mismatch class of bug: do the dosage matrix rownames
+  # intersect the trial's accession names? Load each project's WHOLE population and intersect
+  # here -- passing keep_samples = acc returns NULL when nothing matches, swallowing the very
+  # cliff this exists to catch.
   n_cover <- 0L; best_ov <- 0L
   probe <- utils::head(projs, max(0L, as.integer(max_projects)))
   if (length(probe) < length(projs))
@@ -412,8 +384,8 @@ diagnose_trial <- function(study_id, settings, conn,
                   pid, nrow(d), ncol(d), ov,
                   if (nrow(d) > 0 && ov == 0) "   <-- no name overlap in THIS project" else ""))
     }
-    # Denominator is what was PROBED, not what covers: with max_projects < length(projs) this is
-    # a sample, so it can suggest a cliff but cannot establish one. The panel table does that.
+    # Denominator is what was PROBED: under max_projects this is a sample, so it can suggest a
+    # cliff but not establish one. The panel table does that.
     partial <- length(probe) < length(projs)
     cat(sprintf("  projects containing >=1 focal accession: %d of %d probed (best single: %d)%s\n",
                 n_cover, length(probe), best_ov,
@@ -423,11 +395,10 @@ diagnose_trial <- function(study_id, settings, conn,
                 else ""))
   }
 
-  # What subtask C hands to the kernel, and what .best_panel picks out of it. This separates the
-  # two causes of test_in = 0: no panel covers the focal lines (a name/data problem) versus a
-  # covering panel existing but being passed over (.best_panel maximizes coverage of
-  # union(train, focal), which large training sets dominate).
-  # `trial` is built once here and reused by the pipeline replay below.
+  # What subtask C hands to the kernel and what .best_panel picks out of it, separating the two
+  # causes of test_in = 0: no panel covers the focal lines (a name/data problem), or a covering
+  # panel exists but is passed over (.best_panel maximizes coverage of union(train, focal), which
+  # large training sets dominate). `trial` is reused by the pipeline replay below.
   trial_err <- NULL
   trial <- tryCatch(build_trial_descriptor(id, conn, settings),
                     error = function(e) { trial_err <<- conditionMessage(e); NULL })
@@ -465,9 +436,8 @@ diagnose_trial <- function(study_id, settings, conn,
   }
 
   # --- run the pipeline and report where it lands -----------------------------
-  # `trial` was built above for the panel probe.
-  # Report WHY. A descriptor failure is usually the catalogue fetch (auth / server), not the
-  # trial -- and the counts printed above come from cache, so they look healthy regardless.
+  # A descriptor failure is usually the catalogue fetch (auth / server), not the trial -- and the
+  # counts printed above come from cache, so they look healthy regardless.
   if (is.null(trial)) {
     cat("  could not build descriptor; stopping. reason: ", trial_err %||% "unknown", "\n", sep = "")
     return(invisible(NULL))
@@ -499,21 +469,19 @@ diagnose_trial <- function(study_id, settings, conn,
 }
 
 # ===========================================================================
-# STAGE-1 calibration: validate the data path against an INDEPENDENT anchor
-# BEFORE freezing any canary configs (see plan/cuddly-coalescing-teacup.md).
+# STAGE-1 calibration: validate the data path against an INDEPENDENT anchor before freezing any
+# canary configs.
 #
-# The catch-22: calibration runs the very functions the oracle guards, so it
-# cannot self-validate them. We break it with an external ground truth that
-# touches NONE of our code -- the five Predictathon teams' submission files --
-# and compare our pipeline's per-trial counts against it. A data-hiding bug
-# shows up as our count diverging from the anchor. Freeze only once they agree;
-# this is iterative (fix divergence, re-run) and human-reviewed.
+# Calibration runs the very functions the oracle guards, so it cannot self-validate them. The way
+# out is a ground truth that touches NONE of our code -- the five submission files -- against
+# which our per-trial counts are compared. A data-hiding bug shows up as a divergence. Freeze
+# only once they agree; iterative and human-reviewed.
 # ===========================================================================
 
-# Independent anchor: median CV0 predicted-accession count per focal trial across
-# the five anonymized algorithm submissions (scripts/PredictionN/submission/).
-# Pure file reads -- no BrAPI/pipeline code. `settings$canary_trials` must be a
-# named vector studyName -> studyDbId (submission subfolders are named by studyName).
+# Median CV0 predicted-accession count per focal trial across the five submissions
+# (scripts/PredictionN/submission/). Pure file reads -- no BrAPI or pipeline code.
+# `settings$canary_trials` must be named studyName -> studyDbId, since submission subfolders are
+# named by studyName.
 canary_anchor <- function(settings, preds_root = NULL) {
   # optimizer is scripts/Analysis_Claude/optimizer -> here::here("..","..") = scripts/
   if (is.null(preds_root)) preds_root <- here::here("..", "..")
@@ -539,11 +507,10 @@ canary_anchor <- function(settings, preds_root = NULL) {
   }, .progress = "Read submission anchors")
 }
 
-# Probe each canary trial's data shape THROUGH the real pipeline functions and
-# join to the anchor. The `divergent` flag (our genotyped-focal count vs the
-# anchor's predicted-accession count outside 0.5x-2x) is the validation signal:
-# investigate those before trusting calibration or freezing configs. Not called
-# at startup; run by hand during the calibrate-then-freeze bootstrap.
+# Probe each canary trial's data shape THROUGH the real pipeline functions and join to the
+# anchor. `divergent` -- our genotyped-focal count outside 0.5x-2x of the anchor's
+# predicted-accession count -- is the validation signal; investigate those before freezing
+# configs. Run by hand, not at startup.
 calibrate_canary_trials <- function(settings, conn, anchor = NULL, deep = FALSE) {
   if (is.null(anchor)) anchor <- canary_anchor(settings)
   ids     <- as.character(settings$canary_trials)
@@ -566,8 +533,8 @@ calibrate_canary_trials <- function(settings, conn, anchor = NULL, deep = FALSE)
       tryCatch(select_training_trials(block, trial, conn, settings),
                error = function(e) character()), id))
 
-    # train_select feasibility via the REAL code paths (top_k uses the candidate
-    # pool to avoid its heavy per-candidate similarity scan).
+    # train_select feasibility via the REAL code paths (top_k uses the candidate pool, to avoid
+    # its heavy per-candidate similarity scan).
     n_ao_primary <- nt(list(train_select.method = "accession_overlap",
                             train_select.primary_only = "yes",
                             train_select.primary_min = 2, train_select.secondary_min = 8))
@@ -579,9 +546,9 @@ calibrate_canary_trials <- function(settings, conn, anchor = NULL, deep = FALSE)
     # genotyping projects covering the focal accessions.
     projects <- tryCatch(projects_for_accessions(acc, conn, settings),
                          error = function(e) character())
-    # CHEAP path: project membership via the breeder wizard -- canonical accession
-    # names, exercises project selection WITHOUT downloading any VCF. This is the
-    # default our_n_geno_focal we compare to the anchor.
+    # CHEAP path: project membership via the breeder wizard -- canonical accession names,
+    # exercising project selection without downloading any VCF. This is the our_n_geno_focal
+    # compared to the anchor.
     members <- if (length(projects)) unique(unlist(lapply(projects, function(pid) {
         w <- tryCatch(.brapi_try(function() conn$wizard("accessions", list(genotyping_projects = pid)),
                                  conn = conn, settings = settings, what = "project members wizard"),
@@ -589,9 +556,9 @@ calibrate_canary_trials <- function(settings, conn, anchor = NULL, deep = FALSE)
         if (is.null(w)) character() else as.character(w$data$names)
       }), use.names = FALSE)) else character()
     geno_wizard <- length(intersect(acc, members))
-    # DEEP path (opt-in): the actual dosage extraction -- downloads VCFs and matches
-    # on VCF sample names. A big gap below geno_wizard localizes a VCF name-matching
-    # bug (e.g. synonym sample names) rather than project selection.
+    # DEEP path (opt-in): the real dosage extraction, downloading VCFs and matching on VCF
+    # sample names. A big gap below geno_wizard localizes a VCF name-matching bug (e.g. synonym
+    # sample names) rather than project selection.
     geno_dosage <- NA_integer_
     if (deep) {
       dl <- tryCatch(choose_geno_sources(
@@ -631,8 +598,8 @@ print_calibration <- function(cal) {
                       "n_topk_pool", "n_projects", "our_n_geno_focal",
                       "our_n_geno_dosage", "anchor_n_pred", "ratio", "divergent"), names(cal))
   print(as.data.frame(cal[, cols]), row.names = FALSE)
-  # If the deep VCF path was run, flag where it sees far fewer genotyped focal
-  # accessions than the cheap wizard path -- the VCF name-matching (synonym) signal.
+  # Where the deep VCF path sees far fewer genotyped focal accessions than the cheap wizard
+  # path -- the VCF name-matching (synonym) signal.
   if ("our_n_geno_dosage" %in% names(cal) && any(is.finite(cal$our_n_geno_dosage))) {
     gap <- cal[is.finite(cal$our_n_geno_dosage) & is.finite(cal$our_n_geno_focal) &
                  cal$our_n_geno_focal > 0 &

@@ -265,10 +265,6 @@ Sys.unsetenv("OPTIMIZER_HOME"); Sys.unsetenv("OPTIMIZER_REMOTE")
 # the env had OPTIMIZER_HOME); optimizer_settings() reads this global, not the env.
 remote_server <<- FALSE
 
-# Oracle: the startup canary check is a boolean opt-out flag (value is the user's choice).
-check({ v <- optimizer_settings()$run_startup_canary; is.logical(v) && length(v) == 1 && !is.na(v) },
-      "run_startup_canary is a single logical (TRUE/FALSE opt-out flag)")
-
 # local_overrides = FALSE throughout this block: these assertions are about how paths are
 # DERIVED from remote_server/OPTIMIZER_HOME, and a settings.local.R that legitimately moves
 # db_path (e.g. onto /workdir so WAL works for parallel workers) would otherwise fail them.
@@ -429,9 +425,9 @@ unlink(c(lf1, lf2))
 # End-to-end via optimizer_settings() -- only if there is no REAL settings.local.R to clobber.
 lf <- here::here("settings.local.R")
 if (!file.exists(lf)) {
-  writeLines("settings_override <- list(dosage_budget_bytes = 7e9, run_startup_canary = FALSE)", lf)
+  writeLines("settings_override <- list(dosage_budget_bytes = 7e9, max_iters = 3L)", lf)
   s_ov <- suppressWarnings(optimizer_settings())
-  check(s_ov$dosage_budget_bytes == 7e9 && isFALSE(s_ov$run_startup_canary),
+  check(s_ov$dosage_budget_bytes == 7e9 && identical(s_ov$max_iters, 3L),
         "optimizer_settings() applies settings.local.R overrides")
   invisible(file.remove(lf))
 } else message("  (a real settings.local.R exists -- skipping the end-to-end override check)")

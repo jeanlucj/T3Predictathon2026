@@ -1,38 +1,23 @@
 # conditions.R
 #
-# Two kinds of "this didn't work", deliberately distinguished so the optimizer
-# knows whether to keep going or stop:
+# Three kinds of "this didn't work", distinguished so the loop knows whether to continue:
 #
-#   * infeasible(code)  -- this ONE (trial, config, scheme) cannot be evaluated:
-#       too little genotyped overlap, no training trials, too few markers, etc.
-#       This is EXPECTED. Many random focal trials are simply not predictable
-#       with a given (often demanding) method configuration. evaluate.R catches
-#       it, records a failed eval (status="infeasible", reason=code) in the
-#       store -- the trial x method-config failure log -- and the loop carries on
-#       with a freshly sampled trial AND a freshly chosen configuration.
+#   * infeasible(code)  this ONE (trial, config, scheme) cannot be evaluated -- too little
+#       genotyped overlap, no training trials, too few markers. EXPECTED and common.
+#       evaluate.R records it and the loop moves on with a fresh trial and configuration.
+#   * fatal(message)    the RUN cannot proceed: a settings problem, or a method in the config
+#       space the pipeline does not implement. Re-raised past evaluate.R so the loop halts
+#       instead of re-hitting the same wall.
+#   * sample_failed()   no usable focal trial after the retries. Not attributable to a
+#       configuration, so it is not written to the per-config failure log.
 #
-#   * fatal(message)    -- the whole RUN cannot proceed: a settings problem (no
-#       trials match the target domain), or a programming inconsistency (a method
-#       in the config space that the pipeline does not implement). Re-raised past
-#       evaluate.R so run_optimizer.R halts cleanly instead of spinning forever
-#       re-hitting the same wall.
-#
-#   * sample_failed()   -- could not sample ANY usable focal trial after the
-#       retries. Not attributable to a configuration, so it is NOT written to the
-#       per-config failure log; the loop tolerates a few in a row (transient
-#       network) and escalates to a clean stop only if they persist.
-#
-# The `code` on an infeasible condition is a short machine-readable token (e.g.
-# "insufficient_geno_overlap") so failure_summary() can group on it and reveal
-# which method choices break most often.
+# `code` is a short machine-readable token, so failure_summary() can group on it.
 
-# Raise: this (trial, config, scheme) is not evaluable. `detail` adds context to
-# the logged message but the groupable identity is `code`. `funnel` is a named
-# numeric vector of the data cardinalities at each pipeline stage (n accessions,
-# n genotyped, n overlap, ...), stored with the failure so a cliff -- many in,
-# ~zero out -- is visible after the fact. `suspect = TRUE` marks a failure whose
-# funnel looks like a BUG (data that should be visible isn't) rather than genuine
-# infeasibility; evaluate.R records it under status "suspect" for review.
+# Raise: this (trial, config, scheme) is not evaluable. `detail` adds context; `code` is the
+# groupable identity. `funnel` is the data cardinality at each pipeline stage, stored with the
+# failure so a cliff -- many in, ~zero out -- is visible afterwards. `suspect = TRUE` marks a
+# funnel that looks like a BUG rather than genuine infeasibility; evaluate.R records it under
+# its own status.
 infeasible <- function(code, detail = NULL, funnel = NULL, suspect = FALSE) {
   msg <- if (is.null(detail)) code else paste0(code, ": ", detail)
   stop(structure(

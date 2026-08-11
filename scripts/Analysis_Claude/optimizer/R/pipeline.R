@@ -1,29 +1,21 @@
 # pipeline.R
 #
-# The parameterized genomic-prediction pipeline. run_pipeline() executes the six
-# subtasks for one configuration on one focal trial under one CV scheme and
-# returns predicted and observed per-accession yields for scoring. Each subtask
-# is a dispatcher that branches on the method named in the configuration -- this
-# is where "recombine subtask methods from different algorithms" actually
-# happens. To add a literature method, add a branch here and an entry in
-# R/config_space.R.
+# The parameterized genomic-prediction pipeline. run_pipeline() executes the six subtasks for
+# one configuration on one focal trial under one CV scheme, returning predicted and observed
+# per-accession yields for scoring. Each subtask is a dispatcher branching on the method named
+# in the configuration -- to add a method, add a branch here and an entry in R/config_space.R.
 #
-# This is the heavy, network- and compute-bound path. It is written defensively:
-# any subtask that cannot be completed for a given trial/config throws, and
-# evaluate.R records the failure so the optimizer learns to avoid it. The genomic
-# core (GBLUP via rrBLUP) is the reliable backbone; the G+E / RKHS / EM-combine
-# variants extend it.
+# A subtask that cannot be completed for a given trial/config throws; evaluate.R records the
+# failure so the optimizer learns to avoid it.
 #
-# VALIDATION: this path needs live T3 access and cannot be exercised offline, so
-# run it once on a single known trial (see README "First real run") and confirm
-# the predicted/observed join is non-empty before launching the background loop.
+# Needs live T3 access and cannot be exercised offline: run it once on a known trial and
+# confirm the predicted/observed join is non-empty before launching the loop.
 
 library(tidyverse)
 
-# Feasibility floors on the GENOTYPED overlap, in ACCESSIONS. Single-sourced because
-# .best_panel must select against exactly the guard run_pipeline then applies.
-# PITFALL fixed 2026-07-31: the train side used to read settings$min_train_trials -- a count
-# of TRIALS (3) compared against a count of accessions, which made the guard near-vacuous.
+# Feasibility floors on the GENOTYPED overlap, in ACCESSIONS -- not TRIALS, which
+# min_train_trials counts. Single-sourced so .best_panel selects against the same guard
+# run_pipeline applies.
 .min_train <- function(settings) as.integer(settings$min_train_acc %||% 20L)
 .min_test  <- function(settings) as.integer(settings$min_test_acc  %||% 5L)
 
@@ -105,10 +97,8 @@ run_pipeline <- function(cfg, trial, scheme, settings, conn) {
   list(pred = pred, obs = obs)
 }
 
-# CV masking: CV0 keeps every training observation; CV00 additionally removes any
-# observation on a focal-trial accession (Jarquin et al. 2017). Factored out of
-# run_pipeline so the CV0/CV00 distinction -- the crux of the challenge -- is
-# unit-testable in isolation.
+# CV0 keeps every training observation; CV00 also removes any observation on a focal-trial
+# accession (Jarquin et al. 2017). Factored out so the distinction is unit-testable.
 mask_cv <- function(train_obs, focal_acc, scheme) {
   if (scheme == "CV00") dplyr::filter(train_obs, !(germplasm_name %in% focal_acc)) else train_obs
 }
@@ -155,20 +145,15 @@ select_training_trials <- function(cfg, trial, conn, settings) {
   fatal(paste("unknown train_select method", m), "bug_unknown_method")
 }
 
-# Trials sharing >= min_common germplasm with a query set of accessions. `x` is either
-# a trial id (input = "trial"; the query set is that trial's accessions, and the trial
-# itself is excluded from the result) or an accession vector directly
-# (input = "accessions"; e.g. the pooled germplasm of several trials).
+# Trials sharing >= min_common germplasm with a query set. `x` is a trial id (input = "trial";
+# the query set is that trial's accessions and the trial itself is excluded) or an accession
+# vector (input = "accessions").
 #
-# Derived from the acc_<sid> cache, NOT from
-# T3BrapiHelpers::find_other_studies_evaluating_same_germplasm() -- that helper costs one
-# wizard query per germplasm (LESSONS.md #17). One wizard query gets the candidate trials;
-# overlaps are set intersections of cached accession lists, shared with .trial_similarity,
-# so the cost decays as the cache warms.
+# Derived from the acc_<sid> cache, not from find_other_studies_evaluating_same_germplasm(),
+# which costs a wizard query per germplasm -- LESSONS #17.
 #
-# Two invariants: overlap is counted in germplasm NAME space (what acc_<sid> holds and every
-# downstream join uses), and candidates are restricted to the focal-trait catalogue -- a trial
-# that never measured the trait is not a training trial.
+# Two invariants: overlap is counted in germplasm NAME space, and candidates are restricted to
+# the focal-trait catalogue -- a trial that never measured the trait is not a training trial.
 .overlap_memo <- new.env(parent = emptyenv())
 
 # Emit an informational note at most once per `key` per session (so a recurring geno-source
@@ -211,8 +196,7 @@ select_training_trials <- function(cfg, trial, conn, settings) {
 
     cat_ids <- as.character(trial_catalog(conn, settings)$study_db_id)
     idx     <- tryCatch(.trial_index(settings), error = function(e) NULL)
-    local_ok <- !identical(settings$local_wizards %||% "auto", "off") &&
-                .index_covers(idx, cat_ids, settings, "acc")
+    local_ok <- .index_covers(idx, cat_ids, settings, "acc")
 
     # One tabulation answers BOTH questions the wizard was used for: which trials share an
     # accession (its names) and how many they share (its values). Profiled on the server, the
@@ -297,12 +281,9 @@ select_training_trials <- function(cfg, trial, conn, settings) {
       d2 <- (suppressWarnings(as.numeric(r$latitude)) - trial$lat)^2 +
             (suppressWarnings(as.numeric(r$longitude)) - trial$long)^2 +
             (0.1 * (suppressWarnings(as.integer(r$year)) - trial$year))^2
-      # A candidate whose coordinates or year are unknown is UNRELATED (similarity 0), not
-      # poison. `is.finite(trial$lat)` above guards the focal trial; nothing guarded the
-      # candidates, and 28% of the T3 catalogue has year = NA. An NA here became an NA
-      # weight in build_targets, and weighted.mean has no na.rm -- so one such trial in the
-      # training set made the target NA for every accession phenotyped there, and every
-      # prediction non-finite. Kernel-independent, which is what made it hard to place.
+      # A candidate with unknown coordinates or year is UNRELATED (similarity 0), never NA:
+      # a quarter of the T3 catalogue has year = NA, and an NA similarity becomes an NA
+      # weight in build_targets, whose weighted.mean has no na.rm.
       e[sid] <- if (is.finite(d2)) exp(-d2 / 10) else 0
     }
   }
@@ -403,39 +384,26 @@ build_targets <- function(cfg, train_obs, trial, conn, settings) {
 # ===========================================================================
 # Subtask C: select genotyping data
 # ===========================================================================
-# Extra marker thinning per project so that all of a trial's covering projects TOGETHER fit
-# settings$dosage_total_budget_bytes. Returns a named list of thin factors (1 = untouched);
-# an empty budget or a set that already fits gives every project 1.
+# Extra marker thinning per project, so that all of a trial's covering projects TOGETHER fit
+# dosage_total_budget_bytes. Returns thin factors keyed by project (1 = untouched). This is the
+# only place the SUM is bounded -- dosage_budget_bytes caps one project, and the pipeline holds
+# them all at once. Served by column-subsetting the cache, so it costs no re-download.
 #
-# Why this exists: dosage_budget_bytes caps one project at parse time, but the pipeline holds
-# all covering projects at once, so the peak is the sum -- which on the T3 wheat archive runs
-# to several times the per-project figure. That sum, times the number of workers, is what has
-# to fit in RAM. This is the only place it is bounded.
+# Every project gets the SAME factor. Panels in a protocol group merge on their SHARED markers,
+# and thinning near-identical panels differently keeps different markers from each, collapsing
+# the intersection the merge needs. The cost is that small panels are thinned too.
 #
-# The thinning is served by column-subsetting the existing cache (get_project_dosage's
-# marker_thin argument), so it costs no re-download.
-#
-# Every project gets the SAME factor, rather than taking the reduction out of the largest
-# ones. Panels in a protocol group are merged on their SHARED markers (.merge_markers
-# intersects colnames), and thinning two near-identical panels by different factors keeps
-# different markers from each -- collapsing the intersection the merge depends on. A common
-# factor keeps the panels aligned; the cost is that small panels are thinned too.
-#
-# Sizes come from the cached stat_<pid> written at parse time. A project with no stat entry
-# is unmeasurable here (it has never been parsed) and is left at 1 -- get_project_dosage
-# applies its own per-project budget when it downloads it.
+# Sizes come from the cached stat_<pid>. A project never parsed has no stat entry and is left
+# at 1; get_project_dosage applies its own budget when it downloads it.
 .dosage_thin_plan <- function(projs, settings) {
   ids  <- as.character(projs)
   plan <- as.list(stats::setNames(rep(1L, length(ids)), ids))
   cap  <- settings$dosage_total_budget_bytes %||% Inf
   if (!is.finite(cap) || cap <= 0) return(plan)
 
-  # Size each project by what is ACTUALLY ON DISK, which is not the same as what this
-  # machine's dosage_budget_bytes would produce. A cache built under a LARGER budget is
-  # reused as-is -- get_project_dosage only ever re-parses to make a cache denser, never
-  # coarser -- so lowering dosage_budget_bytes does not shrink an existing cache. Sizing from
-  # the budget would then under-count by exactly the ratio of the two budgets, and the cap
-  # would fail to fire in the one case it is most needed.
+  # Size each project by what is ACTUALLY ON DISK, not by dosage_budget_bytes: a cache built
+  # under a larger budget is reused as-is, since get_project_dosage only re-parses to make a
+  # cache denser. Sizing from the budget would under-count it and the cap would not fire.
   thin <- stats::setNames(rep(NA_real_, length(ids)), ids)
   bytes <- vapply(ids, function(pid) {
     st <- tryCatch(readRDS(.cache_existing(settings, "stat", pid)), error = function(e) NULL)
@@ -466,25 +434,18 @@ build_targets <- function(cfg, train_obs, trial, conn, settings) {
   plan
 }
 
-# Returns one dosage matrix per PROTOCOL GROUP, each holding the group's FULL
-# genotyped population (every sample in the constituent projects), not just the
-# accessions this trial needs. Subtask D estimates marker QC and allele frequencies
-# from that population and only then subsets the GRM -- estimating them from a
-# handful of needed accessions is what made both unstable.
+# Returns one dosage matrix per PROTOCOL GROUP, each holding the group's FULL genotyped
+# population rather than only the accessions this trial needs: subtask D estimates marker QC
+# and allele frequencies from the population and subsets the GRM afterwards.
 choose_geno_sources <- function(cfg, train_acc, test_acc, conn, settings) {
   need  <- union(train_acc, test_acc)
   projs <- projects_for_accessions(need, conn, settings)
   if (!length(projs)) return(structure(list(), n_projects = 0L))
 
-  # Load the WHOLE population of each covering project (keep_samples = NULL), at whatever
-  # marker density settings$dosage_budget_bytes produced when the project was parsed --
-  # density is a budget setting, not a searchable parameter (see config_space.R). This is
-  # the heaviest loop in the pipeline -- one VCF download + parse per project on a cold
-  # cache -- so it reports progress per project.
-  #
-  # It is also where the process's memory peak is set: EVERY covering project is resident at
-  # once. dosage_budget_bytes bounds each one individually, which is not the same thing --
-  # .dosage_thin_plan bounds the SUM, serving the largest projects coarser when it has to.
+  # Load each covering project's WHOLE population -- QC and allele frequencies are estimated
+  # on it, LESSONS #12. The heaviest loop in the pipeline on a cold cache, and where the
+  # memory peak is set: every covering project is resident at once, which is what
+  # .dosage_thin_plan bounds.
   plan <- .dosage_thin_plan(projs, settings)
   dl <- purrr::map(projs, function(pid) {
     d <- tryCatch(get_project_dosage(pid, NULL, conn, settings,
@@ -496,12 +457,11 @@ choose_geno_sources <- function(cfg, train_acc, test_acc, conn, settings) {
   dl <- purrr::compact(dl)
   if (!length(dl)) return(structure(list(), n_projects = length(projs)))
 
-  # Drop a project with intrinsically < 50 markers: every kernel method needs >= 50 markers
-  # surviving QC, and QC only REMOVES markers, so such a project can never yield a GRM under
-  # ANY config or method -- a property of the panel itself, not of how it's used. Skip it at
-  # the source so it never sinks a downstream combine; noted once per session per project.
-  # (A panel with >= 50 raw markers that fails only under a strict QC config is NOT dropped
-  # here -- that is config-dependent and handled per-evaluation in build_kernel.)
+  # Drop a project with intrinsically < 50 markers: QC only removes markers and every kernel
+  # method needs >= 50 surviving, so such a panel can never yield a GRM under any config.
+  # Skipping it at the source keeps it from sinking a downstream combine; noted once per
+  # session. A panel that fails only under a strict QC config is config-dependent and is left
+  # to build_kernel.
   poor <- names(dl)[vapply(dl, ncol, integer(1)) < 50L]
   for (pid in poor)
     .note_geno_once(paste0("poormarker_", pid), sprintf(
@@ -520,35 +480,29 @@ choose_geno_sources <- function(cfg, train_acc, test_acc, conn, settings) {
   })
   names(out) <- vapply(groups, function(pids) paste(pids, collapse = "+"), character(1))
   # `out` holds merged copies, so the per-project originals are now dead weight -- several GB
-  # of it. Drop the reference and collect, or they stay resident through the whole kernel
-  # build, which is itself the other memory peak.
+  # Drop the reference and collect, or they stay resident through the kernel build.
   rm(dl); gc(full = TRUE)
 
   # focal_plus_onehop: keep only the panels reachable from the focal trial's own panel.
   # all_projects keeps everything; this is what makes the two methods different.
   if (identical(cfg$geno_select.method, "focal_plus_onehop"))
     out <- .onehop_filter(out, test_acc, cfg$geno_select.min_bridge)
-  # Carry how many covering projects we started from, so run_pipeline can tell a
-  # genuinely ungenotyped trial (0 projects) from a "found projects but extracted
-  # no dosage" bug signature (projects > 0, dosage 0).
+  # Lets run_pipeline tell a genuinely ungenotyped trial (0 projects) from the bug signature
+  # of projects found but no dosage extracted.
   attr(out, "n_projects") <- length(projs)
   out
 }
 
-# The "one hop" of `focal_plus_onehop`, applied to the MERGED protocol groups (bridging is
-# between panels, so it cannot be judged on raw project ids -- two projects in one group
-# share a panel and need no bridge).
+# The "one hop" of `focal_plus_onehop`, applied to MERGED protocol groups: bridging is between
+# panels, and two projects in one group share a panel and need no bridge.
 #
-# Seed = the group(s) that genotype the focal trial's accessions. One hop out from there:
-# admit a further group only if it shares at least `min_bridge` accessions with the seed.
-# Those shared lines are the rows covariance_combiner stitches through, so a group with
-# none of them contributes a block the combine cannot relate to the focal accessions --
-# markers and compute, no information about the test set. Deliberately ONE hop, not the
-# transitive closure: a panel reachable only via a third panel is two hops away, and
-# admitting it would make this method all_projects by another name.
+# Seed = the group(s) genotyping the focal trial; admit a further group only if it shares at
+# least `min_bridge` accessions with the seed. Those shared lines are what covariance_combiner
+# stitches through, so a group without them costs markers and compute but says nothing about
+# the test set. Deliberately ONE hop -- the transitive closure is all_projects by another name.
 #
-# If no group covers the focal accessions there is nothing to hop from; return the list
-# unchanged and let run_pipeline's usual overlap check judge the trial.
+# With no group covering the focal accessions there is nothing to hop from: return the list
+# unchanged and let run_pipeline's overlap check judge the trial.
 .onehop_filter <- function(dl, test_acc, min_bridge) {
   if (length(dl) <= 1) return(dl)
   mb <- suppressWarnings(as.integer(min_bridge))
@@ -567,9 +521,8 @@ choose_geno_sources <- function(cfg, train_acc, test_acc, conn, settings) {
 # gets its own id but (near-)identical markers. Two projects join the same group when
 # they share >= settings$merge_containment of the smaller panel; grouping is
 # transitive (single-linkage).
-# Memo for .group_by_panel, per session and in RAM (like .overlap_memo). The grouping is a
-# property of the PANELS, not of the configuration, so it was being recomputed identically for
-# every evaluation touching the same projects -- 108 s of an 803 s evaluation on the server.
+# Memo for .group_by_panel, per session and in RAM. The grouping is a property of the PANELS,
+# not of the configuration, so it is identical across evaluations touching the same projects.
 .panel_group_memo <- new.env(parent = emptyenv())
 
 .group_by_panel <- function(dl, settings) {
@@ -652,13 +605,10 @@ build_kernel <- function(cfg, dosage_list, need, settings = NULL, focal = NULL) 
     # the panels are disjoint.
     bridge <- .bridge_accessions(dosage_list)
     keep   <- union(need, bridge)
-    # Build a GRM per panel, but DROP a panel that cannot yield one -- too few markers after
-    # THIS config's QC (.qc_markers throws too_few_markers) or too little overlap (.vanraden
-    # returns NULL) -- rather than letting one weak panel sink the whole combine. Report which
-    # panel was dropped and why (once per session per panel+QC), for the user's reference. This
-    # drop is config-dependent (a panel with >=50 raw markers may pass under looser QC), so it
-    # is NOT persisted; an intrinsically marker-poor project is filtered earlier, in
-    # choose_geno_sources.
+    # Build a GRM per panel, dropping one that cannot yield it -- too few markers after THIS
+    # config's QC, or too little overlap -- rather than letting one weak panel sink the
+    # combine. Config-dependent, so not persisted; a marker-poor project is filtered earlier
+    # in choose_geno_sources.
     grms <- purrr::compact(purrr::imap(dosage_list, function(d, nm) {
       g <- tryCatch(.vanraden(.qc_markers(d, cfg), keep), error = function(e) e)
       if (is.null(g) || inherits(g, "error")) {
@@ -673,16 +623,12 @@ build_kernel <- function(cfg, dosage_list, need, settings = NULL, focal = NULL) 
     if (length(grms) == 1) {
       K <- grms[[1]]
     } else {
-      # Standardize each partial covariance to a unit mean diagonal, THEN regularize it.
-      # PITFALL: the ridge must go on HERE, not only on the combined matrix at the end. The EM
-      # combiner inverts these partials, and a raw GRM is easily singular -- identical rows from
-      # clones or synonym-duplicated lines, or fewer surviving markers than accessions
-      # (LESSONS.md #21).
-      # Report WHY a partial is rank-deficient, once per session per panel. Duplicate genotype
-      # rows mean two accession NAMES carrying one genotype -- .merge_markers already removes
-      # same-NAME duplicates, so this is an unresolved synonym pair (LESSONS.md #6) or genuinely
-      # identical lines. Rank < nrow with no duplicates means fewer surviving markers than kept
-      # accessions. Diagnostic only: the ridge above makes either case combinable.
+      # Standardize each partial covariance to a unit mean diagonal, THEN regularize it. The
+      # ridge must go on HERE, not only on the combined matrix: the EM combiner inverts these
+      # partials -- LESSONS #21.
+      # Diagnostic only -- the ridge above makes either case combinable. Duplicate genotype
+      # rows mean two accession NAMES on one genotype: an unresolved synonym (LESSONS #6) or
+      # identical lines. Rank < nrow without duplicates means too few surviving markers.
       for (nm in names(grms)) {
         g <- grms[[nm]]
         dup <- sum(duplicated(round(g, 10)))
@@ -691,20 +637,17 @@ build_kernel <- function(cfg, dosage_list, need, settings = NULL, focal = NULL) 
             "em_combine: panel %s partial covariance is rank %d of %d (%d duplicate row(s)) -- ridged before combining",
             nm, qr(g)$rank, nrow(g), dup))
       }
-      # Standardize, MEASURE, then ridge -- in that order. The df below is measured on the
-      # unridged matrix on purpose: our ridge is a searchable parameter (1e-5..1e-2), and a
-      # ridge that large lifts a rank-deficient panel's near-zero eigenvalues enough to
-      # inflate its effective_n (27.6 -> 35.2 on a 100x30 panel). Measuring first keeps df a
-      # property of the panel rather than of a tuning knob.
+      # Standardize, MEASURE, then ridge, in that order: the ridge is a searchable parameter
+      # large enough to lift a rank-deficient panel's near-zero eigenvalues and inflate its
+      # effective_n, so measuring first keeps df a property of the panel, not of a knob.
       unridged <- lapply(grms, function(g) g / mean(diag(g)))
       std <- lapply(unridged, function(g) { diag(g) <- diag(g) + max(ridge, 1e-6); g })
       names_all <- unique(unlist(lapply(std, colnames)))
       idx  <- lapply(std, function(g) match(colnames(g), names_all))
-      # df is each partial's RELATIVE WEIGHT in the Wishart-EM likelihood, so what matters is
-      # the ratio between panels, not the scale. Accession count would weight a 2000-line
-      # panel 10:1 over a 200-line one; markers are in LD, so that overstates the independent
-      # information it carries. The effective-sample-size measure re-centred by .center_dfs
-      # brings that to ~1.4:1 (EM_COMBINE_COMPARISON.md item 1).
+      # df is each partial's RELATIVE WEIGHT in the Wishart-EM likelihood, so only the ratio
+      # between panels matters. Accession count would weight a 2000-line panel 10:1 over a
+      # 200-line one; markers are in LD, so that overstates its independent information. The
+      # effective-sample-size measure, re-centred by .center_dfs, brings it to ~1.4:1.
       dfs <- .center_dfs(vapply(unridged, .effective_n, numeric(1)),
                          settings$em_df_mean %||% 60, settings$em_df_stdev %||% 15)
       # A combine that still fails is a property of THIS trial's panels, not a bug: record it
@@ -790,18 +733,14 @@ build_kernel <- function(cfg, dosage_list, need, settings = NULL, focal = NULL) 
 
 # The protocol group to build a single-panel kernel from.
 #
-# Maximizing coverage of `need` alone is not enough. `need` is union(train, focal), so a panel
-# thick with TRAINING lines outscores one that actually covers the focal trial -- and the
-# pipeline then fails at the test_in guard with a kernel full of unusable relationships. CV00
-# makes this sharpest: masking leaves train and focal disjoint, so the two coverages compete
-# directly.
+# Maximising coverage of `need` alone is wrong: `need` is union(train, focal), so a panel thick
+# with TRAINING lines can outscore one that covers the focal trial, and the run then fails the
+# test_in guard. CV00 sharpens this -- masking leaves train and focal disjoint, so the two
+# coverages compete directly.
 #
-# So: prefer panels that clear BOTH downstream guards (R/pipeline.R's train_in / test_in
-# check); among those, maximize coverage of `need` as before -- which reproduces the old pick
-# whenever the old pick was actually usable. If none qualifies, fall back to the best focal
-# coverage: without focal lines there is nothing to predict, so that is the failure to avoid.
-#
-# `focal` NULL restores the pure max-coverage behaviour (callers that have no focal set).
+# So prefer panels clearing BOTH downstream guards; among those maximise coverage of `need`.
+# If none qualifies, fall back to best focal coverage -- without focal lines there is nothing
+# to predict. `focal` NULL gives pure max-coverage, for callers with no focal set.
 .best_panel <- function(dosage_list, need, focal = NULL,
                         min_test = 5L, min_train = 20L) {
   if (length(dosage_list) == 1) return(dosage_list[[1]])
@@ -815,13 +754,11 @@ build_kernel <- function(cfg, dosage_list, need, settings = NULL, focal = NULL) 
   dosage_list[[which.max(f_cov)]]
 }
 
-# VanRaden GRM over `need`, centred and scaled on the allele frequencies of the FULL
-# population in X. Because K_ij depends on the other accessions only through p, this
-# is exactly the [need, need] submatrix of the whole population's GRM -- at
-# O(n_need^2 * m) instead of O(n_pop^2 * m).
+# VanRaden GRM over `need`, centred and scaled on the allele frequencies of the FULL population
+# in X. K_ij depends on the others only through p, so this is exactly the [need, need]
+# submatrix of the population GRM, at O(n_need^2 * m) rather than O(n_pop^2 * m).
 #
-# Do NOT replace this with rrBLUP::A.mat: it assumes {-1,0,1} coding and silently discards
-# every alt-major marker when fed {0,1,2} dosages (LESSONS.md #11).
+# Do NOT replace with rrBLUP::A.mat -- LESSONS #11.
 #
 # The {0,1,2} assumption lives here now, in `p`, so guard it: a negative entry means the
 # dosage encoding changed underneath us, which would make p meaningless. Fail loudly.
@@ -856,23 +793,16 @@ build_kernel <- function(cfg, dosage_list, need, settings = NULL, focal = NULL) 
   X[!duplicated(rownames(X)), , drop = FALSE]
 }
 
-# MAF and missingness QC + imputation, returning a centered-ready dosage matrix.
+# MAF and missingness QC + imputation, returning a centred-ready dosage matrix.
 #
-# This is the pipeline's largest allocation, so it is written to make as few copies of X as
-# possible -- X here is a whole genotyped population, which on the big T3 panels is several
-# GB, and every full copy is multiplied by the number of workers on the machine:
+# The pipeline's largest allocation -- X is a whole genotyped population, several GB on the big
+# panels, times the number of workers -- so it makes as few copies as it can:
 #
-#   * ONE subset, not two. Per-column missingness and allele frequency do not depend on which
-#     other columns survive, so both masks are computed up front and applied together.
-#   * `miss` is reused for the imputation loop rather than recomputing colMeans(is.na(X)),
-#     which would allocate a second full logical matrix.
-#   * INTEGER IS PRESERVED on the mean_round path. A dosage matrix arrives as 4-byte
-#     integers; assigning a double into it (which `mu` and `round(mu)` are) silently coerces
-#     the WHOLE matrix to 8 bytes on the first imputed column, doubling the footprint plus a
-#     full copy at the promotion. mean_round's fill values are whole numbers, so they can be
-#     stored as integers and nothing downstream can tell the difference (.vanraden promotes
-#     only the rows it needs; stats::dist coerces internally). Plain `mean` genuinely needs
-#     doubles -- there the promotion is done once, deliberately, instead of by accident.
+#   * ONE subset, not two: both masks are computed up front and applied together.
+#   * `miss` is reused for the imputation loop rather than recomputing colMeans(is.na(X)).
+#   * INTEGER IS PRESERVED on the mean_round path, whose fills are whole numbers. Assigning a
+#     double into a 4-byte integer matrix coerces the WHOLE matrix to 8 bytes on the first
+#     imputed column; plain `mean` needs doubles, so there the promotion is done once.
 .qc_markers <- function(X, cfg) {
   miss <- colMeans(is.na(X))
   af   <- colMeans(X, na.rm = TRUE) / 2
@@ -911,20 +841,16 @@ train_model <- function(cfg, y_train, K, train_in, test_in, trial, train_obs) {
                     error = function(e) NULL)
     if (!is.null(out)) return(out)
   }
-  # Genomic-only GBLUP backbone, reached by gblup_rrblup always and by the other two
-  # whenever the G+E path is off or unavailable. `lambda_select` decides how the ridge
-  # -- the variance ratio lambda = sigma2_e / sigma2_u -- is chosen:
+  # Genomic-only GBLUP backbone. `lambda_select` chooses the ridge, the variance ratio
+  # lambda = sigma2_e / sigma2_u:
   #
-  #   reml   rrBLUP::mixed.solve estimates it by REML: the likelihood-optimal value IF
-  #          the model is correct.
-  #   fixed  use cfg$model.lambda_fixed as given (a submission that hard-codes a ridge).
-  #   loo    minimize leave-one-out predictive MSE over a log grid (Prediction4).
+  #   reml   rrBLUP::mixed.solve estimates it by REML -- optimal IF the model is correct.
+  #   fixed  cfg$model.lambda_fixed as given.
+  #   loo    minimise leave-one-out predictive MSE over a log grid.
   #
-  # REML and LOO are different estimators, not two routes to one number: REML maximizes a
-  # likelihood premised on the model being right, LOO minimizes out-of-sample error and so
-  # shrinks harder when it is not. Here it is not -- the GRM is block-diagonal or
-  # EM-stitched across panels and the phenotypes are pooled over trials with heterogeneous
-  # error variances -- which is exactly why the choice is worth searching over.
+  # REML and LOO are different estimators, not two routes to one number: LOO shrinks harder
+  # when the model is wrong, which here it is -- a block-diagonal or EM-stitched GRM, and
+  # phenotypes pooled over trials with heterogeneous error variances. Hence worth searching.
   Ktt  <- K[train_in, train_in, drop = FALSE]
   y    <- as.numeric(y_train[train_in])
   rule <- cfg$model.lambda_select
@@ -957,14 +883,13 @@ train_model <- function(cfg, y_train, K, train_in, test_in, trial, train_obs) {
   list(kind = "gblup", u = stats::setNames(u, ids), mu = mu, lambda = lambda)
 }
 
-# Choose lambda by leave-one-out predictive MSE over a log-spaced grid -- Prediction4's
-# method (`Prediction4/predict.py::_optimal_lambda_loo`), same grid.
+# Choose lambda by leave-one-out predictive MSE over a log-spaced grid (Prediction4's method
+# and grid).
 #
-# No refitting is needed: the fit is the linear smoother yhat = H y with
-# H = K (K + lambda I)^-1, and for a linear smoother the leave-one-out residual is
-# r_i / (1 - h_ii) exactly (the PRESS identity). So one solve per grid point gives the
-# full LOO error. `yc` must already be centred -- the centring is part of the smoother
-# and re-centring inside the loop would break the identity.
+# No refitting: the fit is the linear smoother yhat = H y, H = K (K + lambda I)^-1, so the
+# leave-one-out residual is exactly r_i / (1 - h_ii) by the PRESS identity, and one solve per
+# grid point gives the full LOO error. `yc` must already be centred -- re-centring inside the
+# loop would break the identity.
 .loo_lambda <- function(Ktt, yc, grid = 10^seq(-4, 4, length.out = 30)) {
   n <- nrow(Ktt)
   best_lambda <- 1
@@ -1021,14 +946,12 @@ predict_test <- function(cfg, fit, K, train_in, test_in, targets, scheme, settin
   if (cfg$predict_post.method == "cond_expectation") {
     pred <- .cond_exp()
   } else {
-    # direct BLUP: the model's own random effect for the focal accessions. Available only when
-    # the fit HAS one -- the sommer G+E path carries every accession in `rownames(K)` as a factor
-    # level; the rrBLUP backbone is fitted on training lines alone and does not.
+    # direct BLUP: the model's own random effect for the focal accessions, available only when
+    # the fit has one -- the sommer G+E path carries every accession in rownames(K) as a level;
+    # the rrBLUP backbone is fitted on training lines alone and does not.
     #
-    # PITFALL: without the guard below, fit$u[test_in] is all-NA -> all-zero -> every prediction
-    # equals `mu`, a constant vector that scores NA. Fall back to the kernel, which is what all
-    # five submitted algorithms do for masked lines, and record it -- a method silently changing
-    # meaning is the failure mode here (LESSONS.md #22).
+    # Without the guard, fit$u[test_in] is all-NA -> every prediction equals `mu` and scores
+    # NA. Fall back to the kernel and RECORD it -- LESSONS #22.
     u_test <- fit$u[test_in]
     if (all(is.na(u_test))) {
       .note_geno_once("direct_blup_no_test_effect", paste(

@@ -1,18 +1,12 @@
 # evaluate.R
 #
-# Turns "run this configuration on a trial" into a number the optimizer can use:
-# the Pearson correlation between predicted and observed per-accession grain-yield
-# BLUEs on the held-out focal-trial accessions -- the Predictathon's own metric.
+# Turns "run this configuration on a trial" into a score: the Pearson correlation between
+# predicted and observed per-accession BLUEs on the held-out focal accessions.
 #
-# Two modes, behind one interface (sample_trial / evaluate_config_on_trial):
-#   * SIMULATE = TRUE  : a synthetic genomic-prediction world with a KNOWN
-#     generative model in which some subtask choices are genuinely better than
-#     others, and some are better only on certain kinds of trial (so crossover
-#     and generalization matter). Runs offline in milliseconds; used by
-#     tests/test_sim_loop.R to prove the optimizer actually learns before any
-#     real compute is spent.
-#   * SIMULATE = FALSE : the real pipeline (R/pipeline.R) on real T3 data
-#     (R/data_access.R), scored against observed BLUEs.
+# Two modes behind one interface (sample_trial / evaluate_config_on_trial):
+#   simulate = TRUE   a synthetic world with a known generative model, offline and in
+#                     milliseconds, so tests/test_sim_loop.R can prove the search learns.
+#   simulate = FALSE  the real pipeline on real T3 data.
 
 library(tidyverse)
 
@@ -71,15 +65,6 @@ evaluate_config_on_trial <- function(cfg, trial, scheme, settings, conn = NULL) 
   # read after it -- including after a failure, since an evaluation that dies of memory
   # pressure is exactly the one whose footprint we want on record.
   mem_reset()
-  # Bound one evaluation's wall time (Inf = no bound; settings$max_eval_minutes explains why
-  # that is the default). `transient = TRUE` restores the previous limit when this frame exits.
-  # R checks the limit only at interpreter checkpoints, so a long call inside compiled code (a
-  # BLAS crossproduct, a VCF parse) can overshoot it.
-  cap_min <- settings$max_eval_minutes %||% Inf
-  if (is.finite(cap_min) && cap_min > 0) {
-    setTimeLimit(elapsed = cap_min * 60, transient = TRUE)
-    on.exit(setTimeLimit(), add = TRUE)
-  }
   # One error handler that branches on the condition class. (A single handler is
   # deliberate: re-raising a fatal with stop(e) from a multi-handler tryCatch gets
   # caught by that same tryCatch's sibling `error` handler, which would swallow
@@ -104,15 +89,8 @@ evaluate_config_on_trial <- function(cfg, trial, scheme, settings, conn = NULL) 
         return(list(score = NA_real_, n_test = 0L,
                     status = if (isTRUE(e$suspect)) "suspect" else "infeasible",
                     reason = e$code, detail = funnel_string(e$funnel)))
-      # The wall-clock cap fired. Not a bug and not a data verdict -- its own status, so a
-      # run that is merely too slow never hides among genuine crashes in the failure log.
-      msg <- conditionMessage(e)
-      if (grepl("reached elapsed time limit|reached CPU time limit", msg))
-        return(list(score = NA_real_, n_test = 0L, status = "timeout",
-                    reason = sprintf("exceeded max_eval_minutes = %g", cap_min)))
-      # Anything unexpected: record it (so a stray bug does not kill a long run)
-      # but tag it distinctly so it stands out in the log.
-      list(score = NA_real_, n_test = 0L, status = "error", reason = msg)
+      # Anything unexpected: record it rather than killing a long run.
+      list(score = NA_real_, n_test = 0L, status = "error", reason = conditionMessage(e))
     })
   res$detail <- res$detail %||% NA_character_
   res$seconds <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
@@ -133,14 +111,9 @@ score_predictions <- function(pred, obs) {
     tibble::tibble(germ = names(obs),  obs  = as.numeric(obs)),
     by = "germ")
   m <- dplyr::filter(j, is.finite(pred), is.finite(obs))
-  # Two unrelated failures used to share the `too_few_overlap` status, and telling them apart
-  # after the fact was impossible: n_test is counted AFTER the finite filter, so both read as
-  # "0 accessions". They mean opposite things --
-  #   nothing JOINED          -> a coverage / name problem: predictions and observations are
-  #                              about different accessions.
-  #   joined but none FINITE  -> a modelling problem: the names lined up and the numbers are
-  #                              NaN/Inf. Nothing about the data is missing.
-  # Report the second separately, and say which side went non-finite.
+  # Separate statuses, because n_test is counted after the finite filter and both would
+  # otherwise read as "0 accessions" while meaning opposite things: nothing JOINED is a
+  # coverage/name problem; joined but none FINITE is a modelling one.
   if (nrow(j) > 0 && nrow(m) == 0) {
     nap <- sum(!is.finite(j$pred)); nao <- sum(!is.finite(j$obs))
     return(list(score = NA_real_, n_test = 0L, status = "non_finite",
@@ -159,13 +132,10 @@ score_predictions <- function(pred, obs) {
 }
 
 # ===========================================================================
-# SIMULATE world: a transparent stand-in for the real objective.
-# .sim_true() is the deterministic expected predictive ability of a config on a
-# trial; .sim_evaluate() adds single-trial sampling noise. The numbers encode
-# plausible genomic-prediction wisdom AND deliberate interactions, so that (a)
-# no single submitted seed is optimal, (b) recombining good blocks helps, and
-# (c) some choices only pay off on certain trial types -- which is what makes
-# "predict any random trial" a non-trivial target.
+# SIMULATE world: a transparent stand-in for the real objective. .sim_true() is a config's
+# deterministic expected predictive ability on a trial; .sim_evaluate() adds sampling noise.
+# The numbers encode deliberate interactions, so no single seed is optimal, recombining blocks
+# helps, and some choices pay off only on certain trial types.
 # ===========================================================================
 .sim_true <- function(cfg, trial, scheme) {
   q <- 0

@@ -1,20 +1,12 @@
 # run_optimizer.R
 #
-# Background entry point. Sources the subsystem, then loops:
-#   choose a configuration -> sample a fresh random trial -> evaluate under each
-#   CV scheme -> store -> checkpoint a report.
-# It checkpoints after every evaluation, so the process is fully resumable: kill
-# it any time and re-launch to continue from the SQLite store. Stop it cleanly by
-# creating the stop-file (state/STOP) or hitting the iteration / wall-clock
-# budget in settings.R.
+# Background entry point. Loops: choose a configuration -> sample a fresh trial -> evaluate
+# under each CV scheme -> store -> checkpoint a report. Checkpointed after every evaluation, so
+# it is fully resumable: kill it and re-launch to continue from the store.
 #
-# Launch in the background from this directory:
-#   nohup Rscript run_optimizer.R > logs/run.out 2>&1 &
-# Watch it:
-#   tail -f logs/run.out        # live log
-#   cat state/report.md         # current best pipeline + learning curve
-# Stop it:
-#   touch state/STOP
+#   nohup Rscript run_optimizer.R > logs/run.out 2>&1 &   # launch
+#   tail -f logs/run.out                                  # watch
+#   touch state/STOP                                      # stop cleanly
 
 library(tidyverse)
 here::i_am("run_optimizer.R")
@@ -22,18 +14,12 @@ here::i_am("run_optimizer.R")
 source(here::here("settings.R"))
 for (f in list.files(here::here("R"), pattern = "[.]R$", full.names = TRUE)) source(f)
 
-# One optimization step: pick config, pick trial, evaluate under each scheme,
-# store. Returns a short status record for logging.
+# One optimization step: pick config, pick trial, evaluate under each scheme, store. Returns a
+# status record for logging.
 #
-# Failure handling (see R/conditions.R):
-#   * a fatal condition (bad settings / unimplemented method) is NOT caught here
-#     -- it propagates to run_optimizer()'s loop, which halts.
-#   * a sample_failed condition (no usable trial) is caught and reported back as
-#     sampling_failed = TRUE; no eval is stored (it is not a config's fault). The
-#     loop tolerates a few in a row, then stops.
-#   * an infeasible (trial, config, scheme) is recorded by evaluate_config_on_trial
-#     as a failed eval (the failure log) and the step completes normally; the NEXT
-#     step samples a new trial and chooses a new configuration.
+# Failure handling (R/conditions.R): a `fatal` is not caught here and halts the loop; a
+# `sample_failed` returns sampling_failed = TRUE with nothing stored, since it is not a
+# config's fault; an `infeasible` is recorded as a failed eval and the step completes.
 optimizer_step <- function(con, settings, conn = NULL) {
   choice <- choose_config(con, settings)
   # choose_trial, not sample_trial: a started trial must reach settings$trial_replication
@@ -88,18 +74,10 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
   dir.create(settings$log_dir, showWarnings = FALSE, recursive = TRUE)
   dir.create(settings$cache_dir, showWarnings = FALSE, recursive = TRUE)
 
-  # Warm the work cache from its durable backup if it is empty (fresh node). Flushing it BACK
-  # is not here -- that is every worker's job now (the on.exit below and the in-loop call).
-  #
-  # RESTORING is leader-only and must stay that way, for a different reason than the backup
-  # was: the workers share one cache_dir, and a restore is not idempotent in the way an
-  # additive backup is -- N of them pulling the same tree at startup fight for the disk while
-  # the others are trying to read it.
-  #
-  # The others must WAIT for it. On a fresh node the restore takes minutes, and a worker that
-  # starts before it finishes sees an empty cache and re-downloads the very projects the rsync
-  # is about to deliver -- correct (the per-project lock sees to that) but a waste of a large
-  # download. The leader signals completion with cache_ready_file.
+  # Warm the work cache from its durable backup. RESTORING stays leader-only: N workers
+  # pulling one tree at startup fight for the disk while the others read it. The others wait
+  # on cache_ready_file, or they would re-download what the rsync is about to deliver.
+  # Flushing back is every worker's job -- LESSONS #25.
   leader <- isTRUE(settings$is_leader %||% TRUE)
   ready_file <- settings$cache_ready_file
   if (leader) {
@@ -137,15 +115,6 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
     conn <- t3_connect(settings)
   }
 
-  # Bug oracle (opt-out via run_startup_canary = FALSE): before spending hours, confirm the
-  # pipeline can still predict trials we KNOW are feasible. A canary failure means the code is
-  # hiding real data (a name/parse/column bug), so the "infeasible" verdicts cannot be trusted.
-  # We warn loudly but do not halt -- the choice to proceed is yours.
-  if (!settings$simulate && isTRUE(settings$run_startup_canary) && !is.null(settings$canary_trials)) {
-    tryCatch(check_canaries(settings, conn),
-             error = function(e) message("canary check error: ", conditionMessage(e)))
-  }
-
   con <- open_store(settings$db_path)
   on.exit(close_store(con), add = TRUE)
   # A build that invalidated earlier rows starts with less history than the store suggests.
@@ -172,9 +141,6 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
       message("STOP file present -> halting cleanly."); break
     }
     if (iter >= settings$max_iters) { message("iteration budget reached."); break }
-    if (as.numeric(difftime(Sys.time(), start, units = "hours")) >= settings$max_hours) {
-      message("wall-clock budget reached."); break
-    }
 
     # A fatal condition halts the run; a sample_failed bubbles up as
     # step$sampling_failed; an infeasible (trial, config) was already recorded by
@@ -219,14 +185,9 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
     # whether it is due, from a stamp file every worker can see, so no worker's long evaluation
     # can hold up everyone else's backup. Not leader-gated -- see LESSONS #25.
     sync_cache_to_backup(settings)
-    # Copy the store to durable storage. Needed because running several workers puts db_path
-    # on local disk (WAL cannot work over NFS -- see settings$worker_id), and the store is the
-    # one file whose loss costs real work.
-    #
-    # NOT leader-only, and throttled on the backup file's own mtime so N workers share one
-    # interval rather than each honouring it separately -- see should_backup_now() in R/store.R
-    # for why. Two workers can still both find it stale and both back up; that is harmless,
-    # since backup_store writes to dest.tmp<PID> and renames.
+    # Copy the store to durable storage: db_path is on local disk, and the store is the one
+    # file whose loss costs real work. Any worker may do it, throttled on the backup's own
+    # mtime -- see should_backup_now() in R/store.R.
     if (should_backup_now(settings)) {
       # backup_store reports its own failure; note the consequence here so a run whose backups
       # are all failing says so in the log rather than only at the moment /workdir is wiped.

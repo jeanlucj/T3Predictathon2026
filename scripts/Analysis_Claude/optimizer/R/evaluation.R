@@ -1,34 +1,26 @@
 # evaluation.R
 #
-# Console tooling for EVALUATING the optimizer -- for the human reviewer, not for
-# the running loop. Nothing here is called by run_optimizer(); these are the
-# helpers EVALUATION.md drives from the RStudio console:
+# Console tooling for EVALUATING the optimizer, driven by EVALUATION.md from the console.
+# Nothing here is called by run_optimizer():
 #
-#   arm_evaluation(group)   -- debug() every function in a module group so calling
-#   disarm_evaluation()        the pipeline drops into the debugger there, one
-#                              module at a time. (Mirrors BrAPI_track_crosses'
-#                              arm_evaluation over STAGE_FUNCTIONS, generalized to
-#                              the optimizer's grouped module structure.)
+#   arm_evaluation(group)   -- debug() every function in a module group, so a pipeline call
+#   disarm_evaluation()        drops into the debugger there, one module at a time.
 #   eval_groups()           -- print the group menu (which functions, in fast->slow order).
-#   peek(x)                 -- a transparent one-object summary tuned to the objects
-#                              that flow between the six subtasks, so the silent
-#                              failure signatures (all-NA rep/block, degenerate
-#                              targets, zero rowname overlap, a non-symmetric K)
-#                              are visible at a glance. Returns its input invisibly.
+#   peek(x)                 -- a one-object summary tuned to the objects that flow between the
+#                              six subtasks, making the silent failure signatures (all-NA
+#                              rep/block, degenerate targets, zero rowname overlap, a
+#                              non-symmetric K) visible. Returns its input invisibly.
 #
-# This file is picked up by run_optimizer.R's `list.files("R", ...)` source glob,
-# so the tooling loads with the rest of the subsystem. Defining these functions is
-# harmless in a background run; just remember to disarm_evaluation() before
-# launching one, or every pipeline call will block on the debugger.
+# run_optimizer.R's source glob loads this file too. Defining the functions is harmless, but
+# disarm_evaluation() before a background run or every pipeline call blocks on the debugger.
 
 library(tidyverse)
 
 # ---------------------------------------------------------------------------
-# Module groups, ordered fast/offline -> slow/online. Each is a set of function
-# names you can arm together. The six subtasks are split out so you can arm
-# exactly ONE and let run_pipeline() run straight through to it; the orchestrators
-# (run_pipeline / optimizer_step) live in their own `flow` group so arming a
-# subtask does not double-break.
+# Module groups, ordered fast/offline -> slow/online; each is a set of functions to arm
+# together. The six subtasks are separate so that arming exactly ONE lets run_pipeline() run
+# straight through to it; the orchestrators sit in their own `flow` group so arming a subtask
+# does not double-break.
 # ---------------------------------------------------------------------------
 EVAL_GROUPS <- list(
   # ---- offline, instant -------------------------------------------------
@@ -75,24 +67,21 @@ EVAL_GROUPS <- list(
                    "sweep_rich_trials", ".oracle_variants", ".select_variants")
 )
 
-# Convenience aggregate: the whole inner pipeline (all six subtasks, but NOT
-# run_pipeline). Arm this and call run_pipeline() to break once per subtask, in
-# order A -> F. Defined after the list so it can reference the subtask entries.
+# The whole inner pipeline (all six subtasks, but NOT run_pipeline): arm it and call
+# run_pipeline() to break once per subtask, A -> F.
 EVAL_GROUPS$pipeline <- unique(unlist(
   EVAL_GROUPS[c("subtaskA", "subtaskB", "subtaskC", "subtaskD", "subtaskE", "subtaskF")],
   use.names = FALSE))
 
-# Recommended evaluation order: fast/offline first so cheap bugs surface before
-# you spend a download. Drives EVALUATION.md and EVALUATION_CHECKLIST.md.
+# Evaluation order: fast/offline first, so cheap bugs surface before a download is spent.
 EVAL_ORDER <- c("config_space", "engine", "store", "scoring",
                 "data", "subtaskA", "subtaskB", "subtaskC", "subtaskD",
                 "subtaskE", "subtaskF", "flow", "diagnostics")
 
 # ---------------------------------------------------------------------------
-# Arm / disarm debug() over a group. debug() (not debugonce()): the flag persists
-# until undebug()'d, so you step through as many calls as you like and turn it off
-# deliberately -- debugonce() cannot be cancelled or seen by isdebugged(). Guards
-# on exists()/isdebugged() make both idempotent.
+# Arm / disarm debug() over a group. debug(), not debugonce(): the flag persists until
+# undebug()'d, and debugonce() can be neither cancelled nor seen by isdebugged(). The
+# exists()/isdebugged() guards make both idempotent.
 # ---------------------------------------------------------------------------
 arm_evaluation <- function(groups) {
   unknown <- setdiff(groups, names(EVAL_GROUPS))
@@ -129,11 +118,10 @@ eval_groups <- function() {
 }
 
 # ---------------------------------------------------------------------------
-# peek(): a transparent one-object summary. Print a compact shape/health line for
-# the object, then return it invisibly so it can sit inside a pipe. Tuned to the
-# five object shapes that carry the pipeline's state, and to the failure
-# signatures that otherwise pass silently. Pass `accessions` to check name overlap
-# on a dosage matrix / dosage_list (the synonym-mismatch signal).
+# Print a compact shape/health line for one object, then return it invisibly so it can sit in a
+# pipe. Covers the five object shapes that carry the pipeline's state and the failure signatures
+# that otherwise pass silently. `accessions` adds a name-overlap check on a dosage matrix or
+# dosage_list (the synonym-mismatch signal).
 # ---------------------------------------------------------------------------
 peek <- function(x, label = deparse(substitute(x)), accessions = NULL) {
   lab <- paste0("[peek] ", label, ": ")

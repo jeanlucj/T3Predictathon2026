@@ -1,23 +1,19 @@
 # config_space.R
 #
-# The configuration space of a genomic-prediction pipeline: the six subtasks, the methods
-# each can use (drawn from the five Predictathon submissions and the literature),
-# and the tunable parameters of each method. This file is the single source of
-# truth for the search space. Everything the optimizer does -- sample a random
-# pipeline, encode one as features for the surrogate, recombine two pipelines
-# (crossover) or perturb one (mutation) -- is defined here in terms of SUBTASKS.
+# The configuration space of a genomic-prediction pipeline: the six subtasks, the methods each
+# can use (drawn from the five Predictathon submissions and the literature), and each method's
+# tunable parameters. The single source of truth for the search space -- sampling, feature
+# encoding, crossover and mutation are all defined here in terms of SUBTASKS.
 #
-# To add a method from the literature: add its name to a subtask's `methods`,
-# add any new parameters to that subtask's `params` (tagging which methods use
-# them), and add a matching branch in the dispatcher in R/pipeline.R. Nothing
-# else in the optimizer needs to change.
+# To add a method: add its name to a subtask's `methods`, add any new parameters to that
+# subtask's `params` (tagging which methods use them), and add a matching branch in the
+# dispatcher in R/pipeline.R. Nothing else needs to change.
 #
-# A configuration is a FLAT named list. Each subtask contributes one
-# "<subtask>.method" key plus one key per parameter, e.g.
+# A configuration is a FLAT named list: one "<subtask>.method" key per subtask plus one key per
+# parameter, e.g.
 #   list(train_select.method = "accession_overlap",
 #        train_select.primary_min = 4, train_select.secondary_min = 12, ...)
-# Parameters that do not apply to the chosen method are set to NA. Keeping the
-# config flat makes encoding, hashing and crossover simple to read.
+# Parameters inapplicable to the chosen method are NA.
 
 library(tidyverse)
 
@@ -64,12 +60,9 @@ SUBTASKS <- list(
   geno_select = list(
     methods = c("focal_plus_onehop", "best_single_project", "all_projects"),
     params = list(
-      # focal_plus_onehop admits a protocol group only if it shares at least
-      # `min_bridge` accessions with the group(s) genotyping the FOCAL trial. Those
-      # shared lines are the rows em_combine stitches panels through, so this is the
-      # strictness of the connectivity requirement: 1 admits a panel hanging off a
-      # single shared line (a barely-identified cross-panel block), 5 demands a real
-      # anchor. It is what makes this method narrower than all_projects.
+      # Admit a protocol group only if it shares at least `min_bridge` accessions with the
+      # group(s) genotyping the FOCAL trial. Those shared lines are the rows em_combine stitches
+      # panels through: 1 admits a panel hanging off a single line, 5 demands a real anchor.
       min_bridge  = list(type = "int", range = c(1, 5),  methods = "focal_plus_onehop")
     )
   ),
@@ -98,8 +91,7 @@ SUBTASKS <- list(
       include_E     = list(type = "cat", values = c("yes", "no"),
                            methods = c("gblup_sommer_GE", "rkhs")),
       lambda_select = list(type = "cat", values = c("reml", "fixed", "loo"), methods = NULL),
-      # Used only when lambda_select = "fixed" (sampled but ignored otherwise, as
-      # ge_bandwidth is under ge_weighting = "none").
+      # Used only when lambda_select = "fixed"; sampled but ignored otherwise.
       lambda_fixed  = list(type = "real", range = c(1e-2, 1e2), scale = "log", methods = NULL)
     )
   ),
@@ -164,9 +156,8 @@ sample_config <- function() {
   cfg
 }
 
-# Crossover: for each subtask, take the WHOLE block (method + its params) from
-# parent a or parent b. This is the "recombine submitted algorithms" operator --
-# e.g. P1's training-trial selection with P5's kernel and P4's blending.
+# For each subtask, take the WHOLE block (method + its params) from parent a or parent b: the
+# "recombine submitted algorithms" operator, e.g. P1's trial selection with P5's kernel.
 crossover <- function(a, b) {
   child <- list()
   for (subtask in names(SUBTASKS)) {
@@ -199,17 +190,15 @@ canonical_keys <- function() {
   }), use.names = FALSE)
 }
 
-# Stable hash of a configuration, for de-duplication in the store. Hashing the
-# canonical full-precision JSON (rather than the R list) makes the hash immune to
-# int-vs-double typing and key-order differences, so a config and its JSON
-# round-trip hash identically. config_to_json() is defined in R/store.R.
+# Stable hash of a configuration, for de-duplication in the store. Hashing the canonical
+# full-precision JSON rather than the R list makes it immune to int-vs-double typing and
+# key-order differences, so a config and its JSON round-trip hash identically.
 config_hash <- function(cfg) {
   rlang::hash(config_to_json(cfg))
 }
 
-# Coerce/repair a config so inapplicable params are NA and key order is
-# canonical. Used after crossover (a param may now be irrelevant to the
-# method inherited from the other parent) so configs stay well-formed.
+# Coerce a config so inapplicable params are NA and key order is canonical. Run after crossover,
+# where a param may be irrelevant to the method inherited from the other parent.
 repair_config <- function(cfg) {
   for (subtask in names(SUBTASKS)) {
     method <- cfg[[.method_key(subtask)]]
@@ -218,9 +207,8 @@ repair_config <- function(cfg) {
       if (!.param_applies(SUBTASKS[[subtask]]$params[[pname]], method)) {
         cfg[[key]] <- NA
       } else if (length(cfg[[key]]) == 0 || isTRUE(is.na(cfg[[key]]))) {
-        # The param applies but is absent (NULL, e.g. a hand-built/seed config
-        # that omitted it) or NA (crossover brought in a method needing a param
-        # the donor block lacked); fill it with a fresh draw.
+        # Applies but absent (a seed config omitted it) or NA (crossover brought in a method
+        # needing a param the donor block lacked): fill with a fresh draw.
         cfg[[key]] <- .sample_param(SUBTASKS[[subtask]]$params[[pname]])
       }
     }
@@ -229,16 +217,14 @@ repair_config <- function(cfg) {
 }
 
 # ---------------------------------------------------------------------------
-# Feature encoding for the surrogate. rpart consumes a data.frame of factors
-# (method choices, categorical params) and numerics (numeric params), with NA
-# allowed for inapplicable parameters -- rpart handles those via surrogate
-# splits, so we do not impute them away. We build a fixed schema so every
-# configuration encodes to the same columns in the same order.
+# Feature encoding for the surrogate. rpart consumes a data.frame of factors (methods,
+# categorical params) and numerics, with NA left in place for inapplicable parameters -- rpart
+# handles those via surrogate splits. The fixed schema makes every config encode to the same
+# columns in the same order.
 # ---------------------------------------------------------------------------
 
-# The feature schema: a named list mapping each column to its type and (for
-# factors) its levels. Numeric params -> "numeric"; method & cat params ->
-# factor with the spec's allowed levels.
+# Each column's type and, for factors, its levels: numeric params -> "numeric"; methods and
+# categorical params -> factor over the spec's allowed values.
 feature_schema <- function() {
   schema <- list()
   for (subtask in names(SUBTASKS)) {

@@ -12,12 +12,12 @@ The code cites these by number (`see LESSONS.md #11`). Numbers are stable: appen
 
 | | |
 |---|---|
-| §1 The T3 data layer | #1–#10 |
+| §1 The T3 data layer | #1–#10, #27 |
 | §2 Genomic methods | #11–#14 |
 | §3 Search space and design | #15–#17 |
 | §4 Testing and validation | #18–#20 |
 | §5 Numerical robustness | #21–#22 |
-| §6 Running it: resources, concurrency, configuration | #23–#26 |
+| §6 Running it: resources, concurrency, configuration | #23–#26, #28 |
 
 ---
 
@@ -121,6 +121,22 @@ covering trial × scheme.
 project is skipped for the rest of the run. This is deliberately *not* an `unparseable_` verdict —
 it is session-only and resets next run, so a project that was merely down is retried fresh. A
 success clears the counter.
+
+### 27. A rejected password logs in "successfully"
+
+**Trap.** Calling `conn$login()` and assuming a wrong password produces an error.
+**Symptom.** BrAPI's `login()` assigns `resp$content$access_token` unconditionally, so a
+REJECTED password leaves `auth_token` NULL and **returns normally** — with only an "Incorrect
+Password" *warning* in the output. Every later call then goes out anonymous and 401s, and the
+run reports data-shaped failures: no descriptor, empty searches, trials that look ungenotyped.
+Cached counts stay healthy, so the store looks fine while nothing new arrives. A one-line
+credentials problem presents as a data problem, for as long as you let it run.
+**Now.** `t3_login()` verifies a token was actually issued and raises `t3_bad_credentials`,
+which `.brapi_try()` treats as fail-fast rather than transient — retrying would only re-read
+the same environment. Missing credentials raise the sibling `t3_missing_credentials`.
+**Generalise.** For any auth call, assert on the *artefact* (a token, a session id), never on
+the call returning without error.
+**Lives in.** `R/data_access.R::t3_login`, `.brapi_try`.
 
 ---
 
@@ -249,9 +265,17 @@ reaching for more precise evaluations.
 no better than random (0.513 vs 0.525). The variance that matters comes from the objective's own
 definition — a mean over a heterogeneous trial population, estimated one trial at a time — not from
 measurement.
-**Now.** Recorded, not yet fixed. The remedy is replication and pairing across trials, not precision;
-see the not-implemented note in `BACKGROUND.md` §4. Note also that `optimizer_step()` samples a fresh
-trial per evaluation, so the trial effect is currently not even *estimable*.
+**The measurement, on the real store.** `sd_trial` **0.078** against `sd_config` **0.036** — trials
+differ more than twice as much as the thing being optimized, and idiosyncratically: program, year,
+location and test-set size explain essentially none of it. That is why the surrogate blocks on
+`trial_id` itself rather than on trial descriptors, and why blocking needs replication to be safe —
+at one observation per trial an `rpart` split on `trial_id` fits pure noise to an in-sample R² of
+0.98.
+**Now.** Partly fixed. `trial_replication` makes a trial carry several configurations, so the trial
+effect is estimable and `aggregate_scores()` removes it with random-effects BLUPs. The other half —
+replicating *configurations* — is not built yet: `config_replication` is the next revision, and
+until it lands every configuration gets exactly one evaluation, so the incumbent rests on a single
+observation. See `BACKGROUND.md` §4.
 
 ### 20. Your analysis scripts deserve the same suspicion as the pipeline
 
@@ -444,3 +468,26 @@ that keeps needing edits -- that is not a template, it is code living in the wro
 **Lives in.** `container/lib_submit.sh`, `container/submit.local.sh.example`,
 `settings.R::cluster_scratch_paths`, `container/settings.local.R.scinet`,
 `container/t3opt_ceres.sh`.
+
+### 28. Evaluations differ by orders of magnitude, and nothing bounds them
+
+**Trap.** Reasoning about the run from a typical evaluation -- planning a wall clock, a worker
+count or a node size around "about half an hour each".
+**The spread, over 121 real evaluations.** Median **29 min**, mean **122 min**, max **33 hours**
+-- a 68x range, and the mean is four times the median because the tail dominates. Memory
+likewise: `peak_r_mb` median **19 GB**, max **82 GB**, and that is R's heap peak, an
+*under*-estimate of true RSS. The whole set cost 246.8 hours of compute. Kernel medians differ
+much less than the tail does (`em_combine` 36.4 min, `rkhs_gaussian` 36.1, `vanRaden_single`
+22.4), so the method alone does not tell you which evaluations will be the expensive ones --
+trial size and panel coverage do.
+**Nothing constrains this, deliberately.** There was a `max_eval_minutes` cap; it was removed
+because a wall-clock cap **censors non-randomly**. The slow configurations are the thorough
+ones, which may also be the best; a capped evaluation stores no score, so a configuration that
+always exceeds the cap can never become incumbent however good it is. Set one and the search
+"discovers" that cheap pipelines win -- an artifact. Memory is bounded instead, and only where
+bounding is safe: `dosage_total_budget_bytes` thins at serve time rather than discarding work.
+**So watch it rather than cap it.** `report_timing.R` and `report_memory.R` exist for this.
+Size a machine from the *maximum* per worker, not the median -- SLURM kills a job that exceeds
+its allocation rather than throttling it -- and expect a job's final hours to lose whatever is
+in flight, because a 33-hour evaluation cannot be finished by any amount of margin.
+**Lives in.** `report_timing.R`, `report_memory.R`, `settings$dosage_total_budget_bytes`.

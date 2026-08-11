@@ -1,32 +1,17 @@
 # data_access.R
 #
-# The real-data layer: pull from T3/Wheat over BrAPI and cache everything on disk
-# so the cost of touching a given trial (its phenotypes, its genotypes) is paid
-# once and reused across configurations and iterations. This is what lets the
-# optimizer run for days in the background without re-downloading.
+# The real-data layer: pull phenotypes and genotypes from T3/Wheat over BrAPI and cache them on
+# disk, so a trial costs one download however many configurations touch it.
 #
-# It reuses the proven calls from this repo:
-#   * BrAPI: conn$search("/observations", ...), conn$wizard("accessions", ...),
-#     conn$wizard("genotyping_projects", ...) for downloadable project ids,
-#     conn$vcf_archived(...)  (see scripts/Prediction5, build_grm_for_cv00.R,
-#     expand_project_universe.R)
-#   * T3BrapiHelpers: get_all_trial_meta_data, covariance_combiner
-#
-# NOTE: the exact column names in BrAPI responses can vary by server version.
-# The accessors below (.obs_tibble, trial_catalog) normalize the common shapes
-# and fail loudly if a response is unexpected, so the first real run surfaces any
-# mismatch immediately rather than corrupting results.
+# BrAPI response column names vary by server version; .obs_tibble and trial_catalog normalise
+# the common shapes and fail loudly on anything else.
 
 library(tidyverse)
 
-# --- tiny on-disk memorizer -------------------------------------------------
 # --- category-partitioned cache paths --------------------------------------
-# A cache entry lives at   cache/<category>/<category>[_<identifier>].<ext>
-# so the (large, flat) cache is navigable by kind. `identifier = NULL` is a singleton
-# category (e.g. "trial_catalog") whose file is just cache/<category>/<category>.<ext>.
-# READS fall back to the pre-migration FLAT path (cache/<category>[_<identifier>].<ext>) so
-# an un-migrated or half-migrated cache still hits; WRITES always use the nested path.
-# (Run migrate_cache_layout.R to relocate the existing flat files once.)
+# An entry lives at cache/<category>/<category>[_<identifier>].<ext>; identifier = NULL is a
+# singleton category. Reads also try the pre-migration flat path, so an un-migrated cache still
+# hits; writes always use the nested one. migrate_cache_layout.R relocates old files.
 .cache_stem <- function(category, identifier = NULL)
   if (is.null(identifier)) category else paste0(category, "_", identifier)
 
@@ -46,18 +31,11 @@ library(tidyverse)
 }
 
 # Write `value` to the nested cache path, creating the category subfolder. Returns the path.
-#
-# ATOMIC: written to a temporary name in the same directory and renamed into place, so a
-# cache file never exists in a half-written state. rename(2) within one filesystem is atomic,
-# so a reader either sees the previous file or the complete new one -- never a truncated RDS.
-# This matters in two places even with the download lock: several workers share cache_dir and
-# may write the same key concurrently, and .find_densest_dosage GLOBS for dosage files, so a
-# partially-written one would otherwise be matched and read.
+# Atomic: temp file then rename, so a reader never sees a half-written RDS -- LESSONS #24.
 .cache_save <- function(settings, category, identifier = NULL, value, ext = "rds") {
   p <- .cache_path(settings, category, identifier, ext)
   dir.create(dirname(p), showWarnings = FALSE, recursive = TRUE)
-  # The pid keeps two writers' temporaries apart; the leading dot keeps them out of the
-  # dosage_*.rds glob. Cleaned up on failure so a dead write leaves nothing behind.
+  # The pid keeps two writers apart; the leading dot keeps the temp out of the dosage_*.rds glob.
   tmp <- file.path(dirname(p), sprintf(".tmp%d_%s", Sys.getpid(), basename(p)))
   ok <- tryCatch({ saveRDS(value, tmp); file.rename(tmp, p) }, error = function(e) e)
   if (inherits(ok, "error") || !isTRUE(ok)) {
@@ -69,25 +47,19 @@ library(tidyverse)
 }
 
 # --- cross-worker locking --------------------------------------------------
-# Several workers share one cache_dir (see settings$worker_id). Downloading a project's VCF
-# is the one operation they must not do at the same time: .ensure_project_vcf deletes any
-# existing copy before it downloads, and get_project_dosage deletes the VCF once parsed, so
-# two workers on one project delete each other's in-flight multi-GB file. Neither finishes.
+# Workers share cache_dir, and a VCF download is the one operation they must not overlap on:
+# each deletes any existing copy before downloading -- LESSONS #24.
 #
-# dir.create() is the lock primitive: it is atomic on POSIX and reports FALSE (with a warning)
-# rather than succeeding when the directory already exists, so exactly one caller can win.
-#
-# A worker that does NOT get the lock does not queue up to repeat the work -- it waits for the
-# winner's result, then re-checks the cache (`ready`), which is normally already there.
+# dir.create() is the primitive: atomic on POSIX, and FALSE rather than success when the
+# directory exists, so exactly one caller wins.
 .lock_dir <- function(settings, key)
   file.path(settings$cache_dir, "locks", paste0(key, ".lock"))
 
 .acquire_lock <- function(settings, key) {
   p <- .lock_dir(settings, key)
   dir.create(dirname(p), showWarnings = FALSE, recursive = TRUE)
-  # A lock whose holder died (SIGKILL, node reboot) would otherwise block the key forever.
-  # Age is judged on the lock's own mtime, so a live holder that is merely slow is safe as
-  # long as lock_stale_minutes exceeds a realistic download+parse.
+  # Break a lock whose holder died. Judged on the lock's mtime, so lock_stale_minutes must
+  # exceed a realistic download+parse or a live holder gets robbed.
   stale <- as.numeric(settings$lock_stale_minutes %||% 90)
   if (dir.exists(p)) {
     age <- as.numeric(difftime(Sys.time(), file.info(p)$mtime, units = "mins"))
@@ -112,11 +84,8 @@ library(tidyverse)
 # must not mean this worker never makes progress.
 .with_cache_lock <- function(settings, key, expr, ready = function() FALSE,
                              on_ready = function() NULL) {
-  # Check BEFORE taking the lock. A worker that arrives after the winner has finished and
-  # released finds the lock free, and would otherwise redo work whose result is already on
-  # disk -- the lock being free says nothing about whether the work is still needed.
-  # (get_project_dosage happens to check its own cache before calling in, so this is
-  # belt-and-braces there; without it the helper is only correct under contention.)
+  # Check before taking the lock: a free lock says nothing about whether the work is still
+  # needed.
   if (isTRUE(ready())) return(on_ready())
   held <- .acquire_lock(settings, key)
   if (!held) {
@@ -131,13 +100,10 @@ library(tidyverse)
                         key, waited / 60))
         return(on_ready())
       }
-      # Otherwise keep trying for the lock: it becomes free when the holder releases it, or
-      # when .acquire_lock breaks it as stale. Either way this worker then does the work.
       held <- .acquire_lock(settings, key)
     }
     if (!held) {
-      # Timed out with the lock still held elsewhere. Proceed WITHOUT it rather than fail:
-      # duplicated work is wasteful, never wrong (.cache_save is atomic).
+      # Proceed without it rather than fail: duplicated work is wasteful, never wrong.
       message(sprintf("%s: gave up waiting -- proceeding without the lock", key))
       return(force(expr))
     }
@@ -151,15 +117,12 @@ library(tidyverse)
 # How many attempts a flaky BrAPI call gets. Single source of the default.
 .brapi_tries <- function(settings = NULL) as.integer((settings$brapi_tries %||% 4L))
 
-# Log a connection in from environment credentials (T3_USERNAME / T3_PASSWORD, e.g. from
-# .Renviron -- see .Renviron.example). Never prompts interactively (which would hang a
-# background run); errors clearly if the credentials are absent. conn$login() mutates the
-# connection in place, storing the bearer token on it.
+# Log in from T3_USERNAME / T3_PASSWORD in the environment. Never prompts -- a prompt hangs a
+# background run. conn$login() mutates the connection, storing the bearer token on it.
 t3_login <- function(conn, settings = NULL) {
   user <- Sys.getenv("T3_USERNAME"); pass <- Sys.getenv("T3_PASSWORD")
   if (!nzchar(user) || !nzchar(pass))
-    # A distinct condition class: this is a setup error, NOT a transient network failure, so
-    # .brapi_try must fail fast rather than retry (retrying re-reads the same empty env).
+    # Its own class: a setup error, so .brapi_try fails fast instead of retrying.
     stop(structure(
       class = c("t3_missing_credentials", "error", "condition"),
       list(message = paste("T3 login needs T3_USERNAME and T3_PASSWORD in the environment.",
@@ -168,10 +131,7 @@ t3_login <- function(conn, settings = NULL) {
              "Check with Sys.getenv(\"T3_USERNAME\")."),
            call = NULL)))
   conn$login(username = user, password = pass)
-  # BrAPI's login() assigns resp$content$access_token unconditionally, so a REJECTED password
-  # leaves auth_token NULL and returns normally. Without this check every later call goes out
-  # anonymous, 401s, and the run reports data-shaped failures (no descriptor, empty searches)
-  # for what is a one-line credentials problem. Same fail-fast class as missing credentials.
+  # login() returns normally on a rejected password, leaving auth_token NULL -- LESSONS #27.
   if (!nzchar(conn$auth_token %||% ""))
     stop(structure(
       class = c("t3_bad_credentials", "error", "condition"),
@@ -191,32 +151,25 @@ t3_connect <- function(settings) {
   conn
 }
 
-# The T3 server surfaces an unauthenticated call NOT as an R error but as a WARNING
-# ("Unauthorized (HTTP 401)." / "You must login ...") plus a returned response whose
-# $status reason is "Unauthorized" and whose data is empty. So auth failure is detected two
-# ways (either suffices): the warning text, and the response status.
+# T3 surfaces an unauthenticated call as a WARNING plus an empty response, never an error, so
+# auth failure is detected two ways: the warning text and the response status.
 .is_auth_warning <- function(msg)
   grepl("unauthor|must login|permission to access|\\b401\\b", msg, ignore.case = TRUE)
 
 .response_auth_failed <- function(r) {
-  # [["status"]], not $status: a tibble is a list, and $ on a tibble without the column
-  # warns ("Unknown or uninitialised column") -- noise in the path that detects auth failure.
+  # [["status"]], not $status: $ on a tibble lacking the column warns.
   if (!is.list(r) || is.null(r[["status"]])) return(FALSE)
-  # $status varies by call type: a flat httr::http_status list (category/reason/message,
-  # e.g. from conn$wizard) or a per-page LIST of those (from a paginated conn$search).
-  # Flatten either shape to its character values and scan -- no structural assumptions.
+  # status is a flat httr::http_status list (wizard) or a per-page list of them (search), so
+  # flatten either shape and scan.
   msgs <- tryCatch(as.character(unlist(r[["status"]], use.names = FALSE)),
                    error = function(e) character())
   any(grepl("unauthor|\\b401\\b", msgs, ignore.case = TRUE))
 }
 
-# Retry a BrAPI network call through a flaky server, and re-authenticate on a 401.
-# `thunk` is zero-arg (re-evaluated each attempt). Transport errors (timeout/refused) are
-# caught and retried with exponential backoff + jitter, up to `tries`, then re-raised.
-# An UNAUTHORIZED result triggers one re-login (t3_login) via `conn`/`settings` and an
-# immediate free retry (it does not consume a transient attempt); if login does not resolve
-# it, it is treated like a transient failure and finally raised. Pass conn = settings = NULL
-# (the default) to skip re-auth -- then behaviour is the pure retry loop as before.
+# Retry a BrAPI call through a flaky server, and re-authenticate on a 401. `thunk` is zero-arg,
+# re-evaluated each attempt; transport errors retry with exponential backoff + jitter up to
+# `tries`. A 401 triggers one re-login and a free retry that does not consume an attempt.
+# conn = settings = NULL skips re-auth and leaves the pure retry loop.
 .brapi_try <- function(thunk, conn = NULL, settings = NULL, tries = NULL,
                        base_delay = 2, what = "BrAPI call") {
   if (is.null(tries)) tries <- .brapi_tries(settings)
@@ -245,11 +198,8 @@ t3_connect <- function(settings) {
         message(sprintf("%s: was unauthorized -- logged in, retrying", what))
         attempt <- attempt - 1L; next                         # free retry (fresh token)
       }
-      # Re-login FAILED -- say so LOUDLY. Silence here hides an unloaded .Renviron behind
-      # cryptic "unauthorized -- retrying" lines for the length of a run.
       message(sprintf("%s: re-login FAILED: %s", what, conditionMessage(lr)))
-      # Missing credentials is a setup error, not transient: retrying re-reads the same
-      # empty env, so fail fast with the clear message instead of burning the retry budget.
+      # A setup error, not a transient one: fail fast rather than burn the retry budget.
       if (inherits(lr, c("t3_missing_credentials", "t3_bad_credentials"))) stop(lr)
     }
     if (attempt < tries) {
@@ -263,11 +213,8 @@ t3_connect <- function(settings) {
 }
 
 # --- per-session VCF-download retry budget ---------------------------------
-# A VCF download that keeps timing out (T3 choking on a big archive) must not be re-stormed
-# on every trial that covers it. This tracks failed download attempts per project IN RAM
-# (like .overlap_memo): each subsequent attempt tries less hard, and after
-# settings$vcf_max_download_attempts the project is skipped for the rest of the run. The
-# counter resets on a new run, so a transiently-unavailable project is retried fresh.
+# Failed download attempts per project, in RAM: each retry tries less hard, and after
+# vcf_max_download_attempts the project is skipped for the rest of the run -- LESSONS #10.
 .vcf_download_fails <- new.env(parent = emptyenv())
 
 # Given the prior failure count for a project, how hard to try THIS time.
@@ -286,26 +233,13 @@ t3_connect <- function(settings) {
   if (!is.null(.vcf_download_fails[[pid]])) rm(list = pid, envir = .vcf_download_fails)
 
 # --- cache backup / restore ------------------------------------------------
-# Back up the (regenerable) cache to durable storage. Cache files are write-once, so this is
-# purely ADDITIVE -- rsync ships only new files -- hence cheap to call often. --delete is
-# deliberately omitted (never remove a file the run still needs), and the transient
-# raw_project/ VCFs are excluded. No-op if cache_backup_dir is unset or rsync is missing.
+# Back up the cache to durable storage. Additive (cache files are write-once), so --delete is
+# omitted and the transient raw_project/ VCFs are excluded. No-op without cache_backup_dir or
+# rsync.
 #
-# SELF-THROTTLING, and not gated on the leader. `min_age_minutes` is the interval; callers just
-# call, and this decides whether the work is due. Two reasons it lives here rather than at the
-# call site:
-#
-#  * Leader-only was wrong for the same reason it was wrong for the store (LESSONS #25): the
-#    call sits between evaluations, so gating it on worker 1 made the true period
-#    max(interval, duration of worker 1's current evaluation) -- 36 h for an em_combine run.
-#  * But unlike the store's millisecond VACUUM INTO, this is an rsync over thousands of files.
-#    Simply dropping the leader test would trade a stall for N workers rsyncing one tree at
-#    once. So the throttle keys on a STAMP FILE every worker can see, and the stamp is touched
-#    BEFORE the rsync: claiming after it would leave the whole transfer as a window in which
-#    everyone else also starts one.
-#
-# A worker dying mid-rsync leaves a fresh stamp, so nothing retries for one interval. That is
-# the same trade the store makes, and harmless here because the sync is additive.
+# Self-throttling, and any worker may do it: `min_age_minutes` is the interval, keyed on a stamp
+# file every worker can see. One at a time, because this is an rsync over thousands of files
+# rather than the store's millisecond copy -- LESSONS #25.
 sync_cache_to_backup <- function(settings, quiet = TRUE,
                                  min_age_minutes = settings$cache_sync_minutes %||% 0) {
   dst <- settings$cache_backup_dir
@@ -330,12 +264,8 @@ sync_cache_to_backup <- function(settings, quiet = TRUE,
   invisible(code == 0)
 }
 
-# Reconcile the work cache from its durable backup (backup -> work), ADDITIVELY. rsync copies
-# only files the work cache is MISSING -- immutable cache files with the same size+mtime are
-# skipped, and without --delete nothing already in the work cache is removed. So this fills
-# gaps whether the work cache is empty (fresh node) OR only partially populated (a scratch
-# purge, a fresh checkout, a partial migration) -- it is not gated on the cache being empty.
-# Safe to call manually any time. No-op if there is no backup dir or rsync.
+# Fill the work cache from its durable backup, additively: rsync copies only what is missing,
+# so this works whether the cache is empty or partly populated. Safe to call any time.
 restore_cache_from_backup <- function(settings) {
   bak <- settings$cache_backup_dir
   if (is.null(bak) || !nzchar(bak) || !dir.exists(bak)) return(invisible(FALSE))
@@ -351,12 +281,9 @@ restore_cache_from_backup <- function(settings) {
   invisible(TRUE)
 }
 
-# On-disk memoizer. `valid(val)` gates the WRITE: only a result that passes it is
-# persisted, so a soft failure (a 200-with-empty response, or a degraded result missing
-# data a sub-fetch failed to supply) is returned for the current call but NOT cached --
-# the next call retries instead of serving the bad answer for `max_age_days`. A hard error
-# in `expr` propagates before the write is reached, so it is never cached either. (The
-# default `valid` accepts everything.)
+# On-disk memoizer. `valid(val)` gates the WRITE, so a soft failure -- a 200 with an empty
+# body, a degraded result -- is returned to this caller but not cached, and the next call
+# retries. Default accepts everything.
 cached <- function(settings, category, identifier = NULL, expr, max_age_days = Inf,
                    valid = function(v) TRUE) {
   hit <- .cache_existing(settings, category, identifier)
@@ -379,19 +306,12 @@ trial_catalog <- function(conn, settings) {
   cat_valid <- function(m) is.data.frame(m) && nrow(m) > 0 &&
     (!("location_name" %in% names(m)) || "latitude" %in% names(m))
   cached(settings, "trial_catalog", max_age_days = 7, valid = cat_valid, expr = {   # singleton (no identifier)
-    # We want only trials that measured the focal trait. get_all_trial_meta_data
-    # has no trait filter (it just does conn$search("studies", commonCropNames=)),
-    # so when focal_trait_db_id is set we run that same studies search ourselves
-    # with an observationVariableDbIds filter -- one bulk query that returns ONLY
-    # focal-trait trials (e.g. 7561 instead of ~9030 for grain yield on T3/Wheat).
-    # The rows are built with the package's own make_row_from_trial_result so the
-    # columns match get_all_trial_meta_data exactly.
+    # get_all_trial_meta_data has no trait filter, so with focal_trait_db_id set we run the
+    # same studies search ourselves with observationVariableDbIds -- LESSONS #1. Rows are built
+    # with the package's own make_row_from_trial_result, so the columns match it exactly.
     #
-    # Columns are janitor::clean_names() snake_case: study_db_id, study_name,
-    # location_name, program_name, start_date, end_date, study_type, trial_db_id,
-    # common_crop_name, experimental_design, create_date. There is no year /
-    # latitude / longitude column, so we derive year from start_date (POSIXct)
-    # and join lat/long/elev by location (see below).
+    # Columns are clean_names() snake_case and carry no year or coordinates: year is derived
+    # from start_date, lat/long/elev joined by location -- LESSONS #2.
     id <- settings$focal_trait_db_id
     meta <- if (!is.null(id) && nzchar(id)) {
       make_row <- getFromNamespace("make_row_from_trial_result", "T3BrapiHelpers")
@@ -445,10 +365,8 @@ trial_catalog <- function(conn, settings) {
 }
 
 # --- target-domain filter --------------------------------------------------
-# Restrict candidate focal trials to the programs / years / locations the user
-# wants the pipeline optimized for (settings$target_domain). A NULL field is no
-# constraint; a constraint on a column the catalogue lacks is skipped with a
-# warning rather than silently dropping all trials.
+# Restrict candidate focal trials to settings$target_domain. A NULL field is no constraint; a
+# constraint on a column the catalogue lacks warns rather than dropping every trial.
 .apply_target_domain <- function(cand, td) {
   if (is.null(td)) return(cand)
   if (!is.null(td$programs)) {
@@ -519,10 +437,8 @@ sample_real_trial <- function(settings, conn, max_tries = 12) {
     start_date  = as.character(row$start_date %||% NA))
 }
 
-# Descriptor for ONE specified trial id (not sampled). Used by the diagnostics.
-# Looks the trial up in the catalogue; if it is not there (e.g. a focal trial
-# whose trait filter excluded it) it still fetches accessions so the trial can be
-# diagnosed. Errors only if the trial has no accessions at all.
+# Descriptor for one specified trial id, for the diagnostics. A trial absent from the catalogue
+# (the trait filter excluded it) still gets its accessions fetched, so it can be diagnosed.
 build_trial_descriptor <- function(study_id, conn, settings) {
   id  <- as.character(study_id)
   cat <- trial_catalog(conn, settings)
@@ -534,14 +450,10 @@ build_trial_descriptor <- function(study_id, conn, settings) {
 }
 
 # --- phenotypes ------------------------------------------------------------
-# Focal-trait observations for a set of study ids, as a tidy tibble
-# (study_id, germplasm_name, value, unit_id, rep, block, col, row). One cache per
-# study, obs_<sid>, holds the JOINED all-trait table (the /observations records
-# joined to the /observationunits records on observationUnitDbId) -- so finding
-# obs_<sid> avoids BOTH network searches. The join is here because /observations
-# carries value + observationUnitDbId while rep/block/coordinates live only on
-# /observationunits. The cache is trait-independent; the focal trait is filtered
-# at read time, so changing focal_trait reuses it.
+# Focal-trait observations for a set of study ids: study_id, germplasm_name, value, unit_id,
+# rep, block, col, row. One cache per study holds the JOINED all-trait table -- /observations
+# carries the value, /observationunits the rep/block/coordinates -- so a hit avoids both
+# searches. Trait-independent: the focal trait is filtered at read time.
 get_observations <- function(study_ids, conn, settings) {
   parts <- .focal_trait_parts(settings$focal_trait)
   study_ids <- unique(as.character(study_ids))
@@ -572,14 +484,9 @@ get_observations <- function(study_ids, conn, settings) {
   .progress = "Observations from study ids")
 }
 
-# Normalize a BrAPI /observations search response to our tibble, keeping ALL
-# numeric traits (with a `trait` column); get_observations() selects the focal
-# trait. The records are a list under $combined_data (the auto-paginated result
-# of conn$search), each a nested list with fields observationVariableName,
-# germplasmName, value, observationUnitDbId, studyDbId, ... (NOT a data frame --
-# $data holds search metadata, not the rows). rep/block/coordinates are NOT on the
-# /observations records; we keep observationUnitDbId here and get_observations()
-# joins them from the /observationunits query (see .obsunits_tibble).
+# Normalise a /observations response, keeping ALL numeric traits; get_observations() selects
+# the focal one. Records are the nested list under $combined_data, not $data -- LESSONS #5.
+# observationUnitDbId is kept so get_observations() can join rep/block/coordinates.
 .obs_tibble <- function(resp, sid) {
   empty <- tibble::tibble(study_id = character(), germplasm_name = character(),
                           trait = character(), value = numeric(), unit_id = character())
@@ -597,13 +504,9 @@ get_observations <- function(study_ids, conn, settings) {
   ) |> dplyr::filter(is.finite(value))
 }
 
-# Normalize a BrAPI /observationunits search response to a per-plot table keyed by
-# observationUnitDbId (matches the observations' observationUnitDbId). Captures the
-# field position -- col = observationUnitPosition$positionCoordinateX,
-# row = observationUnitPosition$positionCoordinateY (kept for possible spatial
-# analysis, not yet used) -- and rep / block, which live in
-# observationUnitPosition$observationLevelRelationships as {levelName, levelCode}
-# entries (levelName "rep" -> the rep number in levelCode; "block" -> block number).
+# Normalise a /observationunits response to a per-plot table keyed by observationUnitDbId.
+# col/row come from observationUnitPosition (kept for spatial analysis, not yet used); rep and
+# block from its observationLevelRelationships, as {levelName, levelCode} entries.
 .obsunits_tibble <- function(resp) {
   empty <- tibble::tibble(unit_id = character(), col = character(), row = character(),
                           rep = character(), block = character())
@@ -650,21 +553,14 @@ get_trial_accessions <- function(study_id, conn, settings) {
 #   accessions -> trials / projects
 #
 # The last two are INVERSIONS of the first two, so only the first two are fetched. Both are
-# built by iterating the small side -- 7,645 trials, 110 projects -- and both are stored as
-# one file PER KEY. That shape is deliberate: N workers writing distinct files never contend,
-# whereas a single shared index file would need locking and could lose updates. Any worker's
-# fetch is immediately available to every other worker.
+# stored one file PER KEY, so N workers writing distinct files never contend and any worker's
+# fetch is immediately available to the others.
 #
-# The inversions are NOT persisted. They are derived data costing ~1 s to rebuild, and a
-# persisted copy has to be invalidated -- which produced two real bugs (a silently stale
-# schema, and an all.equal timestamp comparison whose relative tolerance made times within
-# ~26 s compare equal). Workers already communicate through the per-key files; the inversion
-# is just a local read of that conversation. So: memoised in RAM, keyed on a cheap signature.
+# The inversions are memoised in RAM, not persisted: they cost ~1 s to rebuild, and a persisted
+# copy would need invalidating.
 .index_memo <- new.env(parent = emptyenv())
 
-# Source files for a primary map, honouring BOTH cache layouts exactly as .cache_existing
-# does: nested cache/<cat>/<cat>_<id>.rds and legacy flat cache/<cat>_<id>.rds. Globbing only
-# the nested one once left a server with an older cache reporting zero coverage.
+# Source files for a primary map, honouring both cache layouts as .cache_existing does.
 .index_files <- function(settings, category) {
   pat <- paste0("^", category, "_.*[.]rds$")
   fs <- c(list.files(file.path(settings$cache_dir, category), pattern = pat, full.names = TRUE),
@@ -673,9 +569,8 @@ get_trial_accessions <- function(study_id, conn, settings) {
 }
 
 # Invert a primary map to `accession -> keys`, memoised per session. attr(, "keys") records
-# which keys were seen, so a key absent from a later tabulation reads as "zero overlap"
-# rather than "unknown" -- without it the index is all-or-nothing and one unseen key sends
-# every lookup back to the slow path.
+# which keys were seen, so a key absent from a later tabulation reads as "zero overlap" rather
+# than "unknown", which would send every lookup back to the wizard.
 .inverted_index <- function(settings, category) {
   fs <- .index_files(settings, category)
   if (!length(fs)) return(NULL)
@@ -684,12 +579,9 @@ get_trial_accessions <- function(study_id, conn, settings) {
   # The memo key includes cache_dir: two settings objects pointing at different caches must
   # not share an entry, or a coincidental count+mtime match would serve the wrong index.
   mkey <- paste0(category, "@", settings$cache_dir)
-  # Signature over the full PATHS plus each file's size and mtime. Count-and-newest-mtime is
-  # not enough: .index_files dedups by basename, so a flat cache file replaced by its nested
-  # twin leaves the count unchanged, and on a filesystem with coarse timestamp granularity
-  # (or two writes inside one second) the newest mtime is unchanged too -- the memo then
-  # serves a stale index for the rest of the session. The paths differ even when neither of
-  # those does. Formatted to strings and compared with identical(), never all.equal().
+  # Signature over full PATHS plus size and mtime. Count and newest-mtime are both invariant
+  # when a flat cache file is replaced by its nested twin, which would serve a stale index for
+  # the session; the path set is not. Compared with identical(), never all.equal().
   inf  <- file.info(fs)
   sig  <- rlang::hash(list(fs, inf$size,
                            format(inf$mtime, "%Y-%m-%d %H:%M:%OS6")))
@@ -760,41 +652,30 @@ get_project_accessions <- function(project_id, conn, settings) {
 }
 
 # --- genotyping projects covering a set of accessions ----------------------
-# Returns downloadable genotyping_project_ids -- the id space conn$vcf_archived()
-# accepts. NOTE: a genotyping PROJECT id is NOT a genotyping PROTOCOL id; the two
-# id spaces are distinct and vcf_archived() needs the project id. We use the
-# breeder-search wizard's `genotyping_projects` category (the proven path in
-# expand_project_universe.R), batching accessions so large sets don't overload a
-# single request. (get_geno_protocol_from_germ_vec returns protocol ids and must
-# NOT be used here.)
+# Returns downloadable genotyping_project_ids -- the id space conn$vcf_archived() accepts, and
+# NOT protocol ids -- LESSONS #4. Uses the wizard's `genotyping_projects` category, batching
+# accessions so a large set does not overload one request.
 projects_for_accessions <- function(accessions, conn, settings) {
   acc <- unique(as.character(accessions))
   if (!length(acc)) return(character())
 
-  # Local answer when the projects index covers every project in the crop. The inversion is
-  # exactly equivalent to the wizard -- verified against it on real accession sets -- and
-  # needs no network at all. The old `proj` cache keyed on a hash of the whole accession SET,
-  # so a training set that changed with any config parameter never hit; this is keyed on
-  # projects, of which there are ~110, so it always hits once built.
+  # Local answer when the index covers every project in the crop -- equivalent to the wizard,
+  # and keyed on projects (~110) rather than on the accession set, so it hits once built.
   idx <- tryCatch(.project_index(settings), error = function(e) NULL)
-  if (!identical(settings$local_wizards %||% "auto", "off")) {
-    universe <- tryCatch(.all_project_ids(conn, settings), error = function(e) character())
-    if (.index_covers(idx, universe, settings, "proj_acc")) {
-      .note_geno_once("project_discovery_mode", sprintf(
-        "project discovery: LOCAL (index covers all %d genotyping projects) -- no wizard call",
-        length(universe)))
-      return(unique(unlist(idx[intersect(acc, names(idx))], use.names = FALSE)))
-    }
+  universe <- tryCatch(.all_project_ids(conn, settings), error = function(e) character())
+  if (.index_covers(idx, universe, settings, "proj_acc")) {
+    .note_geno_once("project_discovery_mode", sprintf(
+      "project discovery: LOCAL (index covers all %d genotyping projects) -- no wizard call",
+      length(universe)))
+    return(unique(unlist(idx[intersect(acc, names(idx))], use.names = FALSE)))
   }
 
-  # Fallback: ask the wizard. Reached until prewarm_indices.R has filled the projects map, or
-  # when local_wizards = "off".
+  # Fallback: ask the wizard. Reached until prewarm_indices.R has filled the projects map.
   .note_geno_once("project_discovery_mode",
                   "project discovery: WIZARD -- run prewarm_indices.R to answer this locally")
-  # Cache ONLY a result assembled from wizard calls that all SUCCEEDED: a transient HTTP
-  # 500 swallowed to an empty result and then cached hides a trial's genotype data entirely
-  # (LESSONS.md #7). A failed batch sets `failed` -- we return what we have so the current
-  # run proceeds, but do NOT persist it, so the next run retries.
+  # Cache only when every batch SUCCEEDED: an empty result from a swallowed HTTP 500, once
+  # cached, hides a trial's genotypes entirely -- LESSONS #7. On failure return what we have
+  # so this run proceeds, but do not persist it.
   batches <- split(acc, ceiling(seq_along(acc) / 500L))
   failed  <- FALSE
   ids <- unlist(purrr::map(batches, function(b) {
@@ -807,35 +688,21 @@ projects_for_accessions <- function(accessions, conn, settings) {
 }
 
 # --- dosage matrix for one genotyping project ------------------------------
-# Return the accessions x markers dosage (0/1/2) for `project_id`, restricted to
-# keep_samples. Extracts the WHOLE project (all samples) once and caches that; every
-# later call -- for any trial / any keep_samples -- reads that one cache and subsets at
-# read time. So a project's VCF is downloaded and parsed exactly once; afterwards the
-# large raw VCF is redundant and is DELETED to reclaim space.
+# Return the accessions x markers dosage (0/1/2) for `project_id`, restricted to keep_samples.
+# The whole project is extracted and cached once; later calls subset that cache at read time,
+# and the raw VCF is deleted once parsed.
 #
-# Cache files per project (all under settings$cache_dir):
-#   * dosage_<pid>[_thin<e>]_sz<bytes>.rds -- the project's dosage, parsed ONCE at the
-#     densest thin `e` the memory budget allows (see .cache_thin). That budget is the only
-#     thing that sets marker density; a `marker_thin` passed here (manual probes only) is
-#     applied at read time by column-subsetting this cache, never by re-downloading.
-#     `_thin<e>` is absent when e == 1 (full markers -- every project that fits the budget).
-#   * stat_<pid>.rds -- {n_samples, n_markers}, written on first extraction.
-#   * unparseable_<pid>.rds -- a negative cache: an archive we found is not a usable VCF
-#     (transposed/non-VCF layout, or no genotypes). Future calls skip it instead of
-#     re-downloading and re-failing every run. Delete it to force a retry.
+# Cache files per project:
+#   * dosage_<pid>[_thin<e>]_sz<bytes>.rds -- parsed once at the densest thin the budget allows
+#     (.cache_thin). Any coarser thin is a read-time column subset, never a re-download.
+#   * stat_<pid>.rds -- {n_samples, n_markers}.
+#   * unparseable_<pid>.rds -- negative cache; delete to retry -- LESSONS #9.
 #
-# Robustness -- a partial download must never be cached as a valid dosage (LESSONS.md #7):
-#   * .ensure_project_vcf validates the VCF is COMPLETE (not truncated) before use; a
-#     truncated file is re-downloaded once, else an error (retried next run). That is a
-#     TRANSIENT failure -- not negative-cached. A STRUCTURAL failure on a complete file
-#     (.vcf_stat rejects it) is permanent -> negative cache.
+# A truncated download is transient and retried next run; a structural failure on a COMPLETE
+# file is permanent and negative-cached -- LESSONS #7.
 
-# The densest thin a project can be cached at while its dense integer matrix
-# (n_samples x n_markers x 4 bytes) fits settings$dosage_budget_bytes. A project is parsed
-# ONCE at this thin; any coarser requested thin is derived by column-subsetting the cache
-# (see get_project_dosage), so the budget is the SOLE control on cached marker density --
-# set it deliberately. A normal project fits at thin 1 (full markers); only a very large
-# panel (e.g. 7.5M markers x 683 samples = >20 GB) is thinned to fit.
+# The densest thin at which a project's dense matrix (n_samples x n_markers x 4 B) fits
+# dosage_budget_bytes. Most projects fit at thin 1; only very large panels are thinned.
 .cache_thin <- function(n_samples, n_markers, budget_bytes) {
   # as.numeric: n_samples * n_markers overflows 32-bit integer for big panels.
   fit <- ceiling(as.numeric(n_samples) * as.numeric(n_markers) * 4 / max(1, budget_bytes %||% 2e9))
@@ -875,11 +742,8 @@ get_project_dosage <- function(project_id, keep_samples, conn, settings,
     keep <- intersect(rownames(full), as.character(keep_samples))
     if (!length(keep)) NULL else full[keep, , drop = FALSE]
   }
-  # Serve the requested thin from a cache at thin `e` by keeping every k-th marker, where
-  # k = max(1, floor(marker_thin / e)) -- the largest multiple of e not exceeding the
-  # request (so the served matrix is as dense as, or denser than, requested). When
-  # marker_thin < e (a denser matrix than the budget allowed for the cache), k = 1 and the
-  # cache is served as-is: it is already the densest available.
+  # Serve thin `marker_thin` from a cache at thin `e` by keeping every k-th marker, k =
+  # max(1, floor(marker_thin / e)), so the result is at least as dense as requested.
   serve <- function(full, e) {
     if (is.null(full)) return(NULL)
     k <- max(1L, as.integer(floor(marker_thin / e)))
@@ -891,18 +755,9 @@ get_project_dosage <- function(project_id, keep_samples, conn, settings,
   # cache/unparseable/unparseable_<pid>.rds to force a retry.
   if (!is.na(.cache_existing(settings, "unparseable", pid))) return(NULL)
 
-  # A single cached dosage (the densest one) serves every requested thin by column-subset --
-  # no re-download when a different config asks for a different thin. BUT: the cached thin was
-  # fixed by the memory budget AT PARSE TIME. If this machine's budget now affords a DENSER
-  # parse than the cached thin (e.g. a laptop-thinned cache warmed onto a big-memory server),
-  # re-fetch at the denser thin so a bigger machine is not pinned to a suboptimal warmed cache.
-  # The check is cheap (from stat_<pid>); acting costs a one-time re-download (the VCF was
-  # deleted), and only ever fires for projects that were thinned (thin > 1). Disable with
-  # settings$dosage_redensify = FALSE.
-  #
-  # The cached dosage IF it is already as dense as this machine's budget wants, else NULL.
-  # Used three times: the fast path below, the "has another worker produced it?" test while
-  # waiting on the lock, and the re-check after taking the lock.
+  # The cached dosage if it is already as dense as this machine's budget wants, else NULL --
+  # a cache thinned on a smaller machine would otherwise pin a bigger one to that thin. Costs
+  # a one-time re-download; dosage_redensify = FALSE keeps whatever is cached.
   dense_enough <- function() {
     cd <- .find_densest_dosage(settings, pid)
     if (is.null(cd)) return(NULL)
@@ -925,11 +780,8 @@ get_project_dosage <- function(project_id, keep_samples, conn, settings,
       "project %s: cached at every %dth marker, but this budget affords denser -- re-downloading to re-densify",
       pid, coarse$thin))
 
-  # Miss (or too coarse) -> download and parse, which is what must not happen twice at once:
-  # .ensure_project_vcf clears any existing copy before downloading and the VCF is deleted
-  # after parsing, so two workers on one project destroy each other's in-flight file. A
-  # worker that loses the lock waits for the winner's cache rather than repeating a
-  # multi-GB download.
+  # Miss, or too coarse -> download and parse, under the lock: two workers on one project
+  # would delete each other's in-flight file.
   .with_cache_lock(settings, paste0("dosage_", pid),
     ready    = function() !is.null(dense_enough()),
     on_ready = function() serve_cached(dense_enough()),
@@ -1079,11 +931,9 @@ get_project_dosage <- function(project_id, keep_samples, conn, settings,
 
 # VCF -> dosage (accessions x markers, coded 0/1/2). keep_samples = NULL extracts ALL
 # samples; `thin` keeps every thin-th variant. Streams the file in fixed-size chunks so
-# peak memory is bounded by one chunk plus the (thinned) result, regardless of file size.
-# Robust to the real T3 archives seen: gzip/BGZF is decompressed transparently by file();
-# a malformed variant line (wrong field count) is skipped rather than failing the whole
-# file; a transposed/non-VCF header is rejected. Encoding is byte-identical to the former
-# vcfR-based reader (tests/test_subtasks.R checks this against a hand-built VCF).
+# peak memory is bounded by one chunk plus the thinned result, whatever the file size.
+# gzip/BGZF decompresses transparently; a malformed variant line is skipped rather than failing
+# the file, and a transposed/non-VCF header is rejected -- LESSONS #9.
 .vcf_to_dosage <- function(path, keep_samples, thin = 1L) {
   con <- file(path, "rt"); on.exit(close(con), add = TRUE)
   header  <- .vcf_header(con)

@@ -179,11 +179,13 @@ is always **fresh random** draws, not just elite recombinations.
 
 ### Re-evaluating the incumbent (the noise tax)
 With a noisy objective, the apparent best config may just have had lucky trials.
-Two mechanisms guard against crowning a fluke: an evaluation is occasionally spent
-**re-running the current incumbent on a new trial** (`reeval_prob`) to tighten its
-mean, and the reported **incumbent must have at least `incumbent_min_reps`
-successful trials** before it can hold the title. This trades a little speed for a
-trustworthy leader.
+The reported **incumbent must have at least `incumbent_min_reps` successful trials**
+before it can hold the title, and `aggregate_scores()` shrinks each config's mean
+towards the grand mean, so a single lucky evaluation cannot crown a fluke.
+Deliberate replication — running one configuration on several focal trials — is
+`config_replication`, which is **not yet implemented**; until it is, each
+configuration is evaluated once and `incumbent_min_reps` is unreachable, so
+`incumbent_config()` falls back to ranking all scored configurations.
 
 ### Persistence and resumability: one SQLite table as the single source of truth
 A background job that runs for days must survive being killed. Every evaluation —
@@ -324,7 +326,7 @@ broken build can run for hours looking like it is working. Three defences:
 
 Recorded for later; deliberately not built, because the code is complicated enough already.
 The idea is that the optimizer accumulates, evaluation by evaluation, exactly the information
-needed to choose its own `reeval_prob` and `incumbent_min_reps` — and to decide how far to
+needed to choose its own replication level and `incumbent_min_reps` — and to decide how far to
 trust an observed mean against the surrogate's prediction.
 
 **The design problem comes first, and it is not replication.** Write an evaluation as
@@ -355,7 +357,7 @@ difference Δ between two configurations at level α with power 1−β needs abo
 
 replicates — note σ²_e, not σ²_t + σ²_e, which is the gain pairing buys. `incumbent_min_reps`
 is then whatever *r* corresponds to the Δ actually worth resolving (a difference of 0.02 in
-predictive ability, say). `reeval_prob` is the budget share that equalizes the marginal
+predictive ability, say). The remaining question is the budget share that equalizes the marginal
 information from replicating a current leader against probing a new configuration; the
 standard treatment is Optimal Computing Budget Allocation (Chen et al. 2000), which allocates
 replicates roughly in proportion to (σ_i/δ_i)² where δ_i is a configuration's distance from the
@@ -378,7 +380,7 @@ in the formula.
 
 **Order of value, on current evidence:** the shared panel first (it removes the dominant
 variance component and costs little), shrinkage second (it fixes incumbent selection, which is
-where the observed failure was), and tuned `reeval_prob` / `incumbent_min_reps` third — those
+where the observed failure was), and tuned replication / `incumbent_min_reps` third — those
 matter mainly once the first two make the remaining variance the limiting factor.
 
 ---

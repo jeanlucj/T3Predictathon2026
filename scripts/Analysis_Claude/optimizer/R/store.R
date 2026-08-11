@@ -35,20 +35,13 @@ config_from_json <- function(json) {
 }
 
 # --- store lifecycle -------------------------------------------------------
-# SEVERAL WORKERS MAY SHARE ONE STORE. Three settings make that safe, and they must be
-# issued before anything else touches the database:
-#   journal_mode = WAL  readers never block the writer and vice versa. WAL is a property of
-#                       the FILE (it persists), and it CANNOT work on a network filesystem --
-#                       it coordinates through an mmap'd -shm index, which NFS does not
-#                       provide. That is why the store belongs on local disk (/workdir) with
-#                       a periodic backup to durable storage; see settings$db_backup_path.
-#                       We verify the pragma actually took and warn loudly if it did not,
-#                       because the failure is silent and the consequence is corruption.
-#   busy_timeout        without it SQLite returns SQLITE_BUSY *immediately* on contention
-#                       rather than waiting. 60 s is enormous relative to the workload here
-#                       (one small INSERT per multi-minute evaluation).
-#   synchronous = NORMAL the durable copy is made by the backup, and a fsync per INSERT buys
-#                       nothing against a workload whose unit of loss is one evaluation.
+# SEVERAL WORKERS MAY SHARE ONE STORE. Three pragmas make that safe, issued before anything
+# else touches the database -- LESSONS #24:
+#   journal_mode = WAL   readers never block the writer. A property of the FILE, and it cannot
+#                        work on a network filesystem, so the store belongs on local disk with
+#                        a backup to durable storage. Verified, because failure is silent.
+#   busy_timeout         without it SQLite returns SQLITE_BUSY immediately rather than waiting.
+#   synchronous = NORMAL the backup provides durability; the unit of loss is one evaluation.
 open_store <- function(path, busy_timeout_ms = 60000) {
   con <- DBI::dbConnect(RSQLite::SQLite(), path)
   DBI::dbGetQuery(con, sprintf("PRAGMA busy_timeout = %d", as.integer(busy_timeout_ms)))
@@ -80,20 +73,12 @@ open_store <- function(path, busy_timeout_ms = 60000) {
       ts            TEXT
     )")
   DBI::dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_hash ON evals(config_hash)")
-  # Migrations: add columns that stores created before them will lack. `detail`
-  # holds the failure funnel; the four domain columns (study_name/program_name/
-  # location_name/year) record the trial's target-domain attributes so the
-  # surrogate can be trained on only the in-domain slice of this shared store.
-  # They deliberately reuse the catalogue's column names so the exact same
-  # target-domain predicate (.apply_target_domain) filters both sampling and evals.
-  # peak_rss_mb is this evaluation's true peak RSS and the figure to size a machine from;
-  # peak_r_mb is R's heap peak, an UNDER-estimate kept for the ratio (R/memory.R). `worker` names
-  # which concurrent worker produced the row; dosage_budget records the marker-density
-  # budget in force, WITHOUT which rows made at different densities are silently
-  # incomparable (density is not a config parameter -- see settings$dosage_budget_bytes).
-  # em_df_method is the same kind of hidden axis for em_combine: it names how each partial
-  # covariance's EM weight was derived. NULL on rows written before 2026-07-31 means the old
-  # accession-count weighting, which scores differently -- see EM_COMBINE_COMPARISON.md.
+  # Migrations: columns that older stores lack. `detail` holds the failure funnel. The four
+  # domain columns reuse the catalogue's names, so .apply_target_domain filters sampling and
+  # evals identically. peak_rss_mb is the figure to size a machine from; peak_r_mb is kept for
+  # the ratio (R/memory.R). dosage_budget and em_df_method record HIDDEN axes -- neither is a
+  # config parameter, so without them rows made under different settings would be averaged
+  # together.
   have <- DBI::dbListFields(con, "evals")
   add <- c(detail = "TEXT", study_name = "TEXT", program_name = "TEXT",
            location_name = "TEXT", year = "INTEGER",
@@ -115,16 +100,12 @@ open_store <- function(path, busy_timeout_ms = 60000) {
 
 close_store <- function(con) invisible(DBI::dbDisconnect(con))
 
-# Copy the live store to durable storage. Needed because WAL forces the working store onto
-# LOCAL disk (see open_store), which on a cluster is the disk that gets wiped -- the store is
-# the one file whose loss costs real work.
+# Copy the live store to durable storage: WAL forces it onto local disk, which on a cluster is
+# the disk that gets wiped.
 #
-# `VACUUM INTO` is the right tool: it runs against a live, concurrently-written database and
-# emits a single self-contained file with no WAL sidecar, so the backup is directly usable.
-# It refuses to overwrite, hence the write-to-temp-then-rename (which also means a backup
-# interrupted half-way never replaces a good one).
-# `dest` is a FILE path, filename included (e.g. .../state/evals_backup.sqlite), not a
-# directory -- see the paths block in settings.R.
+# VACUUM INTO runs against a live database and emits a self-contained file with no WAL sidecar,
+# so the backup is directly usable. It refuses to overwrite, hence temp-then-rename -- which
+# also means an interrupted backup never replaces a good one. `dest` is a FILE path.
 backup_store <- function(con, dest) {
   if (is.null(dest) || !nzchar(dest)) return(invisible(FALSE))
   dir.create(dirname(dest), showWarnings = FALSE, recursive = TRUE)

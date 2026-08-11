@@ -22,18 +22,15 @@ settings_override <- c(
   )
 )
 
-# NO max_hours HERE, DELIBERATELY -- the job is meant to be killed at its wall clock, and the
-# wall clock is declared once, in submit.local.sh. Do not add a second copy of it.
-#
-# A clean stop would buy nothing worth having:
+# NO WALL-CLOCK SETTING HERE -- the job is meant to be killed at its wall clock, which is
+# declared once, in submit.local.sh. A clean stop would buy nothing worth having:
 #   * Both backups run every 30 min from WHICHEVER worker gets there first, so a hard kill
 #     costs at most one interval.
 #   * Nothing is corrupted by it. backup_store() writes dest.tmp<PID> and renames, so a killed
 #     backup leaves the previous good one; and SQLite in WAL mode is crash-safe by design.
-#   * max_hours is only tested BETWEEN evaluations, so it cannot save the in-flight one -- that
-#     is lost either way.
+#   * A self-imposed stop is only tested BETWEEN evaluations, so it cannot save the in-flight
+#     one -- that is lost either way.
 # Against that, a margin makes every worker idle for it (22 workers x 0.5 h = 11 worker-hours a
 # job), and it cannot know whether the next evaluation needs 29 minutes or 33 hours.
 #
-# It is still the right setting for an INTERACTIVE run, where nothing external ends the job --
-# see RUNBOOK_INTERACTIVE.md.
+# To end an interactive run, use the stop-file: touch $OPTIMIZER_HOME/state/STOP.
