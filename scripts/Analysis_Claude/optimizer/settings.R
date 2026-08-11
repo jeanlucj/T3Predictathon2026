@@ -118,7 +118,7 @@ optimizer_settings <- function(local_overrides = TRUE) {
 
     # ---- CV schemes -------------------------------------------------------
     schemes = c("CV0", "CV00"),  # what the diagnostics sanity-check
-    optimize_scheme = "CV0",     # the ONE scheme this run targets; must be in `schemes`
+    optimize_scheme = "CV00",     # the ONE scheme this run targets; must be in `schemes`
 
     # ---- search behaviour -------------------------------------------------
     n_random_init       = 25,    # random configs before the surrogate takes over
@@ -223,10 +223,10 @@ optimizer_settings <- function(local_overrides = TRUE) {
     # ---- backups ----------------------------------------------------------
     # Additive rsync of the cache to durable storage; NULL disables. Restored to cache_dir at
     # startup when the work cache is empty.
-    cache_backup_dir   = if (remote_server) file.path(Sys.getenv("OPTIMIZER_HOME"), "cache") else NULL,
+    cache_backup_dir   = if (remote_server) file.path(perm_dir, "cache") else NULL,
     cache_sync_minutes = 30,     # 0 disables -- LESSONS #25
     # Where the live store is copied, by VACUUM INTO. NULL disables.
-    db_backup_path     = if (remote_server) file.path(Sys.getenv("OPTIMIZER_HOME"),
+    db_backup_path     = if (remote_server) file.path(perm_dir,
                                                       "state", "evals_backup.sqlite") else NULL,
     db_backup_minutes  = 30,
 

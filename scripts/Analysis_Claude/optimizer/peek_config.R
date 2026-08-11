@@ -44,12 +44,7 @@ o_keys <- split_csv(opt("keys", paste0(c(paste0(names(SUBTASKS), ".method"),
 
 s <- optimizer_settings()
 if (!file.exists(s$db_path)) stop("no store at ", s$db_path)
-tmp <- file.path(tempdir(), "peekcfg.sqlite")
-invisible(file.copy(s$db_path, tmp, overwrite = TRUE))
-for (ext in c("-wal", "-shm"))
-  if (file.exists(paste0(s$db_path, ext)))
-    invisible(file.copy(paste0(s$db_path, ext), paste0(tmp, ext), overwrite = TRUE))
-
+tmp <- .copy_store_with_sidecars(s$db_path, file.path(tempdir(), "peekcfg.sqlite"))
 con <- DBI::dbConnect(RSQLite::SQLite(), tmp)
 e   <- tibble::as_tibble(DBI::dbReadTable(con, "evals"))
 DBI::dbDisconnect(con)

@@ -53,9 +53,7 @@ your life easier editting these in RStudio with Ceres ondemand
 
 **Prove the environment**
 
-- [ ] `curl -sI https://wheat.triticeaetoolbox.org | head -1` from a
-  compute node
-
+- [ ] `module load r/4.5.3` — check current version of R; only for Rscript checks not in container
 - [ ] Settings resolve, inside an allocation:
   `Rscript -e 'source("settings.R"); s <- optimizer_settings(); cat(s$db_path, "\n")'`
   db_path must be in `$TMPDIR` (node-local), not `$OPTIMIZER_HOME` (networked, permanent)  
@@ -64,22 +62,24 @@ your life easier editting these in RStudio with Ceres ondemand
 - [ ] `container/run_in_container.sh exec prewarm_indices.R --only=projects --limit=5`
   — credentials and outbound HTTPS together
 
-- [ ] If you had done evaluations previously, restore so the search
-  resumes rather than restarts. `db_path` should be
-  `$TMPDIR/t3opt_<user>/evals.sqlite`:
+- [ ] `container/run_in_container.sh exec peek_backup.R` — the pre-flight
+  report. Read three things off it before submitting:
+  - **backup**: rows, and when it was written. `MISSING` means this run
+    starts from scratch.
+  - **what this run will see**: the row count *after* the domain, scheme
+    and build filters. This is the resume-or-restart number, and it can
+    be far below the total.
+  - **iteration 1**: which phase the first evaluation lands in —
+    `seed:PredictionN`, `replicate`, `random_init` or `acquisition`.
 
-  ````         
-  ```bash
-  source ./optimizer_paths.sh
-  STORE=$TMPDIR/t3opt_$(id -un)/evals.sqlite
-  mkdir -p "$(dirname "$STORE")"
-  cp "$OPTIMIZER_HOME/state/evals_backup.sqlite" "$STORE"
-  container/run_in_container.sh exec peek_failures.R  # confirms the rows arrived
-  ```
-  ````
+  You do **not** restore the store by hand. The leader merges the backup
+  into node-local scratch at startup, keyed on config × trial × scheme,
+  so nothing already there is lost. `peek_backup.R` reports exactly what
+  that merge will insert.
 
-- [ ] If you have a cache, make sure it's there too
-  `find $OPTIMIZER_HOME/cache -type f | wc -l`
+- [ ] The same report's **cache** section lists files per category.
+  `proj_acc` / `acc` / `attempted` are the pre-warmed index maps;
+  `dosage` is the bulk.
 
 **Submit**
 
@@ -231,12 +231,14 @@ A held job shows in `squeue` as `PD` with reason `Dependency`.
 
 </details>
 
-**But the store must be *put back* first.** Node-local scratch is wiped
-between jobs, and the optimizer does **not** restore the store by
-itself: `restore_cache_from_backup()` covers the cache, `evals.sqlite`
-has no equivalent. A chained job that does not copy the backup in starts
-from an empty store and silently re-runs work already paid for.
-`container/t3opt_ceres.sh` does this and prints the restored row count.
+**The store is put back automatically.** Node-local scratch is wiped
+between jobs, so the leader merges `db_backup_path` into the fresh store
+at startup — `restore_store_from_backup()` (`R/store.R`), the store's
+counterpart to `restore_cache_from_backup()`. Both are **additive**:
+whatever is already on the work disk survives. A cell is redundant when
+its (config, trial, scheme) is already present, since the pipeline is
+deterministic in those three, so re-running the merge inserts nothing.
+Its `+N row(s)` line is in `logs/run_w1.out`.
 
 Two things that still work from the **login node** while a job runs:
 
@@ -301,7 +303,7 @@ through the container — see §6.
 | `T3 login was REJECTED` / `could not build descriptor` | `.Renviron` not read — the job did not `cd` to the optimizer directory. |
 | `could not put the store in WAL mode` warning | `db_path` is on a network filesystem. Move it to node-local disk. |
 | `apptainer: command not found` | no `module load apptainer`. The `container/` scripts do this themselves; an interactive shell does not. |
-| Job starts from zero rows | the store was not restored into `$TMPDIR` before launch. See §2. |
+| Job starts from zero rows | no backup at `db_backup_path`, or the leader's merge failed. `logs/run_w1.out` has the `store restore:` line; `peek_backup.R` says what the backup holds. |
 | Workers all evaluate the same configuration | Pre-0.7.4 code; `git pull`. |
 
 ## 6. Diagnostics
@@ -321,6 +323,7 @@ salloc -N1 -n4 --mem=32G -t 1:00:00 -A <account>
 module load apptainer
 cd /project/<account>/T3Predictathon2026/scripts/Analysis_Claude/optimizer
 
+./run_in_container.sh exec peek_backup.R                      # what a run would start from
 ./run_in_container.sh exec peek_failures.R                    # why evals failed
 ./run_in_container.sh exec peek_config.R --ids=4,23           # what those evals ran
 ./run_in_container.sh exec surrogate_bakeoff.R                # surrogate comparison + curve
@@ -335,9 +338,10 @@ which writes cache files. The read-only ones copy the database *and* its
 `-wal`/`-shm` sidecars first, so they are safe against a live store.
 
 `peek_failures.R` needs a store to exist. On a fresh cluster install
-there is none until you restore a backup into `$TMPDIR` — until then it
-stops with `no store at <db_path>`, which is correct behaviour, not a
-fault.
+there is none until a job has run — until then it stops with `no store
+at <db_path>`, which is correct behaviour, not a fault. `peek_backup.R`
+is the one to use beforehand: it reads the *backup*, and reports cleanly
+when there is neither.
 
 `surrogate_bakeoff.R` prints, in its footer, **the smallest difference
 the current store can resolve**. A gap smaller than that is not evidence
@@ -527,13 +531,14 @@ with no WAL sidecar, so the durable copy is directly usable. It runs
 every `db_backup_minutes` (default 30), from whichever worker reaches
 the check first.
 
-**`$TMPDIR` IS ERASED WHEN THE JOB EXITS** — see §2 for the
-restore-at-start requirement that follows from it.
+**`$TMPDIR` IS ERASED WHEN THE JOB EXITS** — which is why the leader
+merges the backup back in at startup (§4).
 
 > Related trap, learned the hard way: never copy `evals.sqlite` without
 > its `-wal` and `-shm` sidecars. The main file can legitimately be 0
-> bytes with all the data in the WAL. `peek_failures.R` copies all three
-> for exactly this reason.
+> bytes with all the data in the WAL. This is also why the restore is a
+> SQL merge rather than a file copy, and why the read-only tools go
+> through `.copy_store_with_sidecars()`.
 
 ### The cache
 
@@ -979,9 +984,9 @@ does not. `build.sh` sets them itself, so this only bites if you run
 
 **What the container does not solve.** It fixes *what software is
 available*, and nothing else. The store still cannot live on network
-storage, and it still has to be restored into `$TMPDIR` at the start of
-every job. Neither has anything to do with packaging, and neither gets
-easier by containerising.
+storage, and it still has to be merged back into `$TMPDIR` at the start
+of every job. Neither has anything to do with packaging, and neither
+gets easier by containerising.
 
 ## 7.8 Open questions and the support email
 
@@ -997,8 +1002,8 @@ numbering does not match this list.*
   on the nodes checked (2026-08-10) `$TMPDIR` is `/tmp`, *not* the
   documented `/local/bgfs/<jobid>`. Cache *and* store both go there,
   under a per-user directory. Whether it survives between jobs is still
-  unconfirmed, so the store is job-scoped and `t3opt_ceres.sh` restores
-  it from backup at job start either way.
+  unconfirmed, so the store is job-scoped and the leader merges it back
+  from backup at job start either way.
 - [ ] **3. `/project` filesystem type** — confirms the WAL constraint
   and the backup pattern. Lower stakes now that both hot paths sit on
   `$TMPDIR`; it only governs the backups.

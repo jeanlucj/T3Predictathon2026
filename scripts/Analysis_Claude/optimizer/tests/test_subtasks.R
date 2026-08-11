@@ -1716,6 +1716,99 @@ local({
 })
 
 # ===========================================================================
+cat("restore_store_from_backup (merging the durable backup into the work store)\n")
+# Oracle: the merge is ADDITIVE, like the cache rsync it mirrors. Rows already on the work disk
+# survive; a (config, trial, scheme) cell already present is not duplicated.
+local({
+  mkstore <- function(rows) {
+    p <- tempfile(fileext = ".sqlite"); con <- open_store(p)
+    for (r in rows) store_eval(con, r$cfg, r$trial, r$scheme, r$score, 40L, "ok",
+                               build = r$build %||% OPTIMIZER_BUILD)
+    close_store(con); p
+  }
+  cA <- sample_config(); cB <- sample_config()
+  bakp <- mkstore(list(list(cfg = cA, trial = "T1", scheme = "CV0",  score = 0.3),
+                       list(cfg = cA, trial = "T2", scheme = "CV0",  score = 0.4),
+                       list(cfg = cB, trial = "T1", scheme = "CV0",  score = 0.5),
+                       list(cfg = cA, trial = "T1", scheme = "CV00", score = 0.6)))
+  sset <- function(db) modifyList(optimizer_settings(),
+                                  list(db_path = db, db_backup_path = bakp))
+
+  # 1. empty work store -> everything arrives.
+  w1 <- tempfile(fileext = ".sqlite")
+  r1 <- restore_store_from_backup(sset(w1))
+  check(identical(r1$inserted, 4L) && identical(r1$skipped, 0L),
+        "empty work store: every backup row is inserted")
+  c1 <- open_store(w1)
+  check(nrow(read_evals(c1)) == 4L, "and they are readable afterwards")
+  # A CV0 and a CV00 row for ONE (config, trial) are different tasks and must both survive.
+  check(sum(read_evals(c1)$trial_id == "T1" &
+            read_evals(c1)$config_hash == config_hash(cA)) == 2L,
+        "scheme is part of the key: the CV0 and CV00 rows both survive")
+  close_store(c1)
+
+  # 2. idempotent -- the property that makes it safe for the leader to run every startup.
+  r2 <- restore_store_from_backup(sset(w1))
+  check(identical(r2$inserted, 0L) && identical(r2$skipped, 4L),
+        "running it again inserts nothing")
+
+  # 3. partly-populated work store: only the missing cells arrive, local rows are untouched.
+  w3 <- mkstore(list(list(cfg = cA, trial = "T1", scheme = "CV0", score = 0.99),
+                     list(cfg = cB, trial = "T9", scheme = "CV0", score = 0.11)))
+  r3 <- restore_store_from_backup(sset(w3))
+  check(identical(r3$inserted, 3L), "a partly-populated store takes only the cells it lacks")
+  c3 <- open_store(w3); e3 <- read_evals(c3); close_store(c3)
+  check(any(e3$trial_id == "T9"), "the work store's own row is not lost")
+  check(sum(e3$trial_id == "T1" & e3$scheme == "CV0" &
+            e3$config_hash == config_hash(cA)) == 1L, "and the collided cell is not duplicated")
+  check(isTRUE(e3$score[e3$trial_id == "T1" & e3$scheme == "CV0" &
+                        e3$config_hash == config_hash(cA)] == 0.99),
+        "local wins a collision -- it is the row this build computed")
+
+  # 4. duplicates ALREADY in the backup collapse to the newest (MAX(id)).
+  cdup <- open_store(bakp)
+  store_eval(cdup, cB, "T1", "CV0", 0.77, 40L, "ok", build = OPTIMIZER_BUILD)  # 2nd cB/T1/CV0
+  close_store(cdup)
+  w4 <- tempfile(fileext = ".sqlite")
+  r4 <- restore_store_from_backup(sset(w4))
+  check(identical(r4$inserted, 4L), "a duplicated cell in the backup is inserted once")
+  c4 <- open_store(w4); e4 <- read_evals(c4); close_store(c4)
+  check(isTRUE(e4$score[e4$config_hash == config_hash(cB) & e4$trial_id == "T1"] == 0.77),
+        "and the surviving row is the most recent one")
+
+  # 5. a backup from an older build lacks the migrated columns; those are the ones worth
+  #    rescuing, so a fixed column list would fail exactly where it must not.
+  oldp <- tempfile(fileext = ".sqlite")
+  co <- DBI::dbConnect(RSQLite::SQLite(), oldp)
+  DBI::dbExecute(co, "CREATE TABLE evals (id INTEGER PRIMARY KEY AUTOINCREMENT,
+     config_hash TEXT, config_json TEXT, trial_id TEXT, scheme TEXT, score REAL,
+     n_test INTEGER, status TEXT, reason TEXT, seconds REAL, ts TEXT)")
+  DBI::dbExecute(co, "INSERT INTO evals (config_hash, config_json, trial_id, scheme, score,
+     n_test, status, ts) VALUES (?,?,?,?,?,?,?,?)",
+     params = list(config_hash(cA), config_to_json(cA), "T7", "CV0", 0.42, 40L, "ok", "2026-01-01"))
+  DBI::dbDisconnect(co)
+  w5 <- tempfile(fileext = ".sqlite")
+  r5 <- restore_store_from_backup(modifyList(optimizer_settings(),
+                                             list(db_path = w5, db_backup_path = oldp)))
+  check(identical(r5$inserted, 1L), "a backup missing the migrated columns still merges")
+
+  # 6. no backup configured, and a configured path that does not exist: both are no-ops.
+  check(is.null(restore_store_from_backup(modifyList(optimizer_settings(),
+          list(db_path = tempfile(), db_backup_path = NULL)))),
+        "no backup configured is a no-op")
+  check(is.null(restore_store_from_backup(modifyList(optimizer_settings(),
+          list(db_path = tempfile(), db_backup_path = tempfile())))),
+        "a missing backup file is a no-op, not an error")
+
+  # store_summary reads any store file, and NULL rather than erroring on a missing one.
+  ss <- store_summary(bakp)
+  check(!is.null(ss) && ss$rows == 5L && ss$n_config == 2L,
+        "store_summary counts rows and distinct configs")
+  check(is.null(store_summary(tempfile())), "store_summary is NULL on a missing file")
+  unlink(c(bakp, w1, w3, w4, w5, oldp))
+})
+
+# ===========================================================================
 cat("evals store: optimizer targets ONE scheme (per-scheme slice of the archive)\n")
 # Oracle: filter_evals_to_scheme keeps only the target scheme; NULL keeps all; and
 # it composes with filter_evals_to_domain.

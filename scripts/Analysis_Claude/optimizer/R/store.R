@@ -132,6 +132,38 @@ backup_store <- function(con, dest) {
   invisible(isTRUE(ok))
 }
 
+# Copy a store to `dest` WITH its -wal/-shm sidecars, and return dest. WAL keeps recent writes
+# in the sidecar, so the main file alone can be 0 bytes -- copying it without them loses
+# everything. Read the copy, never the live file.
+.copy_store_with_sidecars <- function(path, dest) {
+  invisible(file.copy(path, dest, overwrite = TRUE))
+  for (ext in c("-wal", "-shm"))
+    if (file.exists(paste0(path, ext)))
+      invisible(file.copy(paste0(path, ext), paste0(dest, ext), overwrite = TRUE))
+  dest
+}
+
+# Read-only shape of any store file: rows, distinct configs and trials, and the breakdowns that
+# say whether a run will resume or restart. NULL when the file does not exist. Reads a sidecar
+# copy, so it is safe against a live store.
+store_summary <- function(path) {
+  if (is.null(path) || !nzchar(path) || !file.exists(path)) return(NULL)
+  tmp <- .copy_store_with_sidecars(path, file.path(tempdir(), "summary.sqlite"))
+  con <- DBI::dbConnect(RSQLite::SQLite(), tmp)
+  on.exit({ DBI::dbDisconnect(con); unlink(paste0(tmp, c("", "-wal", "-shm"))) }, add = TRUE)
+  e <- tryCatch(tibble::as_tibble(DBI::dbReadTable(con, "evals")), error = function(err) NULL)
+  if (is.null(e)) return(NULL)
+  col <- function(nm) if (nm %in% names(e)) e[[nm]] else rep(NA_character_, nrow(e))
+  list(
+    path = path, bytes = file.info(path)$size, mtime = file.mtime(path),
+    rows = nrow(e), evals = e,
+    n_config = dplyr::n_distinct(e$config_hash), n_trial = dplyr::n_distinct(e$trial_id),
+    by_scheme = table(col("scheme"), useNA = "ifany"),
+    by_status = table(col("status"), useNA = "ifany"),
+    by_build  = table(col("build"),  useNA = "ifany"),
+    ts_range  = if (nrow(e)) range(col("ts"), na.rm = TRUE) else c(NA_character_, NA_character_))
+}
+
 # Age of the backup in minutes; Inf when there is none, or when no backup is configured.
 # The throttle keys on this rather than on a per-process timestamp so that every worker shares
 # one interval -- see should_backup_now(). Also what the report reads to say whether backups
@@ -153,6 +185,70 @@ should_backup_now <- function(settings) {
   db_min <- settings$db_backup_minutes %||% 0
   if (is.null(dest) || !nzchar(dest) || db_min <= 0) return(FALSE)
   backup_age_minutes(dest) >= db_min
+}
+
+# Merge the durable backup INTO the working store, the way restore_cache_from_backup() merges
+# the cache: additive, so nothing already on the work disk is lost, and safe to call repeatedly.
+# The leader calls it at startup, since db_path is node-local scratch that starts empty.
+#
+# Redundancy is keyed on (config_hash, trial_id, scheme) -- the pipeline is deterministic in
+# those three, so a cell already present is the same answer. `scheme` is in the key because CV0
+# and CV00 are different tasks scored separately. A collision keeps the LOCAL row: on a fresh
+# node there are none, and mid-job the local row is the one this build computed.
+#
+# NOT keyed on build / dosage_budget / em_df_method, which do change the result (see the
+# migration note in open_store). Skipped rows differing on one are counted and reported, so the
+# mixing stays visible rather than being silently resolved either way.
+restore_store_from_backup <- function(settings) {
+  src <- settings$db_backup_path
+  if (is.null(src) || !nzchar(src) || !file.exists(src)) return(invisible(NULL))
+  dir.create(dirname(settings$db_path), showWarnings = FALSE, recursive = TRUE)
+  con <- open_store(settings$db_path)               # also creates the schema ATTACH needs
+  on.exit(close_store(con), add = TRUE)
+
+  ok <- tryCatch({
+    DBI::dbExecute(con, sprintf("ATTACH DATABASE '%s' AS bak", gsub("'", "''", src)))
+    TRUE
+  }, error = function(e) { message("store restore: cannot read ", src, " (", conditionMessage(e), ")"); FALSE })
+  if (!ok) return(invisible(NULL))
+  on.exit(try(DBI::dbExecute(con, "DETACH DATABASE bak"), silent = TRUE), add = TRUE)
+
+  # Only the columns both schemas have: a backup from an older build lacks the migrated ones,
+  # and those are exactly the backups worth rescuing. `id` is AUTOINCREMENT and is reassigned.
+  cols <- setdiff(intersect(DBI::dbListFields(con, "evals"),
+                            DBI::dbGetQuery(con, "SELECT * FROM bak.evals LIMIT 0") |> names()),
+                  "id")
+  q    <- paste(sprintf('"%s"', cols), collapse = ", ")
+  n_bak <- DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM bak.evals")$n
+  before <- n_evals(con)
+
+  # MAX(id) collapses duplicate cells already in the backup: nothing ever prevented them, and a
+  # NOT EXISTS against main cannot see rows the same statement is inserting.
+  ins <- .with_busy_retry(function() DBI::dbExecute(con, sprintf(
+    "INSERT INTO evals (%s)
+     SELECT %s FROM bak.evals b
+      WHERE b.id IN (SELECT MAX(id) FROM bak.evals GROUP BY config_hash, trial_id, scheme)
+        AND NOT EXISTS (SELECT 1 FROM evals m
+                         WHERE m.config_hash = b.config_hash
+                           AND m.trial_id    = b.trial_id
+                           AND m.scheme IS   b.scheme)",
+    q, paste(sprintf('b."%s"', cols), collapse = ", "))))
+
+  # Cells present on both sides but computed under different hidden axes -- worth seeing,
+  # because both rows describe the same (config, trial, scheme) yet need not agree.
+  hidden <- if (all(c("build", "dosage_budget") %in% cols)) {
+    DBI::dbGetQuery(con,
+      "SELECT COUNT(*) AS n FROM bak.evals b JOIN evals m
+         ON m.config_hash = b.config_hash AND m.trial_id = b.trial_id AND m.scheme IS b.scheme
+        WHERE IFNULL(m.build,'') != IFNULL(b.build,'')
+           OR IFNULL(m.dosage_budget,-1) != IFNULL(b.dosage_budget,-1)")$n
+  } else 0L
+
+  message(sprintf("store restore: +%d row(s) from %s (%d of %d already present%s)",
+                  ins, src, n_bak - ins, n_bak,
+                  if (hidden > 0) sprintf("; %d differ on build/dosage_budget", hidden) else ""))
+  invisible(list(backup_rows = n_bak, inserted = ins, skipped = n_bak - ins,
+                 skipped_hidden_axis = hidden, before = before, after = n_evals(con)))
 }
 
 # Append one evaluation. `score` may be NA when the pipeline failed (status

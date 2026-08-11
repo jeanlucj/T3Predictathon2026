@@ -15,6 +15,10 @@
 # SAFE TO INTERRUPT, and safe to run while workers are going. Every fetch is cached as it
 # completes, so re-running skips what is done; workers contribute to the same files.
 #
+# Brackets itself with the same cache restore and flush the optimizer loop uses, because
+# cache_dir is node-local scratch on a cluster: unrestored it re-fetches what the backup already
+# holds, and unflushed the whole run dies with the allocation.
+#
 #   cd <repo>/scripts/Analysis_Claude/optimizer
 #   nohup Rscript prewarm_indices.R > logs/prewarm.out 2>&1 &
 #
@@ -44,6 +48,9 @@ o_sleep <- suppressWarnings(as.numeric(opt("sleep", "0.05")))
 o_force <- "--force" %in% args
 
 s    <- optimizer_settings()
+# cache_dir is node-local scratch on a cluster, so it starts EMPTY: without this every key
+# already in the durable backup is fetched again. No-op when no backup is configured.
+restore_cache_from_backup(s)
 conn <- t3_connect(s)
 
 # One map. `fetch` pulls and caches a single key; `universe` is the coverage denominator.
@@ -79,28 +86,37 @@ fill <- function(label, category, universe, fetch, per_call) {
                   i, length(todo), 100 * i / length(todo), el / i, el / 60,
                   el / i * (length(todo) - i) / 60, empty, failed))
       utils::flush.console()
+      # Bound what a killed allocation loses. Self-throttling, so this is cheap to call often.
+      sync_cache_to_backup(s, min_age_minutes = 5)
     }
     if (o_sleep > 0) Sys.sleep(o_sleep)
   }
   if (length(batch)) .note_attempted(s, category, batch)
 }
 
-# Projects first: 110 calls for complete coverage is the best value in the run.
-if (o_only %in% c("both", "projects"))
-  fill("projects -> accessions", "proj_acc", .all_project_ids(conn, s),
-       function(p) get_project_accessions(p, conn, s), 0.54)
+# The flush is a `finally` so an interrupt still writes what was fetched. A SIGKILL -- the
+# allocation ending -- runs nothing, which is what the periodic sync inside fill() is for.
+tryCatch({
+  # Projects first: 110 calls for complete coverage is the best value in the run.
+  if (o_only %in% c("both", "projects"))
+    fill("projects -> accessions", "proj_acc", .all_project_ids(conn, s),
+         function(p) get_project_accessions(p, conn, s), 0.54)
 
-if (o_only %in% c("both", "trials"))
-  fill("trials -> accessions", "acc", unique(as.character(trial_catalog(conn, s)$study_db_id)),
-       function(t) get_trial_accessions(t, conn, s), 0.39)
+  if (o_only %in% c("both", "trials"))
+    fill("trials -> accessions", "acc", unique(as.character(trial_catalog(conn, s)$study_db_id)),
+         function(t) get_trial_accessions(t, conn, s), 0.39)
 
-cat("\n== coverage ==\n")
-pi <- tryCatch(.project_index(s), error = function(e) NULL)
-ti <- tryCatch(.trial_index(s),   error = function(e) NULL)
-pu <- tryCatch(.all_project_ids(conn, s), error = function(e) character())
-tu <- tryCatch(unique(as.character(trial_catalog(conn, s)$study_db_id)), error = function(e) character())
-cat(sprintf("  projects: %d indexed, covers universe: %s\n",
-            length(attr(pi, "keys") %||% character()), .index_covers(pi, pu, s, "proj_acc")))
-cat(sprintf("  trials  : %d indexed, covers universe: %s\n",
-            length(attr(ti, "keys") %||% character()), .index_covers(ti, tu, s, "acc")))
-cat("\nBoth TRUE means the pipeline makes no relationship wizard calls at all.\n")
+  cat("\n== coverage ==\n")
+  pi <- tryCatch(.project_index(s), error = function(e) NULL)
+  ti <- tryCatch(.trial_index(s),   error = function(e) NULL)
+  pu <- tryCatch(.all_project_ids(conn, s), error = function(e) character())
+  tu <- tryCatch(unique(as.character(trial_catalog(conn, s)$study_db_id)), error = function(e) character())
+  cat(sprintf("  projects: %d indexed, covers universe: %s\n",
+              length(attr(pi, "keys") %||% character()), .index_covers(pi, pu, s, "proj_acc")))
+  cat(sprintf("  trials  : %d indexed, covers universe: %s\n",
+              length(attr(ti, "keys") %||% character()), .index_covers(ti, tu, s, "acc")))
+  cat("\nBoth TRUE means the pipeline makes no relationship wizard calls at all.\n")
+}, finally = {
+  if (isTRUE(sync_cache_to_backup(s, min_age_minutes = 0)))
+    cat("cache flushed to ", s$cache_backup_dir, "\n", sep = "")
+})

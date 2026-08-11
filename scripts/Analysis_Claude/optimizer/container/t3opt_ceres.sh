@@ -81,25 +81,19 @@ N_THREADS="${N_THREADS:-1}"
 
 mkdir -p "$OPTIMIZER_HOME/state" "$OPTIMIZER_HOME/logs"
 
-# ---- restore the store into node-local scratch ---------------------------
-# The optimizer does NOT restore the store by itself -- restore_cache_from_backup() covers the
-# cache, but there is no equivalent for evals.sqlite. Without this copy a chained job starts
-# from an empty store and re-runs work already paid for.
+# ---- the store ------------------------------------------------------------
+# Nothing is copied here. The leader merges the backup into the node-local store at startup
+# (restore_store_from_backup, R/store.R), keyed on config x trial x scheme so a work disk that
+# already holds rows keeps them. Its "+N row(s)" line lands in logs/run_w1.out.
 #
-# This must match db_path in settings.local.R (from container/settings.local.R.scinet).
-# Both are "$TMPDIR/t3opt_<user>/evals.sqlite" -- deliberately simple, so the two agree by
-# inspection. If you change one, change the other: a mismatch restores the backup to a path
-# nobody reads, and the run starts empty without complaining.
+# A blind `cp` would clobber rather than merge, and copying a live evals.sqlite without its
+# -wal/-shm sidecars loses whatever is still in the log.
 BACKUP="$OPTIMIZER_HOME/state/evals_backup.sqlite"
 STORE="$TMPDIR/t3opt_$(id -un)/evals.sqlite"
 mkdir -p "$(dirname "$STORE")"
 echo "store     : $STORE"
-
 if [ -f "$BACKUP" ]; then
-  cp "$BACKUP" "$STORE"
-  # VACUUM INTO emits a self-contained file with no -wal sidecar, so the copy is complete as
-  # it stands. Report what came back, so a silently-empty restore cannot pass unnoticed.
-  echo "restored $(sqlite3 "$STORE" 'SELECT COUNT(*) FROM evals;' 2>/dev/null || echo '?') rows from $BACKUP"
+  echo "backup    : $BACKUP ($(sqlite3 "$BACKUP" 'SELECT COUNT(*) FROM evals;' 2>/dev/null || echo '?') rows, merged by the leader)"
 else
   echo "no backup at $BACKUP -- starting from an EMPTY store"
   echo "  (expected only on the very first job; check this if you meant to resume)"

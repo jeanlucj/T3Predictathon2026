@@ -75,15 +75,20 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
   dir.create(settings$log_dir, showWarnings = FALSE, recursive = TRUE)
   dir.create(settings$cache_dir, showWarnings = FALSE, recursive = TRUE)
 
-  # Warm the work cache from its durable backup. RESTORING stays leader-only: N workers
-  # pulling one tree at startup fight for the disk while the others read it. The others wait
-  # on cache_ready_file, or they would re-download what the rsync is about to deliver.
-  # Flushing back is every worker's job -- LESSONS #25.
+  # Warm the work cache AND the store from their durable backups. RESTORING stays leader-only:
+  # N workers pulling one tree at startup fight for the disk while the others read it. The
+  # others wait on cache_ready_file, or they would re-download what the rsync is about to
+  # deliver. Flushing back is every worker's job -- LESSONS #25.
+  #
+  # Both restores are additive, so a work disk that already holds something keeps it. db_path is
+  # node-local scratch on a cluster and starts empty, which is what would otherwise make a
+  # chained job restart the search from zero.
   leader <- isTRUE(settings$is_leader %||% TRUE)
   ready_file <- settings$cache_ready_file
   if (leader) {
     if (!is.null(ready_file)) unlink(ready_file)       # stale flag from a previous run
     restore_cache_from_backup(settings)
+    restore_store_from_backup(settings)
     if (!is.null(ready_file)) {
       dir.create(dirname(ready_file), showWarnings = FALSE, recursive = TRUE)
       file.create(ready_file)
