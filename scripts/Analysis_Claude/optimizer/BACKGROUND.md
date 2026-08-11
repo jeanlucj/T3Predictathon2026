@@ -179,13 +179,13 @@ is always **fresh random** draws, not just elite recombinations.
 
 ### Re-evaluating the incumbent (the noise tax)
 With a noisy objective, the apparent best config may just have had lucky trials.
-The reported **incumbent must have at least `incumbent_min_reps` successful trials**
-before it can hold the title, and `aggregate_scores()` shrinks each config's mean
-towards the grand mean, so a single lucky evaluation cannot crown a fluke.
-Deliberate replication — running one configuration on several focal trials — is
-`config_replication`, which is **not yet implemented**; until it is, each
-configuration is evaluated once and `incumbent_min_reps` is unreachable, so
-`incumbent_config()` falls back to ranking all scored configurations.
+Three mechanisms guard against crowning a fluke. `config_replication` (default 2)
+runs each configuration on that many **distinct** focal trials before the search
+moves on, so no mean rests on a single draw; `aggregate_scores()` shrinks those
+means toward the grand mean in proportion to replication; and the reported
+**incumbent must have at least `incumbent_min_reps` successful trials** before it
+can hold the title. This trades a little speed for a trustworthy leader — at the
+default the search covers half as many configurations per evaluation budget.
 
 ### Persistence and resumability: one SQLite table as the single source of truth
 A background job that runs for days must survive being killed. Every evaluation —

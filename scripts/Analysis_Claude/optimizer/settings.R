@@ -5,7 +5,7 @@
 # Stamped into the log, the report and every stored eval. Last digit for a minor change, middle
 # for a major one. If a bump changes what a configuration COMPUTES, add a BUILD_CHANGES entry
 # (R/optimizer.R) so the invalidated rows can be retired.
-OPTIMIZER_BUILD <- "0.8.4"
+OPTIMIZER_BUILD <- "0.8.5"
 
 # TRUE puts state, logs and the cache backup on durable storage instead of the work directory.
 # OPTIMIZER_REMOTE decides if set; otherwise TRUE whenever OPTIMIZER_HOME is set.
@@ -166,12 +166,14 @@ optimizer_settings <- function(local_overrides = TRUE) {
     brapi_tries               = 4,   # attempts per BrAPI call; 1 disables retry
     vcf_max_download_attempts = 3,   # per-session failed VCF downloads before skipping -- LESSONS #10
 
-    min_trial_acc     = 30,      # skip trials with fewer genotyped accessions
-    min_train_trials  = 3,       # skip focal trials with too few training TRIALS
-    min_train_acc     = 20,      # genotyped overlap a GBLUP needs to fit, in ACCESSIONS
-    min_test_acc      = 5,       # the Predictathon's own "task can fail" rule, in ACCESSIONS
-    trial_replication = 2,       # distinct configs a trial reaches before moving on -- LESSONS #19
-    max_sample_fail   = 25,      # consecutive trial-sampling failures before halting
+    min_trial_acc      = 30,     # skip trials with fewer genotyped accessions
+    min_train_trials   = 3,      # skip focal trials with too few training TRIALS
+    min_train_acc      = 20,     # genotyped overlap a GBLUP needs to fit, in ACCESSIONS
+    min_test_acc       = 5,      # the Predictathon's own "task can fail" rule, in ACCESSIONS
+    # The two halves of LESSONS #19, both applying in simulate mode as well. 1 disables either.
+    trial_replication  = 2,      # distinct configs a trial reaches before the search moves on
+    config_replication = 2,      # evaluations a config gets, spread over distinct trials
+    max_sample_fail    = 25,     # consecutive trial-sampling failures before halting
 
     # Known-feasible trials used as a bug oracle by check_canaries(): failure here means the
     # code is hiding real data. NULL disables. The nine Predictathon focal trials, named

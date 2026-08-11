@@ -267,7 +267,8 @@ condition classes; `.sim_true`/`.sim_evaluate`: the SIMULATE objective.
 **`R/optimizer.R`** — `aggregate_scores()`: per-config mean (denoise);
 `get_elites()`, `fresh_random()`, `propose_candidates()`: candidate generation;
 `incumbent_config()`: robust best-so-far; `choose_config()`: the phase logic
-(seeds → random → acquisition).
+(seeds → replicate → random → acquisition); `choose_trial()`: the trial to pair
+with it, excluding those that configuration has already been run on.
 
 **`R/store.R`** — `open_store()`/`close_store()`; `store_eval()`/`read_evals()`;
 `n_evals()`, `tried_hashes()`; `config_to_json()`/`config_from_json()`

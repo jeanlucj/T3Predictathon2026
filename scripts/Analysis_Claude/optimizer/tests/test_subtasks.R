@@ -1628,6 +1628,64 @@ check(identical(choose_trial(con6, tset())$id, "simtrial_222"),
       "an eval under the OTHER scheme does not satisfy the replication constraint")
 close_store(con6); unlink(dbp6)
 
+# ===========================================================================
+cat("choose_config (config_replication) and the trial it is paired with\n")
+# Oracle: a configuration short of config_replication evaluations must come back, and must come
+# back paired with a trial it has NOT already been run on -- the real pipeline is deterministic
+# in (config, trial, scheme), so repeating a pair recomputes a known score and double-counts it.
+dbp7 <- tempfile(fileext = ".sqlite"); con7 <- open_store(dbp7)
+cset <- function(w = 1, cr = 2, tr = 1) modifyList(optimizer_settings(),
+  list(simulate = TRUE, optimize_scheme = "CV00", config_replication = cr,
+       trial_replication = tr, worker_id = as.character(w)))
+put <- function(cfg, trial, scheme = "CV00", score = 0.3)
+  store_eval(con7, cfg, trial, scheme, score, 40L, "ok", build = OPTIMIZER_BUILD)
+
+# Retire the seed phase first: every seed already replicated, so it is out of both backlogs.
+for (s in seed_configs("CV00")) for (t in c("simtrial_900", "simtrial_901")) put(s, t, score = 0.25)
+
+cA <- sample_config(); hA <- config_hash(cA)
+put(cA, "simtrial_910", score = 0.5)
+pickA <- choose_config(con7, cset())
+check(identical(pickA$source, "replicate") && identical(config_hash(pickA$cfg), hA),
+      "a config with 1 of 2 evaluations is re-offered, source = replicate")
+# The pairing: simtrial_910 is the only trial in the TRIAL backlog, so without cfg_hash it is
+# what choose_trial returns -- and with it, it must not be.
+check(identical(choose_trial(con7, cset(tr = 2))$id, "simtrial_910"),
+      "the trial backlog offers the under-replicated trial")
+check(!identical(choose_trial(con7, cset(tr = 2), cfg_hash = hA)$id, "simtrial_910"),
+      "cfg_hash excludes a trial that configuration has already been run on")
+
+put(cA, "simtrial_911", score = 0.4)
+check(!identical(choose_config(con7, cset())$source, "replicate"),
+      "once it has config_replication evaluations it leaves the backlog")
+
+cB <- sample_config()
+put(cB, "simtrial_912")
+check(!identical(choose_config(con7, cset(cr = 1))$source, "replicate"),
+      "config_replication = 1 disables the phase")
+# A row under the OTHER scheme must not count toward the tally.
+put(cB, "simtrial_913", scheme = "CV0")
+pickB <- choose_config(con7, cset())
+check(identical(pickB$source, "replicate") && identical(config_hash(pickB$cfg), config_hash(cB)),
+      "an eval under the OTHER scheme does not count toward config_replication")
+
+# Workers must spread over the backlog, and those past its end must explore rather than pile on.
+cC <- sample_config()
+put(cC, "simtrial_914")
+w12 <- vapply(1:2, function(w) config_hash(choose_config(con7, cset(w = w))$cfg), character(1))
+check(dplyr::n_distinct(w12) == 2, "two workers replicate two DIFFERENT configs")
+check(!identical(choose_config(con7, cset(w = 3))$source, "replicate"),
+      "a worker past the end of the backlog explores instead of piling onto it")
+
+# Oracle: the backlog counts EVALUATIONS, so it drains even where only one trial exists (the
+# sim_fixed_trial case). Counting distinct trials would leave cE stuck below the target forever.
+put(cB, "simtrial_915"); put(cC, "simtrial_916")       # clear the backlog
+cE <- sample_config()
+put(cE, "simtrial_fixed"); put(cE, "simtrial_fixed")
+check(!identical(choose_config(con7, cset())$source, "replicate"),
+      "two evals on ONE trial still satisfy config_replication -- the backlog cannot stall")
+close_store(con7); unlink(dbp7)
+
 # Oracle: trial_id is only safe as a feature once every trial has >= 2 configs.
 mk_ev <- function(n_cfg) tibble::tibble(
   trial_id = rep(c("A","B"), each = n_cfg),

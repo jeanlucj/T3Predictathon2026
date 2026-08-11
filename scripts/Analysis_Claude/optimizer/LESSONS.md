@@ -271,11 +271,13 @@ location and test-set size explain essentially none of it. That is why the surro
 `trial_id` itself rather than on trial descriptors, and why blocking needs replication to be safe —
 at one observation per trial an `rpart` split on `trial_id` fits pure noise to an in-sample R² of
 0.98.
-**Now.** Partly fixed. `trial_replication` makes a trial carry several configurations, so the trial
-effect is estimable and `aggregate_scores()` removes it with random-effects BLUPs. The other half —
-replicating *configurations* — is not built yet: `config_replication` is the next revision, and
-until it lands every configuration gets exactly one evaluation, so the incumbent rests on a single
-observation. See `BACKGROUND.md` §4.
+**Now.** Fixed, in two halves. `trial_replication` makes a trial carry several configurations, so
+the trial effect is estimable and `aggregate_scores()` removes it with random-effects BLUPs.
+`config_replication` (0.8.5) makes a configuration carry several trials, so its mean is an average
+over the population it is supposed to generalize to. The two cooperate: the trial backlog supplies
+exactly the under-used trials a replication step needs. What is still fixed rather than adaptive is
+the *level* — a constant 2, where the useful design ramps it up as the surrogate converges. See
+`BACKGROUND.md` §4 and `NEXT_STEPS.md` §1.
 
 ### 20. Your analysis scripts deserve the same suspicion as the pipeline
 

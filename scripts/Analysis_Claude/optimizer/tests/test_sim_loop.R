@@ -31,6 +31,7 @@ settings <- modifyList(optimizer_settings(), list(
   simulate    = TRUE,
   sim_noise_sd    = 0,      # exact observations
   sim_fixed_trial = TRUE,   # one trial, so the objective is a fixed function of the config
+  config_replication = 1,   # with one trial and no noise a second eval is an exact duplicate
   db_path     = tempfile(fileext = ".sqlite"),
   stop_file   = tempfile(),               # never created -> no early stop
   report_path = tempfile(fileext = ".md"),
@@ -71,7 +72,9 @@ cat(sprintf("best submitted seed:       %.3f   [ASSERTED: incumbent > this]\n", 
 cat("incumbent config:\n"); cat(format_config(inc$config), "\n")
 
 fail <- 0L
-if (!(nrow(evals) > 0 && !is.null(inc) && inc$n_ok >= settings$incumbent_min_reps)) {
+# Replication, at whatever level this regime asks for. Gating on incumbent_min_reps instead
+# would fail here by construction, since config_replication is 1 in the deterministic regime.
+if (!(nrow(evals) > 0 && !is.null(inc) && inc$n_ok >= settings$config_replication)) {
   cat("\nFAIL: no incumbent with the required replication after a full run\n"); fail <- 1L
 }
 # The correctness claim: with an exact objective the surrogate must beat equal-budget random

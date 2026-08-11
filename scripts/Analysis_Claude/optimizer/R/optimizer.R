@@ -4,12 +4,13 @@
 # evaluate next, given everything tried so far:
 #
 #   1. Any unevaluated seed, for a baseline.
-#   2. Fresh random configurations until there are enough scores to fit a surrogate.
-#   3. Otherwise fit the random-forest surrogate, generate candidates by crossover and
+#   2. Any configuration short of its config_replication evaluations.
+#   3. Fresh random configurations until there are enough scores to fit a surrogate.
+#   4. Otherwise fit the random-forest surrogate, generate candidates by crossover and
 #      mutation of the elites plus fresh random draws, and take the highest Expected
 #      Improvement.
 #
-# The driver supplies the trial; this module only chooses the configuration.
+# choose_trial() picks the trial, given the configuration chosen here.
 
 library(tidyverse)
 
@@ -221,44 +222,67 @@ incumbent_config <- function(agg, min_reps = 2) {
        mean_score = best$mean_score, n_ok = best$n_ok)
 }
 
+# This worker's position in the pool, for spreading a shared backlog across workers. Worker ids
+# are free-form, so anything unparseable degrades to 1.
+.worker_index <- function(settings) {
+  w <- suppressWarnings(as.integer(settings$worker_id %||% "1"))
+  if (!is.finite(w) || w < 1L) 1L else w
+}
+
 # Decide the trial for the next evaluation.
 #
 # A trial must reach settings$trial_replication DISTINCT configurations before the search
 # spends steps on fresh trials. This is the PRECONDITION for trial_id as a surrogate feature,
 # not a refinement of it -- LESSONS #19. Revisits are also cheaper: that trial's observations
 # and dosage matrices are already cached.
-choose_trial <- function(con, settings, conn = NULL) {
+#
+# `cfg_hash` is the configuration this trial is for, when the caller has one; trials it has
+# already been run on are then excluded.
+choose_trial <- function(con, settings, conn = NULL, cfg_hash = NULL) {
   r <- suppressWarnings(as.integer(settings$trial_replication %||% 1L))
-  if (!is.finite(r) || r <= 1L) return(sample_trial(settings, conn))
+  if (!is.finite(r)) r <- 1L
+  if (r <= 1L && is.null(cfg_hash)) return(sample_trial(settings, conn))
 
   td <- if (isTRUE(settings$simulate)) NULL else settings$target_domain
   evals <- read_evals(con) |>
              filter_evals_to_domain(td) |>
              filter_evals_to_scheme(settings$optimize_scheme) |>
              filter_evals_to_build(settings$build %||% OPTIMIZER_BUILD)
-  if (!nrow(evals)) return(sample_trial(settings, conn))
+  seen <- if (is.null(cfg_hash)) character()
+          else unique(as.character(evals$trial_id[evals$config_hash == cfg_hash]))
+  if (r <= 1L || !nrow(evals)) return(.sample_unseen_trial(settings, conn, seen))
 
   # Trials that have been started but not yet replicated to `r` distinct configurations.
   backlog <- evals |>
     dplyr::group_by(trial_id) |>
     dplyr::summarise(n_cfg = dplyr::n_distinct(config_hash), .groups = "drop") |>
-    dplyr::filter(n_cfg >= 1L, n_cfg < r) |>
+    dplyr::filter(n_cfg >= 1L, n_cfg < r, !(trial_id %in% seen)) |>
     dplyr::arrange(trial_id)
-  if (!nrow(backlog)) return(sample_trial(settings, conn))
+  if (!nrow(backlog)) return(.sample_unseen_trial(settings, conn, seen))
 
-  # Offset by worker, exactly as the seed phase does below: without it every worker revisits
-  # the same trial and the backlog drains one trial at a time.
-  w <- suppressWarnings(as.integer(settings$worker_id %||% "1"))
-  if (!is.finite(w) || w < 1L) w <- 1L
-  id <- backlog$trial_id[((w - 1L) %% nrow(backlog)) + 1L]
+  # Offset by worker: without it every worker revisits the same trial and the backlog drains
+  # one trial at a time. Wrapping is right here -- a one-entry backlog wants every worker on it.
+  id <- backlog$trial_id[((.worker_index(settings) - 1L) %% nrow(backlog)) + 1L]
 
   if (isTRUE(settings$simulate)) return(.sim_trial(id))
   tryCatch(build_trial_descriptor(id, conn, settings),
            error = function(e) {
              message("  revisit of trial ", id, " failed (", conditionMessage(e),
                      ") -- sampling a fresh trial")
-             sample_trial(settings, conn)
+             .sample_unseen_trial(settings, conn, seen)
            })
+}
+
+# A fresh trial, preferring one not in `seen`: the real pipeline is deterministic in
+# (config, trial, scheme), so repeating a pair recomputes a known score and double-counts it.
+# After `tries` take what we have rather than fail a step.
+.sample_unseen_trial <- function(settings, conn, seen = character(), tries = 5L) {
+  tr <- sample_trial(settings, conn)
+  for (i in seq_len(max(0L, tries - 1L))) {
+    if (!(tr$id %in% seen)) break
+    tr <- sample_trial(settings, conn)
+  }
+  tr
 }
 
 # Decide the next configuration to evaluate. Returns list(cfg, source[, ei]).
@@ -292,21 +316,38 @@ choose_config <- function(con, settings) {
   hashes <- vapply(seeds, config_hash, character(1))
   undone <- seeds[!(hashes %in% done_hashes)]
   if (length(undone)) {
-    w <- suppressWarnings(as.integer(settings$worker_id %||% "1"))
-    if (!is.finite(w) || w < 1L) w <- 1L          # worker ids are free-form; degrade to 1
-    i <- ((w - 1L) %% length(undone)) + 1L        # wraps when workers outnumber seeds
+    i <- ((.worker_index(settings) - 1L) %% length(undone)) + 1L  # wraps past the seed count
     return(list(cfg = undone[[i]], source = paste0("seed:", names(undone)[i])))
+  }
+
+  # Phase 2: replication. A configuration gets settings$config_replication evaluations before
+  # the search moves on -- LESSONS #19. The backlog counts EVALUATIONS, not distinct trials, so
+  # it always drains; choose_trial() is what spreads them over distinct trials. Counting trials
+  # would stall wherever only one exists, as under sim_fixed_trial.
+  cr <- suppressWarnings(as.integer(settings$config_replication %||% 1L))
+  if (is.finite(cr) && cr > 1L && nrow(evals)) {
+    backlog <- evals |>
+      dplyr::count(config_hash, name = "n_eval") |>
+      dplyr::filter(n_eval < cr) |>
+      dplyr::arrange(config_hash)
+    # Workers past the end of the backlog explore instead of wrapping onto it: wrapping would
+    # put all 22 of them on a one-entry backlog and hand that config 22 evaluations.
+    w <- .worker_index(settings)
+    if (w <= nrow(backlog)) {
+      json <- evals$config_json[match(backlog$config_hash[w], evals$config_hash)]
+      return(list(cfg = config_from_json(json), source = "replicate"))
+    }
   }
 
   agg <- aggregate_scores(evals)
   n_scored <- sum(is.finite(agg$mean_score))
 
-  # Phase 2: random exploration until the surrogate has enough to learn from.
+  # Phase 3: random exploration until the surrogate has enough to learn from.
   if (n_scored < settings$n_random_init) {
     return(list(cfg = fresh_random(done_hashes), source = "random_init"))
   }
 
-  # Phase 3: surrogate-guided. Which fit is safe depends on the DESIGN of the store:
+  # Phase 4: surrogate-guided. Which fit is safe depends on the DESIGN of the store:
   #   BLOCKED  one row per (config, trial), trial_id a factor. Removes the trial variance from
   #            every config's estimate and keeps the replication weighting that collapsing to
   #            means throws away -- LESSONS #19.
