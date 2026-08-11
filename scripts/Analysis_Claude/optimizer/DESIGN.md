@@ -167,7 +167,8 @@ optimizer/
   R/
     config_space.R     <- the six-subtask config space: sample / encode / crossover / mutate
     pipeline.R         <- parameterized pipeline: run a config's six subtasks on a trial
-    data_access.R      <- BrAPI + caching: sample trials, pull phenotypes & dosages
+    data_access.R      <- BrAPI + caching: sample trials, pull phenotypes, local wizards
+    genotypes.R        <- VCF download/parse and the per-project dosage cache
     evaluate.R         <- run a config on a trial under CV0/CV00 -> score (+ SIMULATE)
     conditions.R       <- infeasible / fatal / sample_failed signals + funnel encoding
     surrogate.R        <- bagged-rpart RF surrogate: mean, uncertainty, Expected Improvement
@@ -237,7 +238,15 @@ bridges are dropped from the combined GRM, which is subset back to `need`.
 `build_trial_descriptor()`, `.trial_descriptor()`: focal trial descriptors;
 `get_observations()`/`.obs_tibble()`: phenotypes; `get_trial_accessions()` (also the
 substrate `.find_related`/`.trial_similarity` compute germplasm overlap from);
-`projects_for_accessions()`: genotyping **project** ids; `get_project_dosage()` +
+`projects_for_accessions()`: genotyping **project** ids.
+
+Two ways to keep a soft failure out of the cache, and no third: `valid=` when the **value**
+decides (an empty catalogue, a catalogue with no coordinates), `no_cache()` when something the
+value cannot show decides (a fetch that errored, whose empty result is indistinguishable from a
+real one). `.neg_cache_mark()`/`.neg_cache_hit()` record the opposite case — a *structural*
+failure that must **not** be retried every run.
+
+**`R/genotypes.R`** (VCF → dosage, and its cache) — `get_project_dosage()` +
 `.ensure_project_vcf()`/`.vcf_complete()`/`.vcf_header()`/`.vcf_stat()`/`.vcf_to_dosage()`:
 VCF → dosage — a base-R **streaming, chunked** reader (bounded memory; skips malformed
 variant lines; rejects transposed/non-VCF archives; gzip/BGZF transparent). Each project is
@@ -287,7 +296,7 @@ funnel + raw re-derivation; `canary_config()`/`.canary_filler()`: permissive con
 
 | Directory | Written by | Contents |
 |---|---|---|
-| `cache/` | `cached()` in `data_access.R` | `trial_catalog.rds`; `acc_<id>.rds`; `obs_<sid>.rds`; `proj_<hash>.rds`; `raw_project_<id>.vcf`; `dosage_<id>[_thin<k>]_sz<size>.rds`; `stat_<id>.rds`; `unparseable_<id>.rds`. Regenerable; the only expensive thing here is the download/extraction, paid once. |
+| `cache/` | `cached()` in `data_access.R`; the dosage/stat/unparseable entries in `genotypes.R` | `trial_catalog.rds`; `acc_<id>.rds`; `obs_<sid>.rds`; `proj_<hash>.rds`; `raw_project_<id>.vcf`; `dosage_<id>[_thin<k>]_sz<size>.rds`; `stat_<id>.rds`; `unparseable_<id>.rds`. Regenerable; the only expensive thing here is the download/extraction, paid once. |
 | `state/` | `store.R`, `report.R` | `evals.sqlite` (the single source of truth), `report.md` (rewritten each checkpoint), `STOP` (touch to halt). |
 | `logs/` | `run_optimizer.R` (via the launch redirect) | `run.out` — per-iteration heartbeat, the startup canary line, `CANARY ALARM` / `FATAL` / `step error` messages. |
 

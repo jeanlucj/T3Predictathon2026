@@ -406,8 +406,8 @@ build_targets <- function(cfg, train_obs, trial, conn, settings) {
   # cache denser. Sizing from the budget would under-count it and the cap would not fire.
   thin <- stats::setNames(rep(NA_real_, length(ids)), ids)
   bytes <- vapply(ids, function(pid) {
-    st <- tryCatch(readRDS(.cache_existing(settings, "stat", pid)), error = function(e) NULL)
-    if (!is.list(st) || is.null(st$n_markers)) return(NA_real_)
+    st <- .project_stat(settings, pid)
+    if (is.null(st) || is.null(st$n_markers)) return(NA_real_)
     dense <- as.numeric(st$n_samples) * as.numeric(st$n_markers) * 4
     cd <- .find_densest_dosage(settings, pid)
     # Not cached yet -> it will be parsed at THIS machine's budget when downloaded.

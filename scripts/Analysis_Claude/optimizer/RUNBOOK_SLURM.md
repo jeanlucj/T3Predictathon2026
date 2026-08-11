@@ -643,23 +643,27 @@ guide](https://scinet.usda.gov/guides/software/singularity)).
 A score is only reproducible if you can say what produced it. Two
 halves:
 
-- `OPTIMIZER_BUILD` pins the **code**, and is already stamped into every
-  stored evaluation.
+- `OPTIMIZER_BUILD` (`settings.R`) pins the **code**, and is already
+  stamped into every stored evaluation.
 - The image pins **everything the code runs on** — R 4.5.3, a dated CRAN
   snapshot, and two exact git commits.
 
-`optimizer.def`'s `%labels` block writes those facts *into* the image,
-so months later you can ask a `.sif` what it is without having the
-recipe to hand:
+`optimizer.def`'s `%labels` block writes the second half *into* the
+image, so months later you can ask a `.sif` what it is without having
+the recipe to hand:
 
 ``` bash
 $ apptainer inspect optimizer.sif
-    Optimizer.Build       0.8.4
     R.Version             4.5.3
     CRAN.Snapshot         2026-08-01
     T3BrapiHelpers.Sha    6c756462b5a315a992bdd7a26585d912a5452013
     BrAPI.Sha             51d8d450d8ec4f9fc13248165b6382f4a24030b0
 ```
+
+The build number is **not** a label. Labels have to do with the environment. 
+Build numbers have to do with the code that runs in the environment. 
+`t3opt_ceres.sh` reads the build out of `settings.R` 
+and prints it as the `build :` line of `slurm-<jid>.out`.
 
 Without the snapshot date, "rebuild the image" quietly means "install
 whatever CRAN holds today", and the image stops being a pin at all.

@@ -472,6 +472,33 @@ check(identical(readRDS(.cache_existing(cs, "obs", "B1")), "nested"),
 cached(cs, "acc", "E1", valid = function(a) length(a) > 0, expr = character())
 check(is.na(.cache_existing(cs, "acc", "E1")), "valid= gates: an invalid result is not cached")
 
+# no_cache() is the OTHER veto -- for when the value cannot show what went wrong. Oracle: the
+# caller gets the value, unmarked, and nothing is written, so the next call retries.
+nv <- cached(cs, "acc", "N1", expr = no_cache(c("p", "q")))
+check(identical(nv, c("p", "q")), "no_cache(): the caller still gets the value")
+check(is.null(attr(nv, ".no_cache")), "no_cache(): the marker is stripped before returning")
+check(is.na(.cache_existing(cs, "acc", "N1")), "no_cache(): nothing is written")
+check(identical(cached(cs, "acc", "N1", expr = c("second", "try")), c("second", "try")),
+      "no_cache(): the next call re-evaluates rather than serving a cached failure")
+check(!is.na(.cache_existing(cs, "acc", "N1")), "... and THAT result is cached")
+# The two vetoes compose: either one alone suppresses the write.
+cached(cs, "acc", "N2", valid = function(a) TRUE, expr = no_cache("x"))
+check(is.na(.cache_existing(cs, "acc", "N2")), "no_cache() vetoes even when valid() says yes")
+check(inherits(tryCatch(no_cache(NULL), error = function(e) e), "error"),
+      "no_cache(NULL) errors rather than silently caching NULL")
+
+# The negative cache: a structural failure recorded once, so it is not retried every run.
+check(!.neg_cache_hit(cs, "unparseable", "P9"), "negative cache: absent key is not a hit")
+.neg_cache_mark(cs, "unparseable", "P9", "no usable genotypes")
+check(.neg_cache_hit(cs, "unparseable", "P9"), "negative cache: a marked key is a hit")
+check(identical(readRDS(.cache_existing(cs, "unparseable", "P9"))$reason, "no usable genotypes"),
+      "negative cache: the reason is recorded for the reader")
+
+# .project_stat is the sanctioned read of the stat cache from outside R/genotypes.R.
+check(is.null(.project_stat(cs, "P404")), ".project_stat is NULL for a project never parsed")
+.cache_save(cs, "stat", "P8", list(n_samples = 10L, n_markers = 2000L))
+check(identical(.project_stat(cs, "P8")$n_markers, 2000L), ".project_stat reads a stored stat")
+
 # .find_densest_dosage globs BOTH the nested dosage folder and the legacy flat cache, and
 # returns the DENSEST (smallest-thin) file when several linger.
 .cache_save(cs, "dosage", "700_sz123", matrix(0L, 1, 1))                 # thin 1, nested
@@ -482,6 +509,24 @@ check(!is.null(.find_densest_dosage(cs, "700")), ".find_densest_dosage finds a n
 check(!is.null(.find_densest_dosage(cs, "701")), ".find_densest_dosage finds a legacy-flat dosage")
 check(is.null(.find_densest_dosage(cs, "999")), ".find_densest_dosage returns NULL when absent")
 check(.find_densest_dosage(cs, "702")$thin == 2L, ".find_densest_dosage picks the densest (thin 2 over 5)")
+
+# get_observations through the veto. Oracle: a FAILED fetch must leave no obs_<sid>.rds --
+# storing the empty tibble it degrades to means "this trial has no phenotypes" for 30 days
+# (LESSONS #7) -- while a successful but genuinely empty response is a real answer and is kept.
+local({
+  resp <- function(recs) list(combined_data = recs)
+  stub <- function(fail) list(search = function(path, body) {
+    if (fail && grepl("observations$", path)) stop("simulated HTTP 500")
+    resp(list())
+  })
+  ob <- modifyList(cs, list(brapi_tries = 1))
+  invisible(get_observations("S_FAIL", stub(TRUE), ob))
+  check(is.na(.cache_existing(ob, "obs", "S_FAIL")),
+        "get_observations: a failed fetch caches NOTHING (no 30-day empty)")
+  invisible(get_observations("S_OK", stub(FALSE), ob))
+  check(!is.na(.cache_existing(ob, "obs", "S_OK")),
+        "get_observations: a successful empty response IS cached")
+})
 unlink(.ctmp, recursive = TRUE)
 
 # ===========================================================================

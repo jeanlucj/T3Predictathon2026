@@ -110,6 +110,7 @@ layout. Genuinely unusable archives — a transposed export, and one whose `#CHR
 more samples than the data rows carry — are recorded in `cache/unparseable/unparseable_<id>.rds` and
 skipped thereafter. Delete that file to retry. If a project you expect yields no genotypes, look for
 its `unparseable_` marker and read the reason.
+**Lives in.** `R/genotypes.R::.vcf_to_dosage` / `.vcf_header` / `.vcf_stat`, `.neg_cache_mark()`.
 
 ### 10. A timing-out download must not be re-stormed
 
@@ -121,6 +122,7 @@ covering trial × scheme.
 project is skipped for the rest of the run. This is deliberately *not* an `unparseable_` verdict —
 it is session-only and resets next run, so a project that was merely down is retried fresh. A
 success clears the counter.
+**Lives in.** `R/genotypes.R::.vcf_download_plan` / `.ensure_project_vcf`.
 
 ### 27. A rejected password logs in "successfully"
 

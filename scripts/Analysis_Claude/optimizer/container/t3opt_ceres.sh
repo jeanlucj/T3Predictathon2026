@@ -104,7 +104,10 @@ echo "TMPDIR    : $TMPDIR"
 echo "home      : $OPTIMIZER_HOME"
 echo "image     : $SIF"
 echo "workers   : $N_WORKERS x $N_THREADS threads"
-apptainer inspect "$SIF" 2>/dev/null | grep -iE "optimizer.build|r.version|sha" || true
+
+# The code build comes from settings.R
+echo "build     : $(sed -n 's/^OPTIMIZER_BUILD *<- *"\(.*\)".*/\1/p' "$REPO/settings.R" 2>/dev/null || echo '?')"
+apptainer inspect "$SIF" 2>/dev/null | grep -iE "r.version|sha" || true
 
 # The cd into $REPO is load-bearing: R reads .Renviron -- and therefore the T3 credentials
 # -- from the working directory only. Apptainer 1.1+ does not bind $PWD, hence the explicit
