@@ -103,6 +103,10 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
   ready_file <- settings$cache_ready_file
   if (leader) {
     if (!is.null(ready_file)) unlink(ready_file)       # stale flag from a previous run
+    # The stop file is on durable storage, so one consumed by the last job outlives it and
+    # would halt this one before its first iteration. A STOP touched DURING a run still works:
+    # the loop tests it every iteration.
+    unlink(settings$stop_file)
     restore_cache_from_backup(settings)
     restore_store_from_backup(settings)
     if (!is.null(ready_file)) {

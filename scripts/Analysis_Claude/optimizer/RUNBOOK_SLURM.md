@@ -193,6 +193,46 @@ worker-hours per job at 22 workers. It also cannot tell whether the next
 evaluation needs 29 minutes or 33 hours, so it cannot avoid starting one
 that will not finish.
 
+### Swapping a running job onto a new build
+
+`scancel` alone forfeits up to 30 minutes of results, because `$TMPDIR`
+is wiped at job exit and anything since the last `backup_store()` goes
+with it. Stopping through the stop-file first makes every worker take a
+final backup, report and cache flush on the way out:
+
+``` bash
+source ./optimizer_paths.sh
+touch "$STOP_FILE"                                   # stops between evaluations
+tail -f "$OPTIMIZER_HOME/logs/run_w1.out"            # wait for "store backed up to"
+scancel <jobid>                                      # only for workers still mid-evaluation
+git pull
+container/run_in_container.sh exec peek_backup.R     # what the next job will start from
+./submit.local.sh
+```
+
+You do **not** need `rm "$STOP_FILE"` — the leader clears a stale one at
+startup, since the file is on durable storage and would otherwise halt
+every subsequent job before its first iteration. A STOP touched while a
+run is going still works; the loop tests it every iteration.
+
+You do **not** need to rebuild the container. `container/*.sif` is
+gitignored and the optimizer's R code is bind-mounted, which is the
+whole point of that split — only a change to `optimizer.def` itself
+calls for `./build.sh`.
+
+The store survives a build bump unless `BUILD_CHANGES` (`R/optimizer.R`)
+names it, and it only names changes that alter what a configuration
+*computes*. A bump that changes only *selection* leaves every stored row
+usable.
+
+> **Expect a burst of revisits after a bump that changes replication.**
+> `.trial_target()` reads `n_scored` from the store you are resuming
+> from, so a schedule arrives already ramped rather than ramping: around
+> 400 scored configurations it asks for 6 configs per trial, around 900
+> for 8. Every existing trial below that re-enters the trial backlog, so
+> the first hours revisit old trials instead of drawing new ones. That is
+> the schedule working, not a stall.
+
 The simplest way is **`--dependency=singleton`** with a fixed
 `--job-name`, which is what `submit.local.sh` sets. SLURM then refuses
 to start a job while an earlier one of the same name and user is still

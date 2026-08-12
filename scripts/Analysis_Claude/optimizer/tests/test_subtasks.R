@@ -1818,6 +1818,44 @@ local({
         "share: which workers are due shifts as rows land, so it is not always the same ones")
 })
 
+# Oracle: a stop-file left over from a PREVIOUS job must not kill this one. It lives on durable
+# storage, so it outlives the job that consumed it, and the loop tests it before iteration 1.
+# The complement matters just as much: a STOP that appears once the loop is running still stops
+# it, which is what makes clearing the stale one safe.
+local({
+  source(here::here("run_optimizer.R"))
+  base <- function(stop_file) modifyList(optimizer_settings(), list(
+    simulate = TRUE, optimize_scheme = "CV0", max_iters = 3, n_random_init = 5, ntree = 20,
+    db_path = tempfile(fileext = ".sqlite"), stop_file = stop_file,
+    report_path = tempfile(fileext = ".md"), log_dir = tempdir(), cache_dir = tempdir(),
+    db_backup_path = NULL, cache_backup_dir = NULL, cache_ready_file = NULL,
+    checkpoint_every = 1000))
+
+  sf <- tempfile(); file.create(sf)                    # a STOP left behind by the last job
+  st <- base(sf)
+  invisible(capture.output(run_optimizer(st), type = "message"))
+  cn <- open_store(st$db_path); n <- n_evals(cn); close_store(cn); unlink(st$db_path)
+  check(n == 3L, "a stale stop-file does not halt the next run")
+  check(!file.exists(sf), "and the leader clears it")
+
+  # Still stops when the file appears mid-run: written from the report hook, which the loop
+  # calls after every iteration.
+  sf2 <- tempfile(); st2 <- base(sf2)
+  st2$checkpoint_every <- 1
+  st2$report_path <- tempfile(fileext = ".md")
+  st2$max_iters <- 20
+  local({
+    orig <- write_report
+    assign("write_report", function(con, settings) { file.create(sf2); orig(con, settings) },
+           envir = globalenv())
+    on.exit(assign("write_report", orig, envir = globalenv()), add = TRUE)
+    invisible(capture.output(run_optimizer(st2), type = "message"))
+  })
+  cn2 <- open_store(st2$db_path); n2 <- n_evals(cn2); close_store(cn2); unlink(st2$db_path)
+  check(n2 < 20L, "a stop-file created mid-run still halts the loop")
+  unlink(c(sf, sf2))
+})
+
 # Oracle: the BASE floor is not rationed. Only the contender tier is, so config_replication
 # stays a guarantee rather than a suggestion when replicate_every > 1.
 local({
