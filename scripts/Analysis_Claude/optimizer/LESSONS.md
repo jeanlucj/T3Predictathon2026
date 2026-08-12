@@ -403,13 +403,19 @@ because from the code's point of view nothing had gone wrong -- the condition si
 reached. The same trap had already been found and fixed for `report.md` (the comment above
 `write_report` in `run_optimizer.R` records it) and the reasoning was not carried across to the
 backup, which is the file whose loss actually costs work.
-**Now.** `should_backup_now()` does not consult `is_leader`, and throttles on the **backup file's
-own mtime** rather than a per-process timestamp -- so N workers share one interval instead of each
-honouring it separately, and the interval survives a restart. The final on-exit backup is likewise
-every-worker: a leader-only one does nothing if worker 1 is the process that gets OOM-killed. The
-report prints the backup's age and flags it stale past `2 x db_backup_minutes`, because
-`write_report` is *not* leader-gated and so keeps updating while a long evaluation runs -- it is
-the one artefact that can report the stall while the stall is happening.
+**Now.** There is no interval: the backup runs after **every** evaluation, from whichever worker
+just finished, and never consults `is_leader`. That is the honest reading of the trap -- an
+interval at the bottom of this loop was only ever a floor, and `VACUUM INTO` was measured at
+**0.01 s** on stores of 500 to 5,000 rows, so the floor was buying nothing while leaving up to
+one un-backed evaluation per worker whenever they all entered long evaluations together. The
+final on-exit backup is likewise every-worker: a leader-only one does nothing if worker 1 is the
+process that gets OOM-killed. The report states how many rows the backup is **behind** rather
+than an age against an interval, because `write_report` is *not* leader-gated and so keeps
+updating while a long evaluation runs -- it is the one artefact that can report the stall while
+the stall is happening.
+
+The cache sync kept its interval. An rsync tree-walk over thousands of files and gigabytes is
+not in the same cost class as a VACUUM, so there the floor earns its place.
 **Generalise.** Any periodic work placed at the bottom of a loop inherits the loop's period. If
 the loop body can run longer than the interval, the interval is a floor and nothing more; and if
 the work is also gated on one process, one slow process disables it entirely. Ask what the *worst*

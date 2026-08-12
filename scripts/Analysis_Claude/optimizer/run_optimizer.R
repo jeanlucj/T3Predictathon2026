@@ -221,16 +221,12 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
     # whether it is due, from a stamp file every worker can see, so no worker's long evaluation
     # can hold up everyone else's backup. Not leader-gated -- see LESSONS #25.
     sync_cache_to_backup(settings)
-    # Copy the store to durable storage: db_path is on local disk, and the store is the one
-    # file whose loss costs real work. Any worker may do it, throttled on the backup's own
-    # mtime -- see should_backup_now() in R/store.R.
-    if (should_backup_now(settings)) {
-      # backup_store reports its own failure; note the consequence here so a run whose backups
-      # are all failing says so in the log rather than only at the moment /workdir is wiped.
-      if (!backup_store(con, settings$db_backup_path))
-        message("  the store is NOT being backed up -- a loss of ", dirname(settings$db_path),
-                " would lose this run")
-    }
+    # Copy the store to durable storage after every evaluation: db_path is on local disk, the
+    # store is the one file whose loss costs real work, and VACUUM INTO costs ~0.01 s. Any
+    # worker may do it -- LESSONS #25.
+    if (!backup_store(con, settings$db_backup_path))
+      message("  the store is NOT being backed up -- a loss of ", dirname(settings$db_path),
+              " would lose this run")
   }
 
   write_report(con, settings)          # every worker, as in the loop

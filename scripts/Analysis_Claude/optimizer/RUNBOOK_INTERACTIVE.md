@@ -250,8 +250,8 @@ to start.
 - [ ] **⑂ `db_path` on `/workdir`** — **required** for parallel workers. SQLite's WAL mode is
   what lets them write concurrently, and it cannot work over NFS, which is what `/home` usually
   is.
-- [ ] **⑂ `db_backup_path` on `/home`** — the store is copied there every `db_backup_minutes`
-  (default 30) with `VACUUM INTO`, so a purged `/workdir` costs at most one interval.
+- [ ] **⑂ `db_backup_path` on `/home`** — the store is copied there after every evaluation
+  with `VACUUM INTO` (~0.01 s), so a purged `/workdir` costs only the evaluations in flight.
 - [ ] **⑂ Move an existing store to the new `db_path`** — the workers continue from whatever is
   at that path, so it must be the store you care about:
 
@@ -484,10 +484,11 @@ Red flags:
 | `serving 1 marker in N` messages | the aggregate cap is binding | fine if deliberate; else raise `dosage_total_budget_bytes` |
 | `peak_rss_mb` ≫ `peak_r_mb` in `report_memory.R` | the cost is in compiled code (GRM/BLAS/sommer), which `dosage_total_budget_bytes` does **not** bound | size from `peak_rss_mb`; to cap it you must bound the kernel stage, not the dosage budget |
 
-The store backup's age appears in `report.md` as `- store backup: N min ago`, flagged
-`** STALE **` past twice `db_backup_minutes`. Because the backup can only fire *between*
-evaluations, a stale line usually means every worker is inside a long evaluation — not that
-backups are broken.
+The store backup appears in `report.md` as `- store backup: N min ago, up to date` or
+`… , 37 row(s) behind`, flagged `** STALE **` when it is behind and more than 5 minutes old.
+The backup fires after every evaluation, so a persistent lag means backups are failing — read
+the `store backup -> … FAILED` line for the reason. An *age* of hours with `up to date` is
+normal: it just means no worker has finished an evaluation recently.
 
 ## 6. Stop and save
 

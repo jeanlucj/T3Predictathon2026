@@ -174,8 +174,9 @@ check(length(list.files(dirname(p), pattern = "^dosage_")) == 1,
       "exactly one dosage file matches the glob")
 
 cat("5. store backup does not depend on the leader ------------------------\n")
-# Both properties are checked with NO leader among the workers: a backup still happens, and the
-# mtime throttle is shared across processes rather than honoured once per process. LESSONS #25.
+# Checked with NO leader among the workers: a backup still happens, and 12 unthrottled
+# VACUUM INTO + rename operations against one destination still leave a valid store.
+# LESSONS #25.
 unlink(list.files(tmp, "^done_", full.names = TRUE))
 bk_db <- file.path(tmp, "bk.sqlite")
 bk_dest <- file.path(tmp, "bk_backup.sqlite")
@@ -187,12 +188,7 @@ n_done <- spawn(3L, c(
   'for (i in 1:4) {',
   '  store_eval(con, cfg, trial_id = paste0(ARG[1], "_", i), scheme = "CV0",',
   '             score = runif(1), n_test = 30L, status = "ok")',
-  # db_backup_minutes = 0 here would disable it; 1/60 min = 1 s keeps the test quick while
-  # still exercising a throttle that is genuinely shorter than the loop.
-  # is_leader = FALSE on EVERY worker: the gate must not consult it. 1/60 min = 1 s keeps the
-  # test quick while still exercising a throttle genuinely shorter than the loop.
-  '  st <- list(db_backup_path = dest, db_backup_minutes = 1/60, is_leader = FALSE)',
-  '  if (should_backup_now(st) && backup_store(con, dest)) made <- made + 1L',
+  '  if (backup_store(con, dest)) made <- made + 1L',
   '  Sys.sleep(0.3)',
   '}',
   'close_store(con)',
@@ -202,12 +198,9 @@ n_done <- spawn(3L, c(
   'file.create(file.path(TMP, paste0("done_", ARG[1])))'))
 check(n_done == 3L, sprintf("all 3 backup workers finished (got %d)", n_done))
 check(file.exists(bk_dest), "a backup exists though NO worker was the leader")
-# Shared throttle: 12 iterations over ~3.6 s at a 1 s interval. A per-process timestamp would
-# let all three fire every second (up to ~12); a shared one caps it near the elapsed seconds.
 bf <- list.files(tmp, pattern = "^backups_", full.names = TRUE)
 nb <- if (length(bf)) sum(vapply(bf, function(p) as.integer(readLines(p)[1]), integer(1))) else 0L
-check(nb >= 1L, sprintf("at least one backup was taken (got %d)", nb))
-check(nb <= 6L, sprintf("the throttle is shared, not per-worker (got %d backups, want <= 6)", nb))
+check(nb == 12L, sprintf("every worker backs up after every evaluation (got %d of 12)", nb))
 # Whatever the race, every renamed candidate must be a complete, readable database.
 bc <- DBI::dbConnect(RSQLite::SQLite(), bk_dest)
 nrows <- tryCatch(DBI::dbGetQuery(bc, "SELECT COUNT(*) n FROM evals")$n, error = function(e) -1L)
@@ -215,21 +208,12 @@ DBI::dbDisconnect(bc)
 check(nrows > 0, sprintf("the backup is a valid store with rows (got %d)", nrows))
 check(!length(list.files(tmp, pattern = "^bk_backup[.]sqlite[.]tmp")),
       "no half-written backup temp file was left behind")
-# The gate itself, on its own. is_leader is varied to pin down that it is NOT consulted --
-# this is the specific regression that let the backup go 24 h stale.
-gate <- function(dest, mins, leader)
-  should_backup_now(list(db_backup_path = dest, db_backup_minutes = mins, is_leader = leader))
-missing_bk <- file.path(tmp, "no_such_backup.sqlite")
-check(is.infinite(backup_age_minutes(missing_bk)), "a missing backup is infinitely old")
+check(is.infinite(backup_age_minutes(file.path(tmp, "no_such_backup.sqlite"))),
+      "a missing backup is infinitely old")
 check(is.infinite(backup_age_minutes(NULL)), "an unconfigured backup path is infinitely old")
-check(gate(missing_bk, 30, leader = FALSE), "a NON-leader backs up when none exists")
-check(gate(missing_bk, 30, leader = TRUE),  "so does the leader")
-check(!gate(bk_dest, 30, leader = TRUE),  "a fresh backup is not redone, even by the leader")
-check(!gate(bk_dest, 30, leader = FALSE), "nor by a non-leader")
-check(!gate(NULL, 30, FALSE), "no backup path configured (local mode) means no backup")
-check(!gate(missing_bk, 0, FALSE), "db_backup_minutes = 0 disables backups")
-Sys.setFileTime(bk_dest, Sys.time() - 3600)     # one hour old, interval 30 min
-check(gate(bk_dest, 30, leader = FALSE), "a stale backup is refreshed by a non-leader")
+# .stored_rows is what the report uses to say how far behind the backup is.
+check(identical(.stored_rows(bk_dest), as.integer(nrows)), ".stored_rows counts a store file")
+check(is.na(.stored_rows(file.path(tmp, "nope.sqlite"))), ".stored_rows is NA on a missing file")
 
 cat("6. cache sync: every worker, but ONE at a time ----------------------\n")
 # The store backup can be done by all N workers at once harmlessly (a millisecond VACUUM INTO).

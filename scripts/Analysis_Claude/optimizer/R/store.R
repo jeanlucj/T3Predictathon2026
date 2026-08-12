@@ -52,8 +52,10 @@ open_store <- function(path, busy_timeout_ms = 60000) {
             ".\nThis is what a network filesystem looks like. ONE worker only, or move ",
             "db_path to local disk (/workdir) and back it up with db_backup_path.",
             call. = FALSE)
-  DBI::dbExecute(con, "PRAGMA synchronous = NORMAL")
-  DBI::dbExecute(con, "
+  # Retried: another process VACUUMing or writing holds a lock, and a bare dbExecute reports
+  # "database is locked" rather than waiting.
+  .with_busy_retry(function() DBI::dbExecute(con, "PRAGMA synchronous = NORMAL"))
+  .with_busy_retry(function() DBI::dbExecute(con, "
     CREATE TABLE IF NOT EXISTS evals (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
       config_hash   TEXT,
@@ -71,8 +73,9 @@ open_store <- function(path, busy_timeout_ms = 60000) {
       detail        TEXT,
       seconds       REAL,
       ts            TEXT
-    )")
-  DBI::dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_hash ON evals(config_hash)")
+    )"))
+  .with_busy_retry(function()
+    DBI::dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_hash ON evals(config_hash)"))
   # Migrations: columns that older stores lack. `detail` holds the failure funnel. The four
   # domain columns reuse the catalogue's names, so .apply_target_domain filters sampling and
   # evals identically. peak_rss_mb is the figure to size a machine from; peak_r_mb is kept for
@@ -164,27 +167,23 @@ store_summary <- function(path) {
     ts_range  = if (nrow(e)) range(col("ts"), na.rm = TRUE) else c(NA_character_, NA_character_))
 }
 
-# Age of the backup in minutes; Inf when there is none, or when no backup is configured.
-# The throttle keys on this rather than on a per-process timestamp so that every worker shares
-# one interval -- see should_backup_now(). Also what the report reads to say whether backups
-# are actually happening.
+# Age of the backup in minutes; Inf when there is none, or when no backup is configured. What
+# the report reads to say whether backups are actually happening.
 backup_age_minutes <- function(dest) {
   if (is.null(dest) || !nzchar(dest) || !file.exists(dest)) return(Inf)
   as.numeric(difftime(Sys.time(), file.mtime(dest), units = "mins"))
 }
 
-# Is it time to back the store up? A predicate rather than an inline condition so the rule is
-# testable on its own.
-#
-# Two things it deliberately does NOT do: consult is_leader, and track its own last-backup
-# time. The caller runs this between evaluations that can last many hours, so gating on one
-# worker makes the interval a floor of that worker's slowest evaluation; and a per-process
-# timestamp would let N workers each honour the interval separately. See LESSONS #25.
-should_backup_now <- function(settings) {
-  dest   <- settings$db_backup_path
-  db_min <- settings$db_backup_minutes %||% 0
-  if (is.null(dest) || !nzchar(dest) || db_min <= 0) return(FALSE)
-  backup_age_minutes(dest) >= db_min
+# Rows in a store FILE; NA when it is absent or unreadable. Opens it directly rather than a
+# copy: a VACUUM INTO backup has no -wal sidecar, and rename is atomic, so a reader sees either
+# the old file or the new one.
+.stored_rows <- function(path) {
+  if (is.null(path) || !nzchar(path) || !file.exists(path)) return(NA_integer_)
+  con <- tryCatch(DBI::dbConnect(RSQLite::SQLite(), path), error = function(e) NULL)
+  if (is.null(con)) return(NA_integer_)
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
+  tryCatch(as.integer(DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM evals")$n),
+           error = function(e) NA_integer_)
 }
 
 # Merge the durable backup INTO the working store, the way restore_cache_from_backup() merges

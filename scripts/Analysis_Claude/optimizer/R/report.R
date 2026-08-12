@@ -120,19 +120,22 @@ write_report <- function(con, settings) {
     paste0("- optimizer build: ", settings$build %||% OPTIMIZER_BUILD),
     # Whether the store is actually being backed up. It belongs here because the report is not
     # leader-gated, so it keeps updating while a long evaluation runs -- the one artefact that
-    # can report a stalled backup as it happens.
+    # can report a stalled backup as it happens. "Rows behind" is the direct measure; a backup
+    # lands within a second of a row, so a lag that persists means backups are failing.
     local({
       bp <- settings$db_backup_path
-      if (is.null(bp) || !nzchar(bp)) return(NULL)   # no backup configured
-      db_min <- settings$db_backup_minutes %||% 0
-      age <- backup_age_minutes(bp)
+      if (is.null(bp) || !nzchar(bp)) return(NULL)
+      age    <- backup_age_minutes(bp)
+      behind <- nrow(all_evals) - (.stored_rows(bp) %||% NA_integer_)
       paste0("- store backup: ",
              if (!is.finite(age)) "_never_"
              else if (age < 90) sprintf("%.0f min ago", age)
              else sprintf("%.1f h ago", age / 60),
-             # Only a FINITE age can be stale: a run's first report legitimately finds no
-             # backup yet.
-             if (is.finite(age) && db_min > 0 && age > 2 * db_min) "  ** STALE **" else "")
+             if (is.na(behind)) ""
+             else if (behind <= 0) ", up to date"
+             else sprintf(", %d row(s) behind", behind),
+             if (isTRUE(is.finite(age) && !is.na(behind) && behind > 0 && age > 5))
+               "  ** STALE **" else "")
     }),
     # Which estimator ranked the configs and, when the random-effects fit ran, the variance
     # components. sd_resid is reported BOTH ways: the fit uses n_test - 3 as inverse-variance

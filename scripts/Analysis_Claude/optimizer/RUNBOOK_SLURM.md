@@ -177,9 +177,10 @@ left off. Configurations already run are skipped by hash.
 **The job is *meant* to be killed at its wall clock.** There is no clean
 shutdown and no wall-clock setting, deliberately. What a kill costs:
 
-- **≤30 minutes of stored results.** Both the store and the cache are
-  backed up every 30 minutes, by whichever worker reaches the check
-  first — not by a designated leader that might be mid-evaluation.
+- **No stored results.** The store is backed up after every evaluation,
+  by whichever worker just finished — not by a designated leader that
+  might be mid-evaluation. (The cache still syncs on a 30-minute
+  interval; an rsync of that tree is not free the way a VACUUM is.)
 - **The evaluations in flight**, about 29 minutes each at the median.
   No shutdown scheme saves those: a wall-clock stop is only ever tested
   *between* evaluations, so whatever is running is lost either way.
@@ -568,8 +569,8 @@ is shared storage, where WAL cannot work.
 
 `backup_store()` uses `VACUUM INTO`, which emits a self-contained file
 with no WAL sidecar, so the durable copy is directly usable. It runs
-every `db_backup_minutes` (default 30), from whichever worker reaches
-the check first.
+after every evaluation, from whichever worker just finished — it costs
+about 0.01 s, so there is no interval worth configuring.
 
 **`$TMPDIR` IS ERASED WHEN THE JOB EXITS** — which is why the leader
 merges the backup back in at startup (§4).

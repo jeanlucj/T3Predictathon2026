@@ -169,9 +169,9 @@ settings_override <- list(
 This is the one step you cannot skip. `open_store` puts SQLite in WAL mode, which is
 what lets workers write concurrently, and WAL *cannot* work over NFS — it coordinates
 through an mmap'd `-shm` file. A home directory on a cluster is usually NFS. The
-store is copied to `db_backup_path` every `db_backup_minutes` using `VACUUM INTO`
-(safe on a live database) by whichever worker reaches the check first, so a wiped
-`/workdir` costs at most one interval.
+store is copied to `db_backup_path` after every evaluation using `VACUUM INTO`
+(safe on a live database, ~0.01 s), by whichever worker just finished, so a wiped
+`/workdir` costs only the evaluations still in flight.
 
 If you have an existing store on `/home`, copy it to the new path first — the workers
 continue from whatever is there:

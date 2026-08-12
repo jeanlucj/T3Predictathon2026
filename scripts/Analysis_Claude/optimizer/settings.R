@@ -234,7 +234,6 @@ optimizer_settings <- function(local_overrides = TRUE) {
     # Where the live store is copied, by VACUUM INTO. NULL disables.
     db_backup_path     = if (remote_server) file.path(perm_dir,
                                                       "state", "evals_backup.sqlite") else NULL,
-    db_backup_minutes  = 30,
 
     # ---- several workers on one store -------------------------------------
     # N workers share one db_path and one cache_dir. db_path MUST BE ON LOCAL DISK: WAL
