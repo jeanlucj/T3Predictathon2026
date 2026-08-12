@@ -5,7 +5,7 @@
 # Stamped into the log, the report and every stored eval. Last digit for a minor change, middle
 # for a major one. If a bump changes what a configuration COMPUTES, add a BUILD_CHANGES entry
 # (R/optimizer.R) so the invalidated rows can be retired.
-OPTIMIZER_BUILD <- "0.8.5"
+OPTIMIZER_BUILD <- "0.8.6"
 
 # TRUE puts state, logs and the cache backup on durable storage instead of the work directory.
 # OPTIMIZER_REMOTE decides if set; otherwise TRUE whenever OPTIMIZER_HOME is set.
@@ -171,8 +171,14 @@ optimizer_settings <- function(local_overrides = TRUE) {
     min_train_acc      = 20,     # genotyped overlap a GBLUP needs to fit, in ACCESSIONS
     min_test_acc       = 5,      # the Predictathon's own "task can fail" rule, in ACCESSIONS
     # The two halves of LESSONS #19, both applying in simulate mode as well. 1 disables either.
+    # Both are the BASE of a schedule that rises as the store grows -- see .trial_target() and
+    # the replication backlog in R/optimizer.R.
     trial_replication  = 2,      # distinct configs a trial reaches before the search moves on
-    config_replication = 2,      # evaluations a config gets, spread over distinct trials
+    config_replication = 2,      # evaluations every config gets, spread over distinct trials
+    contender_z        = 1,      # z in blup + z*se; a config stops earning reps once its
+                                 # optimistic bound falls below the leader's estimate
+    replicate_every    = 3,      # rations the CONTENDER tier only: 1 worker in this many takes
+                                 # from it. The config_replication floor is never rationed.
     max_sample_fail    = 25,     # consecutive trial-sampling failures before halting
 
     # Known-feasible trials used as a bug oracle by check_canaries(): failure here means the

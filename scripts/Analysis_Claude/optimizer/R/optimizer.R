@@ -85,7 +85,7 @@ filter_evals_to_build <- function(evals, build, changes = BUILD_CHANGES) {
 aggregate_scores <- function(evals, min_n_test = 10L, adjust_trial = TRUE) {
   if (!nrow(evals)) {
     return(tibble::tibble(config_hash = character(), mean_score = numeric(),
-                          pooled = numeric(), unweighted = numeric(),
+                          pooled = numeric(), unweighted = numeric(), se = numeric(),
                           n = integer(), n_ok = integer(), config_json = character()))
   }
   # A score is a CORRELATION, so its precision depends on how many accessions it was computed
@@ -113,6 +113,7 @@ aggregate_scores <- function(evals, min_n_test = 10L, adjust_trial = TRUE) {
       config_json = dplyr::first(config_json),
       .groups = "drop")
   out$mean_score <- out$pooled
+  out$se <- NA_real_                    # only the random-effects fit supplies one
   attr(out, "estimator") <- "pooled"
 
   # Trial-adjusted estimate. `pooled` is confounded with WHICH trials a config drew, and
@@ -129,6 +130,7 @@ aggregate_scores <- function(evals, min_n_test = 10L, adjust_trial = TRUE) {
       i <- match(out$config_hash, adj$config_hash)
       ok <- !is.na(i) & is.finite(adj$blup[i])
       out$mean_score[ok] <- adj$blup[i][ok]
+      out$se[ok] <- adj$se[i][ok]
       attr(out, "estimator")  <- "blup"
       attr(out, "var_comps")  <- attr(adj, "var_comps")
     }
@@ -151,12 +153,16 @@ aggregate_scores <- function(evals, min_n_test = 10L, adjust_trial = TRUE) {
 
   m <- suppressMessages(lme4::lmer(.z ~ 1 + (1 | trial_id) + (1 | config_hash),
                                    data = d, weights = .w))
-  re <- lme4::ranef(m)$config_hash
+  # condVar = TRUE attaches each level's posterior variance, which is what the contender rule
+  # needs; it is on the z scale, as `blup` is before the tanh below.
+  re <- lme4::ranef(m, condVar = TRUE)$config_hash
+  se <- sqrt(as.numeric(attr(re, "postVar")))
   v  <- as.data.frame(lme4::VarCorr(m))
   sd_of <- function(g) { x <- v$sdcor[v$grp == g]; if (length(x)) x[1] else NA_real_ }
   structure(
     tibble::tibble(config_hash = rownames(re),
-                   blup = tanh(as.numeric(lme4::fixef(m)[1]) + re[, 1])),
+                   blup = tanh(as.numeric(lme4::fixef(m)[1]) + re[, 1]),
+                   se   = se),
     var_comps = c(sd_trial = sd_of("trial_id"), sd_config = sd_of("config_hash"),
                   sd_resid = sd_of("Residual")))
 }
@@ -222,6 +228,48 @@ incumbent_config <- function(agg, min_reps = 2) {
        mean_score = best$mean_score, n_ok = best$n_ok)
 }
 
+# Config hashes owed another evaluation, in a stable order, split into two tiers:
+#   $base   short of settings$config_replication. Owed unconditionally -- this is the floor
+#           every configuration gets, and throttling it would make the setting a suggestion.
+#   $extra  a CONTENDER at or above the floor, earning one more each time this is called, so
+#           the target rises for exactly the configs still in question. Rationed by the caller.
+# Counts EVALUATIONS, not distinct trials, so it always drains. `universe` (eligible trial ids,
+# NULL in simulate mode) removes a config already run on every eligible trial.
+.replication_backlog <- function(evals, agg, settings, universe = NULL) {
+  none <- list(base = character(), extra = character())
+  cr <- suppressWarnings(as.integer(settings$config_replication %||% 1L))
+  if (!is.finite(cr) || !nrow(evals)) return(none)
+  cand <- .contenders(agg, settings$contender_z %||% 1, k = 8L)
+  per <- evals |>
+    dplyr::group_by(config_hash) |>
+    dplyr::summarise(n_eval = dplyr::n(), n_trial = dplyr::n_distinct(trial_id), .groups = "drop")
+  if (length(universe)) per <- dplyr::filter(per, n_trial < length(universe))
+  per <- dplyr::arrange(per, config_hash)
+  list(base  = per$config_hash[per$n_eval < cr],
+       extra = per$config_hash[per$n_eval >= cr & per$config_hash %in% cand])
+}
+
+# Configs that cannot yet be ruled out as the best: their optimistic bound still reaches the
+# leader's estimate. Returns config hashes, at most `k`, always including the leader -- so a
+# result of length 1 means the field has been decided at this `z`. Empty when the estimator
+# supplied no standard errors (the pooled fallback on a store too thin to fit).
+.contenders <- function(agg, z = 1, k = 8L) {
+  a <- agg[is.finite(agg$mean_score) & is.finite(agg$se %||% NA_real_), , drop = FALSE]
+  if (!nrow(a)) return(character())
+  ucb <- a$mean_score + z * a$se
+  in_play <- ucb >= max(a$mean_score)          # >=: a bound that exactly reaches is not ruled out
+  utils::head(a$config_hash[in_play][order(ucb[in_play], decreasing = TRUE)], k)
+}
+
+# Distinct configs a trial must reach before fresh trials are drawn. Rises with the store: the
+# sqrt keeps the number of NEW trials growing as sqrt(n) instead of flattening to a constant.
+.trial_target <- function(settings, n_scored) {
+  base <- suppressWarnings(as.integer(settings$trial_replication %||% 1L))
+  if (!is.finite(base)) base <- 1L
+  if (base <= 1L) return(base)
+  base + as.integer(floor(sqrt(max(0, n_scored)) / 5))
+}
+
 # This worker's position in the pool, for spreading a shared backlog across workers. Worker ids
 # are free-form, so anything unparseable degrades to 1.
 .worker_index <- function(settings) {
@@ -239,9 +287,9 @@ incumbent_config <- function(agg, min_reps = 2) {
 # `cfg_hash` is the configuration this trial is for, when the caller has one; trials it has
 # already been run on are then excluded.
 choose_trial <- function(con, settings, conn = NULL, cfg_hash = NULL) {
-  r <- suppressWarnings(as.integer(settings$trial_replication %||% 1L))
-  if (!is.finite(r)) r <- 1L
-  if (r <= 1L && is.null(cfg_hash)) return(sample_trial(settings, conn))
+  base <- suppressWarnings(as.integer(settings$trial_replication %||% 1L))
+  if (!is.finite(base)) base <- 1L
+  if (base <= 1L && is.null(cfg_hash)) return(sample_trial(settings, conn))
 
   td <- if (isTRUE(settings$simulate)) NULL else settings$target_domain
   evals <- read_evals(con) |>
@@ -250,7 +298,8 @@ choose_trial <- function(con, settings, conn = NULL, cfg_hash = NULL) {
              filter_evals_to_build(settings$build %||% OPTIMIZER_BUILD)
   seen <- if (is.null(cfg_hash)) character()
           else unique(as.character(evals$trial_id[evals$config_hash == cfg_hash]))
-  if (r <= 1L || !nrow(evals)) return(.sample_unseen_trial(settings, conn, seen))
+  if (base <= 1L || !nrow(evals)) return(.sample_unseen_trial(settings, conn, seen))
+  r <- .trial_target(settings, dplyr::n_distinct(evals$config_hash[is.finite(evals$score)]))
 
   # Trials that have been started but not yet replicated to `r` distinct configurations.
   backlog <- evals |>
@@ -273,20 +322,23 @@ choose_trial <- function(con, settings, conn = NULL, cfg_hash = NULL) {
            })
 }
 
-# A fresh trial, preferring one not in `seen`: the real pipeline is deterministic in
-# (config, trial, scheme), so repeating a pair recomputes a known score and double-counts it.
-# After `tries` take what we have rather than fail a step.
+# A trial not in `seen`: the real pipeline is deterministic in (config, trial, scheme), so
+# repeating a pair recomputes a known score and double-counts it in that config's mean. Raises
+# trials_exhausted() when every draw was already seen -- the caller then moves to another config.
 .sample_unseen_trial <- function(settings, conn, seen = character(), tries = 5L) {
-  tr <- sample_trial(settings, conn)
-  for (i in seq_len(max(0L, tries - 1L))) {
-    if (!(tr$id %in% seen)) break
+  for (i in seq_len(max(1L, tries))) {
     tr <- sample_trial(settings, conn)
+    if (!(tr$id %in% seen)) return(tr)
   }
-  tr
+  trials_exhausted(length(seen))
 }
 
 # Decide the next configuration to evaluate. Returns list(cfg, source[, ei]).
-choose_config <- function(con, settings) {
+#
+# `universe`: eligible trial ids for the target domain (NULL in simulate mode), passed on to
+# .replication_backlog(). `replicate = FALSE` skips the replication phase, for a caller whose
+# replication pick turned out to have no trial left.
+choose_config <- function(con, settings, universe = NULL, replicate = TRUE) {
   # The store is global; this optimization only learns from its own target domain.
   # Filtering here scopes EVERYTHING downstream -- seeds, the done/avoid set,
   # aggregation, the surrogate, and the incumbent -- to the in-domain slice, so a
@@ -320,27 +372,25 @@ choose_config <- function(con, settings) {
     return(list(cfg = undone[[i]], source = paste0("seed:", names(undone)[i])))
   }
 
-  # Phase 2: replication. A configuration gets settings$config_replication evaluations before
-  # the search moves on -- LESSONS #19. The backlog counts EVALUATIONS, not distinct trials, so
-  # it always drains; choose_trial() is what spreads them over distinct trials. Counting trials
-  # would stall wherever only one exists, as under sim_fixed_trial.
-  cr <- suppressWarnings(as.integer(settings$config_replication %||% 1L))
-  if (is.finite(cr) && cr > 1L && nrow(evals)) {
-    backlog <- evals |>
-      dplyr::count(config_hash, name = "n_eval") |>
-      dplyr::filter(n_eval < cr) |>
-      dplyr::arrange(config_hash)
-    # Workers past the end of the backlog explore instead of wrapping onto it: wrapping would
-    # put all 22 of them on a one-entry backlog and hand that config 22 evaluations.
-    w <- .worker_index(settings)
-    if (w <= nrow(backlog)) {
-      json <- evals$config_json[match(backlog$config_hash[w], evals$config_hash)]
+  agg <- aggregate_scores(evals)
+  n_scored <- sum(is.finite(agg$mean_score))
+
+  # Phase 2: replication -- .replication_backlog() decides what is owed to whom. The base tier
+  # is served whenever it is non-empty; only the contender tier is rationed, one worker in
+  # `every`, keyed on the store's row count so a single worker alternates over time and N
+  # workers split at any instant without lockstep.
+  every <- max(1L, suppressWarnings(as.integer(settings$replicate_every %||% 1L)))
+  w <- .worker_index(settings)
+  if (isTRUE(replicate) && nrow(evals)) {
+    bl <- .replication_backlog(evals, agg, settings, universe)
+    pool <- if (length(bl$base)) bl$base
+            else if ((nrow(evals) + w) %% every == 0L) bl$extra else character()
+    if (length(pool)) {
+      i <- ((w - 1L) %% length(pool)) + 1L
+      json <- evals$config_json[match(pool[i], evals$config_hash)]
       return(list(cfg = config_from_json(json), source = "replicate"))
     }
   }
-
-  agg <- aggregate_scores(evals)
-  n_scored <- sum(is.finite(agg$mean_score))
 
   # Phase 3: random exploration until the surrogate has enough to learn from.
   if (n_scored < settings$n_random_init) {

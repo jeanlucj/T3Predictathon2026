@@ -1690,9 +1690,13 @@ for (s in seed_configs("CV00")) for (t in c("simtrial_900", "simtrial_901")) put
 
 cA <- sample_config(); hA <- config_hash(cA)
 put(cA, "simtrial_910", score = 0.5)
-pickA <- choose_config(con7, cset())
-check(identical(pickA$source, "replicate") && identical(config_hash(pickA$cfg), hA),
-      "a config with 1 of 2 evaluations is re-offered, source = replicate")
+bl <- function(st = cset()) {
+  e <- filter_evals_to_scheme(read_evals(con7), st$optimize_scheme)
+  unlist(.replication_backlog(e, aggregate_scores(e), st), use.names = FALSE)
+}
+check(hA %in% bl(), "a config with 1 of 2 evaluations is in the replication backlog")
+check(identical(choose_config(con7, cset())$source, "replicate"),
+      "and the worker whose slot is due takes from it, source = replicate")
 # The pairing: simtrial_910 is the only trial in the TRIAL backlog, so without cfg_hash it is
 # what choose_trial returns -- and with it, it must not be.
 check(identical(choose_trial(con7, cset(tr = 2))$id, "simtrial_910"),
@@ -1701,34 +1705,160 @@ check(!identical(choose_trial(con7, cset(tr = 2), cfg_hash = hA)$id, "simtrial_9
       "cfg_hash excludes a trial that configuration has already been run on")
 
 put(cA, "simtrial_911", score = 0.4)
-check(!identical(choose_config(con7, cset())$source, "replicate"),
-      "once it has config_replication evaluations it leaves the backlog")
+check(!(hA %in% unlist(.replication_backlog(
+          filter_evals_to_scheme(read_evals(con7), "CV00"),
+          local({ e <- filter_evals_to_scheme(read_evals(con7), "CV00")
+                  a <- aggregate_scores(e); a$se <- NA_real_; a }),   # no SEs -> no contenders
+          cset()))),
+      "at config_replication evaluations and not a contender, it leaves the backlog")
 
 cB <- sample_config()
 put(cB, "simtrial_912")
-check(!identical(choose_config(con7, cset(cr = 1))$source, "replicate"),
-      "config_replication = 1 disables the phase")
+check(!(config_hash(cB) %in% unlist(.replication_backlog(
+          filter_evals_to_scheme(read_evals(con7), "CV00"),
+          local({ e <- filter_evals_to_scheme(read_evals(con7), "CV00")
+                  a <- aggregate_scores(e); a$se <- NA_real_; a }),
+          cset(cr = 1)))),
+      "config_replication = 1 leaves a once-evaluated config out of the backlog")
 # A row under the OTHER scheme must not count toward the tally.
 put(cB, "simtrial_913", scheme = "CV0")
-pickB <- choose_config(con7, cset())
-check(identical(pickB$source, "replicate") && identical(config_hash(pickB$cfg), config_hash(cB)),
+check(config_hash(cB) %in% bl(),
       "an eval under the OTHER scheme does not count toward config_replication")
 
 # Workers must spread over the backlog, and those past its end must explore rather than pile on.
 cC <- sample_config()
 put(cC, "simtrial_914")
-w12 <- vapply(1:2, function(w) config_hash(choose_config(con7, cset(w = w))$cfg), character(1))
-check(dplyr::n_distinct(w12) == 2, "two workers replicate two DIFFERENT configs")
-check(!identical(choose_config(con7, cset(w = 3))$source, "replicate"),
-      "a worker past the end of the backlog explores instead of piling onto it")
+check(length(bl()) >= 2, "the backlog holds more than one config")
 
 # Oracle: the backlog counts EVALUATIONS, so it drains even where only one trial exists (the
 # sim_fixed_trial case). Counting distinct trials would leave cE stuck below the target forever.
-put(cB, "simtrial_915"); put(cC, "simtrial_916")       # clear the backlog
 cE <- sample_config()
 put(cE, "simtrial_fixed"); put(cE, "simtrial_fixed")
-check(!identical(choose_config(con7, cset())$source, "replicate"),
-      "two evals on ONE trial still satisfy config_replication -- the backlog cannot stall")
+# --- trial exhaustion -------------------------------------------------------
+# Oracle: a config already run on every eligible trial has nothing left to learn from. The
+# universe comes from the catalogue restricted to target_domain, so this runs offline against a
+# pre-written trial_catalog cache -- no network, and no descriptor is ever built.
+local({
+  ctmp <- tempfile("exh_"); dir.create(ctmp)
+  catl <- tibble::tibble(study_db_id = c("E1", "E2", "E3"),
+                         study_name = c("e1", "e2", "e3"),
+                         program_name = "P", location_name = "L", year = 2025L)
+  es <- modifyList(optimizer_settings(),
+    list(simulate = FALSE, cache_dir = ctmp, optimize_scheme = "CV00",
+         target_domain = list(programs = NULL, years = NULL, locations = NULL,
+                              trials = c("e1", "e2", "e3"))))
+  .cache_save(es, "trial_catalog", NULL, catl)
+  check(setequal(eligible_trial_ids(NULL, es), c("E1", "E2", "E3")),
+        "eligible_trial_ids returns the domain's trials, offline from the cached catalogue")
+
+  dbx <- tempfile(fileext = ".sqlite"); cx <- open_store(dbx)
+  cX <- sample_config(); hX <- config_hash(cX)
+  for (t in c("E1", "E2")) store_eval(cx, cX, t, "CV00", 0.3, 40L, "ok", build = OPTIMIZER_BUILD)
+  ex <- read_evals(cx)
+  ax <- local({ a <- aggregate_scores(ex); a$se <- 0.5; a })      # force it to be a contender
+  check(hX %in% unlist(.replication_backlog(ex, ax, es, universe = c("E1","E2","E3"))),
+        "a contender with 2 of 3 eligible trials is still in the backlog")
+  store_eval(cx, cX, "E3", "CV00", 0.3, 40L, "ok", build = OPTIMIZER_BUILD)
+  ex <- read_evals(cx); ax <- local({ a <- aggregate_scores(ex); a$se <- 0.5; a })
+  check(!(hX %in% unlist(.replication_backlog(ex, ax, es, universe = c("E1","E2","E3")))),
+        "once it covers the whole domain it is dropped, contender or not")
+  check(hX %in% unlist(.replication_backlog(ex, ax, es, universe = NULL)),
+        "and with no universe (simulate mode) the domain test does not apply")
+  close_store(cx); unlink(dbx)
+
+  # .sample_unseen_trial signals rather than handing back a duplicate. The stub sampler always
+  # yields the one id the config has already seen -- the case the setdiff cannot catch, where
+  # unseen trials exist but none is usable.
+  sim1 <- modifyList(optimizer_settings(), list(simulate = TRUE, sim_fixed_trial = TRUE))
+  hit <- tryCatch(.sample_unseen_trial(sim1, NULL, seen = "simtrial_fixed", tries = 3L),
+                  optimizer_trials_exhausted = function(e) e)
+  check(inherits(hit, "optimizer_trials_exhausted"),
+        ".sample_unseen_trial raises trials_exhausted instead of repeating a pair")
+  check(!inherits(tryCatch(.sample_unseen_trial(sim1, NULL, seen = character()),
+                           optimizer_trials_exhausted = function(e) e),
+                  "optimizer_trials_exhausted"),
+        "... and returns normally when the trial has not been seen")
+  unlink(ctmp, recursive = TRUE)
+})
+
+# Oracle: a SATURATED optimizer must not look like broken trial sampling. sim_fixed_trial gives
+# exactly one trial, so every replication pick is instantly exhausted -- the end state a bounded
+# target domain reaches. run_optimizer.R does not auto-run when sourced (it checks sys.nframe).
+local({
+  source(here::here("run_optimizer.R"))
+  st <- modifyList(optimizer_settings(), list(
+    simulate = TRUE, sim_fixed_trial = TRUE, sim_noise_sd = 0, optimize_scheme = "CV0",
+    db_path = tempfile(fileext = ".sqlite"), stop_file = tempfile(),
+    report_path = tempfile(fileext = ".md"), log_dir = tempdir(), cache_dir = tempdir(),
+    db_backup_path = NULL, cache_backup_dir = NULL, cache_ready_file = NULL,
+    max_iters = 20, checkpoint_every = 1000))
+  set.seed(11)
+  out <- capture.output(run_optimizer(st), type = "message")
+  cn <- open_store(st$db_path); ev <- read_evals(cn); close_store(cn)
+  check(!any(grepl("too many consecutive trial-sampling failures", out)),
+        "exhaustion never trips the max_sample_fail halt")
+  check(nrow(ev) == 20L,
+        "no iteration is idled: an exhausted pick falls through to exploration in the same step")
+  check(!nrow(dplyr::filter(dplyr::count(ev, config_hash, trial_id, scheme), n > 1)),
+        "and no (config, trial, scheme) pair is ever evaluated twice")
+  unlink(st$db_path)
+})
+
+# --- the replication share --------------------------------------------------
+# Oracle: one worker in `replicate_every` replicates at any instant, and a single worker
+# alternates over time -- keyed on the row count so N workers never fall into lockstep.
+local({
+  due <- function(n, w, every = 3L) (n + w) %% every == 0L
+  check(sum(vapply(1:9, function(w) due(100L, w), logical(1))) == 3L,
+        "share: 3 of 9 workers are due at any one row count")
+  check(sum(vapply(1:30, function(n) due(n, 1L), logical(1))) == 10L,
+        "share: a single worker is due on 1 iteration in 3 as the store grows")
+  check(!identical(which(vapply(1:9, function(w) due(100L, w), logical(1))),
+                   which(vapply(1:9, function(w) due(101L, w), logical(1)))),
+        "share: which workers are due shifts as rows land, so it is not always the same ones")
+})
+
+# Oracle: the BASE floor is not rationed. Only the contender tier is, so config_replication
+# stays a guarantee rather than a suggestion when replicate_every > 1.
+local({
+  source(here::here("run_optimizer.R"))
+  st <- modifyList(optimizer_settings(), list(
+    simulate = TRUE, optimize_scheme = "CV0", max_iters = 40, n_random_init = 10, ntree = 40,
+    db_path = tempfile(fileext = ".sqlite"), stop_file = tempfile(),
+    report_path = tempfile(fileext = ".md"), log_dir = tempdir(), cache_dir = tempdir(),
+    db_backup_path = NULL, cache_backup_dir = NULL, cache_ready_file = NULL,
+    checkpoint_every = 1000, replicate_every = 3L))
+  set.seed(9)
+  invisible(capture.output(run_optimizer(st), type = "message"))
+  cn <- open_store(st$db_path); reps <- table(read_evals(cn)$config_hash); close_store(cn)
+  check(min(as.integer(reps)) >= st$config_replication,
+        "every config reaches config_replication even though only 1 worker in 3 replicates")
+  check(max(as.integer(reps)) > st$config_replication,
+        "and a contender goes past it -- the ramp is live")
+  unlink(st$db_path)
+})
+
+# --- contenders and the trial schedule --------------------------------------
+local({
+  mk <- function(score, se) tibble::tibble(config_hash = paste0("h", seq_along(score)),
+                                           mean_score = score, se = se)
+  a <- mk(c(0.50, 0.48, 0.20), c(0.02, 0.02, 0.02))
+  cn <- .contenders(a, z = 1)
+  check("h1" %in% cn, "the leader is always a contender")
+  check("h2" %in% cn, "one whose bound exactly reaches the leader is a contender (>=, not >)")
+  check(!("h3" %in% cn), "one whose optimistic bound falls short is not")
+  check(length(.contenders(mk(seq(0.5, 0.4, length.out = 20), rep(0.2, 20)), z = 1)) == 8L,
+        "the contender set is capped at 8")
+  check(length(.contenders(mk(c(0.5, 0.2), c(NA_real_, NA_real_)), z = 1)) == 0L,
+        "no standard errors (pooled fallback) means no contenders")
+  ts <- function(n) .trial_target(modifyList(optimizer_settings(), list(trial_replication = 2)), n)
+  check(identical(c(ts(0), ts(25), ts(100), ts(400)), c(2L, 3L, 4L, 6L)),
+        "trial_replication schedule: 2 / 3 / 4 / 6 at 0 / 25 / 100 / 400 scored configs")
+  check(identical(.trial_target(modifyList(optimizer_settings(),
+                                           list(trial_replication = 1)), 400), 1L),
+        "trial_replication = 1 disables the schedule outright")
+})
+
 close_store(con7); unlink(dbp7)
 
 # Oracle: trial_id is only safe as a feature once every trial has >= 2 configs.

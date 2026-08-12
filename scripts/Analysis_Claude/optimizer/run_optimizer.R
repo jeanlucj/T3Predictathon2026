@@ -21,13 +21,29 @@ for (f in list.files(here::here("R"), pattern = "[.]R$", full.names = TRUE)) sou
 # `sample_failed` returns sampling_failed = TRUE with nothing stored, since it is not a
 # config's fault; an `infeasible` is recorded as a failed eval and the step completes.
 optimizer_step <- function(con, settings, conn = NULL) {
-  choice <- choose_config(con, settings)
-  # choose_trial, not sample_trial: a started trial must reach settings$trial_replication
-  # distinct configurations before fresh trials are drawn, and the chosen config's own trials
-  # are excluded so a replication step adds a trial rather than repeating one (R/optimizer.R).
-  trial  <- tryCatch(choose_trial(con, settings, conn, cfg_hash = config_hash(choice$cfg)),
-                     optimizer_sample_failed = function(e) {
-                       message("  trial sampling: ", conditionMessage(e)); NULL })
+  # choose_trial, not sample_trial: a started trial must reach its trial_replication target
+  # before fresh trials are drawn, and the chosen config's own trials are excluded so a
+  # replication step adds a trial rather than repeating one (R/optimizer.R).
+  exhausted <- FALSE
+  pick_trial <- function(cfg) {
+    exhausted <<- FALSE
+    tryCatch(choose_trial(con, settings, conn, cfg_hash = config_hash(cfg)),
+             optimizer_trials_exhausted = function(e) { exhausted <<- TRUE; NULL },
+             optimizer_sample_failed = function(e) {
+               message("  trial sampling: ", conditionMessage(e)); NULL })
+  }
+  # settings$trial_universe is set once per run (see run_optimizer); choose_config uses it to
+  # drop configs already run on every eligible trial.
+  choice <- choose_config(con, settings, settings$trial_universe)
+  trial  <- pick_trial(choice$cfg)
+  # A replication pick with no trial left is not a sampling failure -- sampling works, that one
+  # config has nowhere to go. Spend the step exploring rather than idling, and do NOT count it
+  # toward max_sample_fail, or a saturated contender set would halt the run.
+  if (exhausted) {
+    choice <- choose_config(con, settings, settings$trial_universe, replicate = FALSE)
+    trial  <- pick_trial(choice$cfg)
+    if (exhausted) return(list(source = choice$source, skipped = TRUE))
+  }
   if (is.null(trial)) return(list(source = choice$source, sampling_failed = TRUE))
 
   # The optimizer targets ONE scheme per run (settings$optimize_scheme); CV0 and
@@ -120,6 +136,12 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
   if (!settings$simulate && is.null(conn)) {
     conn <- t3_connect(settings)
   }
+  # The eligible trial universe, resolved once per run from the weekly-cached catalogue. A
+  # config evaluated on all of it is dropped from the replication backlog, and the report says
+  # so when every contender has covered it.
+  if (!isTRUE(settings$simulate))
+    settings$trial_universe <- tryCatch(eligible_trial_ids(conn, settings),
+                                        error = function(e) NULL)
 
   con <- open_store(settings$db_path)
   on.exit(close_store(con), add = TRUE)
@@ -159,7 +181,11 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
     if (fatal_hit) break
     iter <- iter + 1
 
-    if (!is.null(step) && isTRUE(step$sampling_failed)) {
+    if (!is.null(step) && isTRUE(step$skipped)) {
+      consec_sample_fail <- 0L                 # nothing wrong; this config had no trial left
+      message(sprintf("[%s] iter %d  src=%-16s skipped: every eligible trial already run",
+                      format(Sys.time()), iter, step$source))
+    } else if (!is.null(step) && isTRUE(step$sampling_failed)) {
       consec_sample_fail <- consec_sample_fail + 1L
       message(sprintf("[%s] iter %d  trial sampling failed (%d consecutive)",
                       format(Sys.time()), iter, consec_sample_fail))

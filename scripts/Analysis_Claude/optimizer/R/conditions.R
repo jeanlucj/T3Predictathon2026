@@ -10,6 +10,9 @@
 #       instead of re-hitting the same wall.
 #   * sample_failed()   no usable focal trial after the retries. Not attributable to a
 #       configuration, so it is not written to the per-config failure log.
+#   * trials_exhausted() this configuration has already been run on every eligible trial. Raised
+#       before any evaluation, so nothing is stored and nothing counts against the config; the
+#       step moves on to a different one.
 #
 # `code` is a short machine-readable token, so failure_summary() can group on it.
 
@@ -37,6 +40,15 @@ fatal <- function(message, code = "fatal") {
   stop(structure(
     class = c("optimizer_fatal", "error", "condition"),
     list(message = message, call = sys.call(-1), code = code)))
+}
+
+# Raise: every eligible trial has already been paired with this configuration. Distinct from
+# sample_failed(): sampling is working, there is simply nothing left to learn about this config.
+trials_exhausted <- function(n_seen = NA_integer_) {
+  stop(structure(
+    class = c("optimizer_trials_exhausted", "error", "condition"),
+    list(message = sprintf("configuration already run on every eligible trial (%s seen)", n_seen),
+         call = sys.call(-1), code = "trials_exhausted", n_seen = n_seen)))
 }
 
 # Raise: no usable focal trial could be sampled (trial-sampling failure).

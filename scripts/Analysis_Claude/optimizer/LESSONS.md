@@ -277,9 +277,14 @@ at one observation per trial an `rpart` split on `trial_id` fits pure noise to a
 the trial effect is estimable and `aggregate_scores()` removes it with random-effects BLUPs.
 `config_replication` (0.8.5) makes a configuration carry several trials, so its mean is an average
 over the population it is supposed to generalize to. The two cooperate: the trial backlog supplies
-exactly the under-used trials a replication step needs. What is still fixed rather than adaptive is
-the *level* — a constant 2, where the useful design ramps it up as the surrogate converges. See
-`BACKGROUND.md` §4 and `NEXT_STEPS.md` §1.
+exactly the under-used trials a replication step needs. Both levels **ramp** (0.8.6) — trials on a
+`sqrt(n_scored)` schedule, configurations by contention, so the budget concentrates on whichever
+configs are still in question. See `DESIGN.md` §3 and `NEXT_STEPS.md` §1.
+
+**Read the variance components carefully.** `.blup_scores()` weights by `n_test - 3`, so lmer's
+`sd_resid` is the residual sd at *unit weight* while `sd_config` and `sd_trial` are on the score
+scale. Comparing the three as printed makes the residual look catastrophic; divide it by
+`sqrt(median(n_test) - 3)` first. `report.md` now prints both.
 
 ### 20. Your analysis scripts deserve the same suspicion as the pipeline
 

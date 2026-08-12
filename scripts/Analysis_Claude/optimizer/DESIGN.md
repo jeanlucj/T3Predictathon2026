@@ -106,6 +106,37 @@ Early iterations (before there is enough data to fit a surrogate) are pure rando
 + the five submitted configurations as seeds, so the submissions are an explicit
 baseline the search must beat.
 
+### Replication, and why it ramps
+
+A single evaluation is a weak measurement of a configuration: on the real store the
+config effect (`sd_config` ≈ 0.03) is small against the trial effect (≈ 0.10) and the
+per-evaluation residual (≈ 0.08 at a typical `n_test`). The correlation between a
+config's estimate and its true quality is about 0.47 at two evaluations, 0.65 at five
+— so ranking on one or two observations is close to ranking on noise.
+
+Both replication levels therefore rise with the store rather than sitting at a constant:
+
+- **Trials** — a trial must reach `.trial_target()` distinct configurations,
+  `trial_replication + floor(sqrt(n_scored) / 5)`, before fresh trials are drawn. The
+  square root matters: under a linear schedule the number of *new* trials per unit
+  budget flattens to a constant, and the search stops seeing new environments.
+- **Configurations** — everyone earns `config_replication` evaluations, and a
+  **contender** earns one more each time the backlog is built. A contender is a config
+  whose optimistic bound `blup + contender_z * se` still reaches the leader's estimate,
+  capped at the top 8. The set shrinks on its own as the estimates sharpen, so the ramp
+  is emergent rather than scheduled, and a contender set of size 1 means the field is
+  settled at that `contender_z`.
+
+One worker in `replicate_every` takes from the replication backlog and the rest explore,
+keyed on the store's row count so a single worker alternates over time and N workers
+split at any instant without falling into lockstep.
+
+A configuration already evaluated on every trial in `target_domain` is dropped from the
+backlog: no trial is left to inform it. When that is true of every contender, no further
+evidence about the current leaders is obtainable and only a *new* configuration can
+improve the answer — the report says so, and the loop keeps exploring rather than
+stopping, since the continuous parameters make the config space infinite.
+
 Why this and not a plain GA or plain grid search: grid search wastes the
 expensive evaluations; a plain GA needs a large population per generation under
 noise; the surrogate lets us learn from *every* evaluation -- including ones on

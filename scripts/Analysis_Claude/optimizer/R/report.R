@@ -135,14 +135,34 @@ write_report <- function(con, settings) {
              if (is.finite(age) && db_min > 0 && age > 2 * db_min) "  ** STALE **" else "")
     }),
     # Which estimator ranked the configs and, when the random-effects fit ran, the variance
-    # components. sd_trial vs sd_config says whether adjusting for trials buys anything here.
+    # components. sd_resid is reported BOTH ways: the fit uses n_test - 3 as inverse-variance
+    # weights, so lmer's figure is the sd at unit weight (n_test = 4) and is not comparable with
+    # the other two until divided by sqrt(median weight).
     local({
       est <- attr(agg, "estimator") %||% "pooled"
       vc  <- attr(agg, "var_comps")
+      w   <- suppressWarnings(stats::median(as.numeric(evals$n_test), na.rm = TRUE)) - 3
       paste0("- config score estimator: ", est,
              if (!is.null(vc) && all(is.finite(vc)))
-               sprintf("  (sd_trial %.3f, sd_config %.3f, sd_resid %.3f)",
-                       vc[["sd_trial"]], vc[["sd_config"]], vc[["sd_resid"]])
+               sprintf("  (sd_trial %.3f, sd_config %.3f, sd_resid %.3f per eval at median n_test%s)",
+                       vc[["sd_trial"]], vc[["sd_config"]],
+                       vc[["sd_resid"]] / sqrt(max(1, w)),
+                       sprintf("; %.3f at unit weight", vc[["sd_resid"]]))
+             else "")
+    }),
+    # How much is still undecided. 1 means the field is settled at this contender_z; every
+    # contender being domain-covered means no further evidence about the leaders is obtainable.
+    local({
+      cand <- .contenders(agg, settings$contender_z %||% 1, k = 8L)
+      if (!length(cand)) return(NULL)
+      seen <- evals |> dplyr::filter(config_hash %in% cand) |>
+        dplyr::group_by(config_hash) |>
+        dplyr::summarise(n_trial = dplyr::n_distinct(trial_id), .groups = "drop")
+      nu <- length(settings$trial_universe %||% character())
+      paste0("- contenders: ", length(cand),
+             if (length(cand) == 1L) "  ** the field is settled at contender_z; raise it to continue **"
+             else if (nu > 0 && all(seen$n_trial >= nu))
+               sprintf("  ** all have covered the %d-trial domain; only new configurations can improve the answer **", nu)
              else "")
     }),
     paste0("- optimized scheme: ", settings$optimize_scheme),

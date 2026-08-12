@@ -67,39 +67,27 @@ s <- optimizer_settings()
 eval_groups()                                 # confirm the tooling loaded
 ```
 
-For the **online** levels (L5 on) also open the live connection once and reuse it. The T3
-server now requires login, so `t3_connect()` constructs the connection **and logs it in**
-from the `T3_USERNAME` / `T3_PASSWORD` environment credentials (copy `.Renviron.example` to
-`.Renviron`, fill it in, restart R):
+For the **online** levels (L5 on) also open the live connection once and reuse it. The T3 server now requires login, so `t3_connect()` constructs the connection **and logs it in** from the `T3_USERNAME` / `T3_PASSWORD` environment credentials (copy `.Renviron.example` to `.Renviron`, fill it in, restart R):
 
 ``` r
 s    <- modifyList(optimizer_settings(), list(simulate = FALSE))
 conn <- t3_connect(s)          # createBrAPIConnection + t3_login from .Renviron creds
 ```
 
-> **Auth.** If a call comes back `Unauthorized (HTTP 401)` (e.g. the token expired mid-run),
-> `.brapi_try()` re-logs in from the same credentials and retries -- no action needed. If the
-> re-login itself fails it says so **loudly** (`... re-login FAILED: <reason>`), and if the
-> credentials are simply missing it fails **fast** with a message telling you to fill in
-> `.Renviron` and **RESTART R** (it is read only at startup, so editing it mid-session does
-> nothing -- check with `Sys.getenv("T3_USERNAME")`). Prefer `t3_connect()` over a raw
-> `createBrAPIConnection()`: it logs in up front, so missing creds error *immediately* rather
-> than after hours of silent 401s.
+> **Auth.** If a call comes back `Unauthorized (HTTP 401)` (e.g. the token expired mid-run), `.brapi_try()` re-logs in from the same credentials and retries -- no action needed. If the re-login itself fails it says so **loudly** (`... re-login FAILED: <reason>`), and if the credentials are simply missing it fails **fast** with a message telling you to fill in `.Renviron` and **RESTART R** (it is read only at startup, so editing it mid-session does nothing -- check with `Sys.getenv("T3_USERNAME")`). Prefer `t3_connect()` over a raw `createBrAPIConnection()`: it logs in up front, so missing creds error *immediately* rather than after hours of silent 401s.
 
 > **Caveat.** `conn$vcf_archived()` can prompt interactively to pick a file and will hang a non-interactive run. When you script a real-mode probe with `Rscript`, redirect stdin: `Rscript probe.R </dev/null`. Interactively in RStudio you will simply see the prompt.
 
 Durable state lives in two dirs and is regenerable: `state/` (the SQLite store + `report.md`; `touch state/STOP` halts a run) and `cache/` (downloaded data). See §8.
 
-> **Cache backup (remote server).** With `remote_server = TRUE` the cache stays on the work
-> disk and is backed up to `$OPTIMIZER_HOME/cache`. `run_optimizer()` reconciles and backs it
-> up automatically, but you can also drive it by hand outside the loop -- e.g. before a
-> `check_canaries()` / `calibrate_canary_trials()` session that isn't launched through
-> `run_optimizer()`:
+> **Cache backup (remote server).** With `remote_server = TRUE` the cache stays on the work disk and is backed up to `$OPTIMIZER_HOME/cache`. `run_optimizer()` reconciles and backs it up automatically, but you can also drive it by hand outside the loop -- e.g. before a `check_canaries()` / `calibrate_canary_trials()` session that isn't launched through `run_optimizer()`:
+>
 > ``` r
 > restore_cache_from_backup(s)   # warm the WORK cache from the backup (additive: fills gaps,
 >                                # never deletes; run it whenever, empty cache or not)
 > sync_cache_to_backup(s)        # back the work cache up to durable storage now
 > ```
+>
 > Both are no-ops when `cache_backup_dir` is unset (local mode) or `rsync` is missing.
 
 ------------------------------------------------------------------------
@@ -163,7 +151,7 @@ disarm_evaluation()
 - **🚩 red flag** the surrogate predicts a flat score for every candidate (no signal learned); acquisition picks the same config forever (EI collapsed); `incumbent_config()` returns a config with fewer than `incumbent_min_reps` reps.
 - *Assumption:* the surrogate trains on the **per-config mean** score (`aggregate_scores`), i.e. the best config for a *random* trial is the one with the best average — not tuned to any single trial.
 - *Target-domain **and scheme** scoping:* `evals.sqlite` is a **shared archive of every evaluation ever run**, across target domains *and CV schemes*. But a given optimization only wants evidence from **its own** domain and **its own scheme** (the premise: the best pipeline for a domain/scheme is what you deploy on a *new* trial from that domain, under that scheme). So `choose_config()` filters the store **first** — `filter_evals_to_domain` (same `.apply_target_domain` predicate that restricts trial sampling) **then** `filter_evals_to_scheme(settings$optimize_scheme)` — scoping *everything* downstream: seeds, the done/avoid dedup set, aggregation, the surrogate, and the incumbent. A config evaluated only in *another* domain or *another* scheme therefore counts as **untried here** and gets (re)run to build in-slice evidence. Each row stores the trial's `study_name / program_name / location_name / year` (domain) plus its `scheme`, so both filters are pure offline predicates. **CV0 and CV00 are distinct tasks** (they can have different optimal pipelines — the sim world even models it, `evaluate.R:147`), so the optimizer targets exactly **one** scheme per run (`optimize_scheme`); to optimize both, run twice against the same store/cache. In `simulate` mode there is no real domain (no domain filtering), but the scheme filter still applies. **🚩 red flag:** a run with a narrow `target_domain`/scheme never leaves the `seed`/`random_init` phase because almost no stored rows are in-slice (expected early on — it is gathering in-slice data), or `report.md` shows a large "out of this scheme/domain" count you did not expect.
-- *Replication (`config_replication`, default 2):* a configuration short of that many evaluations is re-offered before the search explores, `source = "replicate"`. The backlog counts **evaluations, not distinct trials**, so it always drains; `choose_trial(cfg_hash =)` is what spreads them over distinct trials, excluding any the config has already been run on. (Counting distinct trials would stall forever wherever only one trial exists, as under `sim_fixed_trial`.) Workers past the end of the backlog explore rather than wrapping onto it, so a one-entry backlog does not hand one config 22 evaluations. **🚩 red flag:** the incumbent changes on nearly every checkpoint (the leader is still being set by noise — raise `config_replication`); or `src=replicate` never appears in the log once the seeds are done.
+- *Replication, two tiers (`source = "replicate"` for both):* `.replication_backlog()` returns `$base` — configs short of `config_replication` (default 2), served **unconditionally**, so the setting is a floor and not a suggestion — and `$extra` — **contenders**, configs whose optimistic bound `blup + contender_z * se` still reaches the leader's estimate, capped at the top 8, each earning one more evaluation per pass. Only `$extra` is rationed, one worker in `replicate_every`. The backlog counts **evaluations, not distinct trials**, so it always drains; `choose_trial(cfg_hash =)` spreads them over distinct trials, excluding any the config has already seen, and raises `optimizer_trials_exhausted` rather than repeating a pair. **🚩 red flag:** `min(reps) < config_replication` over a settled store (the floor is being throttled); `src=replicate` never appears once the seeds are done; or `contenders:` in `report.md` stays at 8 forever (nothing is being separated — check `sd_config` against the per-eval residual).
 
 ### L3 — `store` (offline)
 
@@ -403,7 +391,7 @@ disarm_evaluation()
 There are **three** distinct checks here; run the light one first, then pick the oracle that answers your question:
 
 | Tool | What it asks | Cost | Read a failure as |
-|---|---|---|---|
+|----|----|----|----|
 | `calibrate_canary_trials` + `canary_anchor` | Does our per-trial **data count** match independent ground truth (the 5 teams' submissions)? | Light — no VCF download (`deep=FALSE`), no model fits | a `divergent` row = a **data-plumbing bug** localized to that trial |
 | `check_canaries` | Can the pipeline predict nine known trials under **one frozen config each**? | Heavy — downloads + fits for 9 trials | ambiguous: `error`=bug, but `infeasible`/`constant`=this config × that trial's data (or a stale freeze) — see "Reading a `check_canaries` result" in §9 |
 | `sweep_rich_trials` | Does **every method/branch** produce a prediction on **data-rich** trials (10675, 10677)? | Medium — 2 trials' genotypes (cached after) × a fit per variant | on rich data feasibility is a code property, so a `SUSPECT`/`BUG` variant is a **code bug**, not a data verdict |
@@ -517,13 +505,13 @@ Runs the whole optimizer against the synthetic world (`.sim_true`/`.sim_evaluate
 
 Keep two questions apart here — conflating them is what made an earlier version of this file unreliable, failing on the RNG rather than on a regression:
 
-1. **Does the algorithm work?** A correctness property → asserted, in the deterministic regime.
-2. **How many evaluations does it need at a given noise level?** An empirical property of the *objective* → measured, asserted nowhere.
+1.  **Does the algorithm work?** A correctness property → asserted, in the deterministic regime.
+2.  **How many evaluations does it need at a given noise level?** An empirical property of the *objective* → measured, asserted nowhere.
 
 For (2), the fair experiment (two arms, 320 evaluations each, both deploying the incumbent their own evaluations selected, seeds 42/7/2024):
 
 | regime | surrogate | random search | diff | surrogate wins |
-|---|---|---|---|---|
+|----|----|----|----|----|
 | deterministic (what the test asserts) | **0.606** | 0.553 | **+0.053** | **3/3** |
 | trial variation only (observation noise off) | 0.513 | 0.525 | −0.012 | 1/3 |
 | full defaults | 0.527 | 0.528 | −0.001 | 2/3 |
@@ -606,7 +594,7 @@ check_canaries(s, conn)            -> run each trial under its config, every sch
 `check_canaries` is **not** a permutation sweep. It runs **one frozen config per trial**, under **both** CV schemes — 9 trials × 1 config × 2 schemes = 18 rows. The configs *differ across trials by design* (coverage): the four data-rich strong trials carry the demanding branches, the rest a light filler.
 
 | Trial | Config it is tested under |
-|---|---|
+|----|----|
 | 10673 Aurora | `em_combine` + `gblup_sommer_GE` (G×E) + `focal_plus_onehop` |
 | 10675 Big6 | `top_k_similar` + `rkhs_gaussian` + `rkhs` |
 | 10676 CornellMaster | `same_program` + `all_projects` + `gblup_rrblup`[lambda=loo] |
@@ -618,22 +606,17 @@ So a failing row is **config-specific**: "10673 failed" means the em_combine + s
 The `status` field already encodes the bug-vs-data distinction:
 
 | status | Meaning | Category |
-|---|---|---|
+|----|----|----|
 | **`error`** | an *uncaught R exception* (a crash) | **code bug** |
-| **`suspect`** | an infeasibility whose data funnel *cliffed* (much data in, ~0 out) | **probable data-hiding bug** |
+| **`suspect`** | an infeasibility whose data funnel *cliffed* (much data in, \~0 out) | **probable data-hiding bug** |
 | **`infeasible`** | the pipeline *deliberately* raised `infeasible(code)` — a data precondition (`too_few_markers`, `insufficient_geno_overlap`, `no_focal_obs`, `too_few_train_trials`, …) was not met | **data-adequacy verdict** (by design) |
 | **`constant`** | predictions were produced but had *no variance* (`sd(pred)==0`) → correlation undefined → `NA` | **method × data degeneracy**, not a crash |
 
 The `constant` case is usually a *method* limitation, not missing data: `gblup`/`direct_blup` under **CV00** masks the test accessions out of training, so `fit$u` has no entry for them and every prediction collapses to `mu` → constant. A cluster of `constant` rows that are all **CV00** is that limitation, not a bug.
 
-Triage rule:
-- `error` → **code bug** (fix it). `suspect` → **probable data-hiding bug** (localize with `diagnose_trial`).
-- `infeasible` (no `suspect`) → the data *as the pipeline currently sees it* does not support that config. Could be genuine inadequacy (the T3 platform-mismatch reality), a demanding method (`em_combine` needs multi-panel data with bridge accessions a trial may lack), or an artifact of a bug that is *hiding* data (which is what the poisoning fixes addressed).
-- `constant` (esp. CV00) → **method degeneracy**, expected for some method × scheme pairs.
+Triage rule: - `error` → **code bug** (fix it). `suspect` → **probable data-hiding bug** (localize with `diagnose_trial`). - `infeasible` (no `suspect`) → the data *as the pipeline currently sees it* does not support that config. Could be genuine inadequacy (the T3 platform-mismatch reality), a demanding method (`em_combine` needs multi-panel data with bridge accessions a trial may lack), or an artifact of a bug that is *hiding* data (which is what the poisoning fixes addressed). - `constant` (esp. CV00) → **method degeneracy**, expected for some method × scheme pairs.
 
-**Two caveats that make a stale result the third category, beyond bug vs data:**
-1. **The oracle is frozen.** Its promise ("these configs work on these trials") was set at calibration time. If the T3 data changed — or was *hidden* by a since-fixed bug (poisoned caches, 401s) — the frozen configs can report `infeasible`/`constant` with **no code bug and no true data change**: the freeze has simply drifted. Re-calibrate (`calibrate_canary_trials` → review → re-freeze `canary_configs`) after any change that alters what data the pipeline sees.
-2. **A result taken before a data-layer fix cannot be trusted as a data verdict.** E.g. a `check_canaries` run predating the cache-poisoning / auth-retry fixes may show `infeasible`/`constant` for trials whose data was being hidden — re-run on the fixed code before concluding "the data is inadequate."
+**Two caveats that make a stale result the third category, beyond bug vs data:** 1. **The oracle is frozen.** Its promise ("these configs work on these trials") was set at calibration time. If the T3 data changed — or was *hidden* by a since-fixed bug (poisoned caches, 401s) — the frozen configs can report `infeasible`/`constant` with **no code bug and no true data change**: the freeze has simply drifted. Re-calibrate (`calibrate_canary_trials` → review → re-freeze `canary_configs`) after any change that alters what data the pipeline sees. 2. **A result taken before a data-layer fix cannot be trusted as a data verdict.** E.g. a `check_canaries` run predating the cache-poisoning / auth-retry fixes may show `infeasible`/`constant` for trials whose data was being hidden — re-run on the fixed code before concluding "the data is inadequate."
 
 ### `sweep_rich_trials(settings, conn)` — the CODE-correctness oracle (`R/diagnostics.R`)
 
@@ -643,7 +626,7 @@ The complement to `check_canaries`, built to escape its central ambiguity. `chec
 - **Verdict per variant:** an `error` (crash) anywhere is always `BUG`; otherwise the variant is `ok` if it produced `ok` on ≥1 **non-degenerate** (trial, scheme), and `SUSPECT` if it never did.
 - **Accuracy is reported.** The per-cell table now includes the `score` (the Pearson *r* from `score_predictions`), and the returned `$verdict` carries `best_score` (best *r* over a variant's ok cells) — so you see how *well* each branch predicts, not just that it ran. The full per-cell `score`/`n_test` are in the returned `$rows`.
 - **Known-degenerate cells are excluded** (`.oracle_degenerate`): `direct_blup` under **CV00** masks the test lines out of training, so predictions collapse to the mean → `constant` by construction, not a bug. (cond_expectation predicts them from the kernel, so it is *not* degenerate.)
-- **Run it:** `sweep_rich_trials(s, conn)`. `SWEEP CLEAN` = every branch predicted on rich data; a `SWEEP ALARM` lists the suspect variants — cross-check one with `diagnose_trial()` on the same trial+config. Costs ~one download of the two trials' genotypes (cached thereafter) plus a fit per variant × 2 trials × 2 schemes.
+- **Run it:** `sweep_rich_trials(s, conn)`. `SWEEP CLEAN` = every branch predicted on rich data; a `SWEEP ALARM` lists the suspect variants — cross-check one with `diagnose_trial()` on the same trial+config. Costs \~one download of the two trials' genotypes (cached thereafter) plus a fit per variant × 2 trials × 2 schemes.
 - **Re-run one branch:** `sweep_rich_trials(s, conn, only = "em_combine")` runs just the variants whose label contains the string (e.g. `only = c("kernel=", "model=")`), so after a fix you re-check one branch without the whole sweep.
 
 This is the trustworthy, achievable half of validation (the full all-configs × all-trials matrix is neither): a green sweep says the code paths work; it does **not** claim every config suits every trial (nor should it).
@@ -654,14 +637,9 @@ Replays one trial and prints the data funnel stage by stage **next to an indepen
 
 ### Lessons baked in (don't re-learn the hard way)
 
-The traps that produced the machinery in this section — cache poisoning from a partial download,
-archives that are not usable VCFs, a download storm from one sick project, an interactive prompt
-that hangs a batch run, a search-space knob that was never wired, an assertion that tested the
-RNG — are recorded in **`LESSONS.md`**, one entry each, with the symptom that gave it away and
-where the fix lives.
+The traps that produced the machinery in this section — cache poisoning from a partial download, archives that are not usable VCFs, a download storm from one sick project, an interactive prompt that hangs a batch run, a search-space knob that was never wired, an assertion that tested the RNG — are recorded in **`LESSONS.md`**, one entry each, with the symptom that gave it away and where the fix lives.
 
-Read it when you are about to simplify something here: most of these look like unnecessary
-complexity until you know what they are defending against.
+Read it when you are about to simplify something here: most of these look like unnecessary complexity until you know what they are defending against.
 
 ------------------------------------------------------------------------
 

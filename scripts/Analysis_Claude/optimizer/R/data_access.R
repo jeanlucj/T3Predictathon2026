@@ -393,13 +393,24 @@ trial_catalog <- function(conn, settings) {
 # A trial is usable if it measured the focal trait, falls within the target
 # domain, and has at least min_trial_acc genotyped accessions for which we can
 # assemble a training set. We sample, validate, and retry a few times.
+# Catalogue rows a focal trial may be drawn from: the crop's focal-trait trials restricted to
+# the target domain. The universe both sample_real_trial() and eligible_trial_ids() work from.
+.eligible_trials <- function(conn, settings) {
+  cand <- trial_catalog(conn, settings) |> dplyr::filter(!is.na(study_db_id))
+  .apply_target_domain(cand, settings$target_domain)
+}
+
+# The eligible trials' study ids. A config evaluated on all of them has nothing left to learn
+# from; choose_config() drops it from the replication backlog.
+eligible_trial_ids <- function(conn, settings) {
+  unique(as.character(.eligible_trials(conn, settings)$study_db_id))
+}
+
 sample_real_trial <- function(settings, conn, max_tries = 12) {
-  cat <- trial_catalog(conn, settings)
-  # trial_catalog() already restricts to focal-trait trials when focal_trait_db_id
-  # is set; the per-trial observation check in the loop below is the safety net
-  # (and the only trait filter when focal_trait_db_id is NULL).
-  cand <- cat |> dplyr::filter(!is.na(study_db_id))
-  cand <- .apply_target_domain(cand, settings$target_domain)
+  # trial_catalog() already restricts to focal-trait trials when focal_trait_db_id is set; the
+  # per-trial observation check in the loop below is the safety net (and the only trait filter
+  # when focal_trait_db_id is NULL).
+  cand <- .eligible_trials(conn, settings)
   if (!nrow(cand)) fatal("No trials match the target domain in settings", "no_trials_in_domain")
 
   for (i in seq_len(max_tries)) {
