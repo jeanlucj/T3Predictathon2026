@@ -34,21 +34,38 @@ optimizer_step <- function(con, settings, conn = NULL) {
   }
   # settings$trial_universe is set once per run (see run_optimizer); choose_config uses it to
   # drop configs already run on every eligible trial.
-  choice <- choose_config(con, settings, settings$trial_universe)
-  trial  <- pick_trial(choice$cfg)
-  # A replication pick with no trial left is not a sampling failure -- sampling works, that one
-  # config has nowhere to go. Spend the step exploring rather than idling, and do NOT count it
-  # toward max_sample_fail, or a saturated contender set would halt the run.
-  if (exhausted) {
-    choice <- choose_config(con, settings, settings$trial_universe, replicate = FALSE)
-    trial  <- pick_trial(choice$cfg)
-    if (exhausted) return(list(source = choice$source, skipped = TRUE))
-  }
-  if (is.null(trial)) return(list(source = choice$source, sampling_failed = TRUE))
-
   # The optimizer targets ONE scheme per run (settings$optimize_scheme); CV0 and
   # CV00 are distinct tasks, optimized in separate runs against the shared store.
   scheme <- settings$optimize_scheme
+
+  # Claiming is what makes a (config, trial) pair exclusive. choose_trial already avoids
+  # claimed trials, but it reads the table a moment before this insert, so two workers can
+  # still arrive together -- the claim is the atomic tiebreak. Losing means another worker
+  # started that exact pair just now, so pick again rather than duplicate it.
+  claimed <- FALSE
+  for (attempt in 1:3) {
+    choice <- choose_config(con, settings, settings$trial_universe)
+    trial  <- pick_trial(choice$cfg)
+    # A replication pick with no trial left is not a sampling failure -- sampling works, that
+    # one config has nowhere to go. Spend the step exploring rather than idling, and do NOT
+    # count it toward max_sample_fail, or a saturated contender set would halt the run.
+    if (exhausted) {
+      choice <- choose_config(con, settings, settings$trial_universe, replicate = FALSE)
+      trial  <- pick_trial(choice$cfg)
+      if (exhausted) return(list(source = choice$source, skipped = TRUE))
+    }
+    if (is.null(trial)) return(list(source = choice$source, sampling_failed = TRUE))
+    claimed <- claim_eval(con, config_hash(choice$cfg), trial$id, scheme,
+                          settings$worker_id %||% NA_character_,
+                          settings$build %||% OPTIMIZER_BUILD)
+    if (claimed) break
+    message("  (", trial$id, " for this config is already running or already done",
+            if (attempt < 3) " -- picking again)" else " -- giving the step up)")
+  }
+  if (!claimed) return(list(source = choice$source, skipped = TRUE))
+  # Released whichever way the evaluation ends. A SIGKILL skips this, and the dead-pid check in
+  # claim_eval() is what recovers from that.
+  on.exit(release_claim(con, config_hash(choice$cfg), trial$id, scheme), add = TRUE)
   ev <- evaluate_config_on_trial(choice$cfg, trial, scheme, settings, conn)
   # Record the trial's target-domain attributes alongside the score so a later run
   # can train the surrogate on only its own domain (and scheme) slice of this store.
@@ -103,9 +120,9 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
   ready_file <- settings$cache_ready_file
   if (leader) {
     if (!is.null(ready_file)) unlink(ready_file)       # stale flag from a previous run
-    # The stop file is on durable storage, so one consumed by the last job outlives it and
-    # would halt this one before its first iteration. A STOP touched DURING a run still works:
-    # the loop tests it every iteration.
+    # Clears a stale STOP left by the last job, for a bare `Rscript run_optimizer.R`.
+    # run_workers.sh does this before spawning anyone, which is what covers N workers.
+    # A STOP touched DURING a run still works: the loop tests it every iteration.
     unlink(settings$stop_file)
     restore_cache_from_backup(settings)
     restore_store_from_backup(settings)
@@ -149,6 +166,10 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
 
   con <- open_store(settings$db_path)
   on.exit(close_store(con), add = TRUE)
+  # No worker can be mid-evaluation when the leader starts, so any claim here is left over from
+  # a job the scheduler killed. Only matters on a durable db_path: cluster scratch is wiped with
+  # the job, and restore_store_from_backup copies `evals` alone.
+  if (leader) clear_claims(con)
   # A build that invalidated earlier rows starts with less history than the store suggests.
   # Say so once, loudly, rather than let a silently-empty surrogate look like a fresh start.
   local({

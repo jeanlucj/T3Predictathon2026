@@ -1348,6 +1348,37 @@ vc <- attr(agg_adj, "var_comps")
 check(!is.null(vc) && all(is.finite(vc)) && all(c("sd_trial","sd_config","sd_resid") %in% names(vc)),
       "variance components are returned for the report")
 check(vc[["sd_trial"]] > 0, "a real trial effect is detected in data that has one")
+check(is.null(attr(agg_adj, "estimator_note")), "a clean fit records no note")
+check(is.finite(attr(agg_adj, "median_weight")),
+      "the median fit weight is published for the report's sd_resid rescaling")
+
+# Oracle: a fit that WARNS is kept, not discarded. tryCatch(warning = ...) threw away good
+# estimates -- and with them every `se`, which .contenders() needs, so contender replication
+# silently stopped. The note records the warning; the components still arrive.
+local({
+  real <- .blup_scores
+  # Shadow it in the global env, where aggregate_scores resolves it, so the fit does exactly
+  # what it does now AND warns on the way out.
+  .blup_scores <<- function(evals) { r <- real(evals); warning("simulated convergence grumble"); r }
+  on.exit(.blup_scores <<- real, add = TRUE)
+  a <- aggregate_scores(blup_ev)
+  check(identical(attr(a, "estimator"), "blup"), "a warned fit is still used")
+  check(all(is.finite(attr(a, "var_comps"))), "and its variance components survive")
+  check(all(is.finite(a$se)), "and `se` arrives, without which .contenders() is empty")
+  check(grepl("grumble", attr(a, "estimator_note") %||% ""),
+        "and the warning is recorded for the report")
+})
+
+# Oracle: when the design cannot support the fit, the REASON is recorded rather than nothing.
+local({
+  one_each <- tibble::tibble(               # one config per trial -> trial effect unidentifiable
+    config_hash = c("a", "b"), trial_id = c("t1", "t2"), score = c(0.3, 0.4),
+    n_test = c(50L, 50L), config_json = c("{}", "{}"))
+  a <- aggregate_scores(one_each)
+  check(identical(attr(a, "estimator"), "pooled"), "it falls back to pooled")
+  check(grepl("not separable", attr(a, "estimator_note") %||% ""),
+        "and names the reason -- the report prints this instead of a bare 'pooled'")
+})
 
 # Oracle: BLUPs shrink by REPLICATION -- same raw mean, fewer reps -> pulled further to the mean.
 shrink_ev <- tibble::tibble(
@@ -1868,7 +1899,12 @@ local({
     checkpoint_every = 1000, replicate_every = 3L))
   set.seed(9)
   invisible(capture.output(run_optimizer(st), type = "message"))
-  cn <- open_store(st$db_path); reps <- table(read_evals(cn)$config_hash); close_store(cn)
+  cn <- open_store(st$db_path); ev <- read_evals(cn); close_store(cn)
+  reps <- table(ev$config_hash)
+  # The config the run was on when max_iters cut it off gets a pass: one first evaluated on the
+  # final iteration had no remaining step in which to reach its floor. Everything else must.
+  last <- ev$config_hash[which.max(ev$id)]
+  reps <- reps[!(names(reps) == last & as.integer(reps) < st$config_replication)]
   check(min(as.integer(reps)) >= st$config_replication,
         "every config reaches config_replication even though only 1 worker in 3 replicates")
   check(max(as.integer(reps)) > st$config_replication,
@@ -2099,6 +2135,56 @@ if (!file.exists(lfs)) {
         "optimizer_settings(): an optimize_scheme outside `schemes` errors")
   invisible(file.remove(lfs))
 } else message("  (a real settings.local.R exists -- skipping the optimize_scheme validation check)")
+
+# ===========================================================================
+cat("claims: (config, trial) is exclusive, the same config on another trial is not\n")
+# Oracle: the pipeline is deterministic in (config, trial, scheme), so two workers running one
+# triple recompute a known number and count it twice. Selection cannot see in-flight work --
+# it reads committed rows -- so the store has to arbitrate.
+dbp6 <- tempfile(fileext = ".sqlite"); con6 <- open_store(dbp6)
+check(claim_eval(con6, "cfgA", "t1", "CV0", "1"), "the first worker takes (cfgA, t1)")
+check(!claim_eval(con6, "cfgA", "t1", "CV0", "2"), "a second worker is refused the SAME pair")
+check(claim_eval(con6, "cfgA", "t2", "CV0", "2"),
+      "but the same config on a DIFFERENT trial is allowed -- replication wants that")
+check(claim_eval(con6, "cfgB", "t1", "CV0", "3"), "and a different config on the same trial is fine")
+check(claim_eval(con6, "cfgA", "t1", "CV00", "2"),
+      "the scheme is part of the key: the other scheme is a different cell")
+release_claim(con6, "cfgA", "t1", "CV0")
+check(claim_eval(con6, "cfgA", "t1", "CV0", "9"), "released, it can be taken again")
+
+# Oracle: STALENESS IS A DEAD OWNER, NEVER ELAPSED TIME. A claim held for days is a days-long
+# evaluation -- expiring it would start a duplicate of work that is still running. This is the
+# distinction from the removed max_eval_minutes: slowness must cost nothing.
+invisible(DBI::dbExecute(con6, "UPDATE claims SET ts = '1999-01-01 00:00:00'"))
+check(!claim_eval(con6, "cfgA", "t1", "CV0", "4"),
+      "an ancient claim whose owner is ALIVE is still not stealable")
+# A pid above every platform's pid_max, so it cannot belong to a live process.
+invisible(DBI::dbExecute(con6, "UPDATE claims SET pid = 999999999 WHERE config_hash = 'cfgA'"))
+check(claim_eval(con6, "cfgA", "t1", "CV0", "4"),
+      "a claim whose owner is GONE is reclaimed, however recent")
+check(nrow(active_claims(con6, "CV0")) > 0, "active_claims reports what is in flight")
+clear_claims(con6)
+check(nrow(active_claims(con6)) == 0, "clear_claims empties the table (the leader's startup)")
+
+# Oracle: an ALREADY EVALUATED pair is refused too, not just one in flight. This is the hole a
+# claims-only test misses and that a 4-worker simulate run hit repeatedly: the holder commits
+# its row and releases, and a worker whose selection read the store just before that commit
+# then claims a pair that is finished. The caller's read is always stale, so the store decides.
+check(duplicate_cells(con6) == 0, "a fresh store has no duplicated cells")
+s1 <- seed_configs("CV0")[[1]]
+store_eval(con6, s1, "t9", "CV0", 0.3, 40L, "ok", build = OPTIMIZER_BUILD)
+check(!claim_eval(con6, config_hash(s1), "t9", "CV0", "1", OPTIMIZER_BUILD),
+      "a pair already evaluated under this build cannot be claimed")
+check(claim_eval(con6, config_hash(s1), "t10", "CV0", "1", OPTIMIZER_BUILD),
+      "the same config on an unevaluated trial still can -- replication is not blocked")
+check(claim_eval(con6, config_hash(s1), "t9", "CV0", "1", "0.0.1-other"),
+      "and another build may recompute it: BUILD_CHANGES has to be able to retire a row")
+
+# Oracle: duplicate_cells counts (config, trial, scheme) triples with more than one row --
+# reported so the number can be watched for growth once claims are live.
+store_eval(con6, s1, "t9", "CV0", 0.3, 40L, "ok", build = OPTIMIZER_BUILD)
+check(duplicate_cells(con6) == 1, "and one counts a cell evaluated twice")
+close_store(con6); unlink(dbp6)
 
 # ===========================================================================
 cat(sprintf("\nTier 1 subtask tests: %d passed, %d failed\n", ok, fail))

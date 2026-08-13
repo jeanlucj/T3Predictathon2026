@@ -16,6 +16,7 @@
 #
 # Stop them ALL with the usual stop-file (they share it):
 #   touch "${OPTIMIZER_HOME:-.}/state/STOP"
+# There is no need to remove it afterwards: a fresh launch clears a leftover one itself.
 # Watch them:   tail -f logs/run_w1.out    /   nohup ./monitor_memory.sh > /dev/null 2>&1 &
 #
 # Two things this script exists to get right:
@@ -49,22 +50,22 @@ export MKL_NUM_THREADS="$N_THREADS"
 export VECLIB_MAXIMUM_THREADS="$N_THREADS"
 
 # Resolve the stop file by asking R. OPTIMIZER_HOME is set in .Renviron, which only R reads,
-# so deriving this from the shell environment would check ./state/STOP while the workers watch
-# a different file -- the pre-flight check below would then pass on a run that is about to
-# stop dead. (See optimizer_paths.sh.)
+# so deriving this from the shell environment would act on ./state/STOP while the workers watch
+# a different file -- clearing a stale stop below would then leave the real one in place and
+# every worker would exit at once. (See optimizer_paths.sh.)
 . "$(dirname "$0")/optimizer_paths.sh"
-STOP_FILE="${STOP_FILE:-./state/STOP}"
+if [ -z "${STOP_FILE:-}" ]; then
+  echo "run_workers.sh: optimizer_paths.sh could not resolve the stop file from R." >&2
+  echo "  Guessing ./state/STOP would act on a different file from the workers." >&2
+  echo "  Check: Rscript -e 'source(\"settings.R\"); optimizer_settings()\$stop_file'" >&2
+  exit 1
+fi
 
 # Worker logs go to settings$log_dir, which is <OPTIMIZER_HOME>/logs on a server and ./logs on
 # a laptop (settings.R derives both from perm_dir) -- so this is unchanged locally, and on a
 # cluster the logs land on durable storage and survive the node instead of vanishing with it.
-# The fallback covers optimizer_paths.sh failing to reach R, which must not stop a launch.
 LOG_DIR="${LOG_DIR:-logs}"
 mkdir -p "$LOG_DIR"
-if [ -f "$STOP_FILE" ]; then
-  echo "run_workers.sh: $STOP_FILE exists -- the workers would exit at once. Remove it first." >&2
-  exit 1
-fi
 
 # Worker ids run FIRST..FIRST+N-1. The default start of 1 is a fresh launch; set
 # OPTIMIZER_FIRST_WORKER to ADD workers to a run that is already going:
@@ -78,6 +79,22 @@ fi
 # batch's logs.
 FIRST="${OPTIMIZER_FIRST_WORKER:-1}"
 LAST=$((FIRST + N_WORKERS - 1))
+
+# The stop file is on durable storage, so one consumed by the last job outlives it and would
+# halt this one before its first iteration. Clearing it HERE and not in the leader is what
+# makes that work under N workers: workers 2..N test the file every iteration and would exit
+# before worker 1 got as far as its own unlink. Adding workers is the opposite case -- the run
+# is being stopped on purpose, and clearing it would restart what someone just halted.
+if [ -f "$STOP_FILE" ]; then
+  if [ "$FIRST" = 1 ]; then
+    echo "run_workers.sh: clearing stale $STOP_FILE"
+    rm -f "$STOP_FILE" || exit 1
+  else
+    echo "run_workers.sh: $STOP_FILE exists -- the run you are adding workers to is" >&2
+    echo "  stopping. Remove it first if you meant to keep going." >&2
+    exit 1
+  fi
+fi
 
 already=$(ps -e -o args= 2>/dev/null | grep -c '[r]un_optimizer\.R')
 if [ "$already" -gt 0 ]; then
@@ -111,6 +128,7 @@ done
 
 echo
 echo "all workers launched. stop them with:  touch $STOP_FILE"
+echo "(the next fresh launch clears that file itself -- no rm needed)"
 
 # Block until every worker exits. This is for SLURM: a batch script that returns immediately
 # would end the job and tear the allocation down under the workers. The workers are each

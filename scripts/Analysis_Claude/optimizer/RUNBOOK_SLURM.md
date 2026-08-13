@@ -211,10 +211,11 @@ container/run_in_container.sh exec peek_backup.R     # what the next job will st
 ./submit.local.sh
 ```
 
-You do **not** need `rm "$STOP_FILE"` — the leader clears a stale one at
-startup, since the file is on durable storage and would otherwise halt
-every subsequent job before its first iteration. A STOP touched while a
-run is going still works; the loop tests it every iteration.
+You do **not** need `rm "$STOP_FILE"` — `run_workers.sh` clears a stale
+one before it spawns anything, since the file is on durable storage and
+would otherwise halt every subsequent job before its first iteration. A
+STOP touched while a run is going still works; the loop tests it every
+iteration.
 
 You do **not** need to rebuild the container. `container/*.sif` is
 gitignored and the optimizer's R code is bind-mounted, which is the

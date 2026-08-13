@@ -60,7 +60,7 @@ All knobs live in `optimizer_settings()` in `settings.R`. The ones you will set:
 | `optimize_scheme` | The **one** CV scheme this run optimizes (`"CV0"` or `"CV00"`). CV0 and CV00 are distinct prediction tasks with potentially different optimal pipelines, so a run targets one; to optimize both, run twice (see below). Must be a member of `schemes`. |
 | `schemes` | The CV schemes the **diagnostics** (`check_canaries`, `sweep_rich_trials`) sanity-check — kept at `c("CV0","CV00")` so bug checks cover both; this does **not** control what the optimizer targets (that's `optimize_scheme`). |
 | `focal_trait`, `focal_trait_db_id` | The trait to optimize prediction of (defaults to grain yield, T3 variable id `84527`). |
-| `max_iters` | Stop after this many evaluations. There is no wall-clock limit: an interactive run is ended with the stop-file, a cluster run by the scheduler. |
+| `max_iters` | Stop after this many evaluations. There is no wall-clock limit: an interactive run is ended with the stop-file, a cluster run by the scheduler. **A single evaluation can run for days** — 33 h is the observed maximum, against a 29 min median (LESSONS #28). Nothing caps one, deliberately: a cap censors the slow configurations, which are the thorough ones and may be the best. So an evaluation that looks hung usually is not, and nothing in the optimizer will interrupt it — not the claims table either, whose staleness test is whether the owning process died, never how long it has been going. |
 | `db_path`, `cache_dir`, `report_path`, `stop_file`, `log_dir` | Where state, cache, the report, the stop-file, and logs go. Splitting these across disks is environment-specific — see your runbook. |
 
 **Machine-specific values never go in `settings.R`.** Put them in `settings.local.R`, which is
@@ -216,12 +216,11 @@ tail -f logs/warm.out
 
 Let it work through a few evaluations — you are watching for
 `Load project dosages` and download lines to stop dominating the log, and for
-`cache/dosage` to stop growing quickly. Then stop it, clear the flag, and go to step 5:
+`cache/dosage` to stop growing quickly. Then stop it and go to step 5:
 
 ```bash
 source ./optimizer_paths.sh
 touch "$STOP_FILE"      # it exits after the current evaluation
-rm    "$STOP_FILE"      # or run_workers.sh will refuse to start
 ```
 
 Nothing is lost by skipping this: the results go to the same store either way, and the
@@ -255,8 +254,8 @@ source ./optimizer_paths.sh
 touch "$STOP_FILE"
 ```
 
-Each worker finishes its current evaluation and exits cleanly. Remove the file before
-launching again — `run_workers.sh` refuses to start if it is still there.
+Each worker finishes its current evaluation and exits cleanly. Leave the file where it is:
+the next `./run_workers.sh` clears it before spawning anyone.
 
 #### What makes it safe
 

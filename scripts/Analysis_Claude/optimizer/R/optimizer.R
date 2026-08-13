@@ -115,6 +115,11 @@ aggregate_scores <- function(evals, min_n_test = 10L, adjust_trial = TRUE) {
   out$mean_score <- out$pooled
   out$se <- NA_real_                    # only the random-effects fit supplies one
   attr(out, "estimator") <- "pooled"
+  # The median of the weights the fit actually uses. lmer reports sd_resid at unit weight, and
+  # this is what converts it to a per-evaluation figure; computed here because only this
+  # function knows which rows are usable and at what weight.
+  attr(out, "median_weight") <-
+    suppressWarnings(stats::median(evals$.w[evals$.usable], na.rm = TRUE))
 
   # Trial-adjusted estimate. `pooled` is confounded with WHICH trials a config drew, and
   # trials vary more than configs -- LESSONS #19 -- so a config that drew easy trials
@@ -123,9 +128,24 @@ aggregate_scores <- function(evals, min_n_test = 10L, adjust_trial = TRUE) {
   # an extreme value.
   #
   # Falls back to `pooled` whenever lme4 is unavailable or the design cannot support the fit.
-  # Every failure path must return a value: this cannot take a run down.
+  # Every failure path must return a value: this cannot take a run down. Whichever way it goes,
+  # `estimator_note` carries the explanation, because a silent fallback also empties `se` --
+  # and .contenders() drops every config without one, which disables contender replication.
   if (isTRUE(adjust_trial)) {
-    adj <- tryCatch(.blup_scores(evals), error = function(e) NULL, warning = function(w) NULL)
+    # A WARNING IS NOT A FAILURE. lmer warns routinely here: sd_config is small against
+    # sd_trial (LESSONS #19), which is exactly the regime that produces a boundary or
+    # convergence warning. Discarding the fit for it threw away good estimates. Muffle and
+    # record; only an error gives up on the fit.
+    warn <- character()
+    adj <- tryCatch(
+      withCallingHandlers(
+        .blup_scores(evals),
+        warning = function(w) { warn <<- c(warn, conditionMessage(w))
+                                invokeRestart("muffleWarning") }),
+      error = function(e) { warn <<- c(warn, conditionMessage(e)); NULL })
+    # One line: lme4's convergence text is multi-line and would break the report's bullet.
+    note <- if (length(warn))
+              trimws(gsub("\\s+", " ", paste(unique(warn), collapse = "; "))) else NULL
     if (!is.null(adj)) {
       i <- match(out$config_hash, adj$config_hash)
       ok <- !is.na(i) & is.finite(adj$blup[i])
@@ -133,24 +153,36 @@ aggregate_scores <- function(evals, min_n_test = 10L, adjust_trial = TRUE) {
       out$se[ok] <- adj$se[i][ok]
       attr(out, "estimator")  <- "blup"
       attr(out, "var_comps")  <- attr(adj, "var_comps")
+      attr(out, "estimator_note") <- note        # NULL when the fit ran clean
+    } else {
+      attr(out, "estimator_note") <-
+        .blup_skip_reason(evals) %||% note %||% "the fit declined for an unrecorded reason"
     }
   }
   out
 }
 
-# Config BLUPs from a two-way random-effects fit, plus the variance components. NULL when the
-# design or the packages cannot support it -- the caller then keeps its pooled estimate.
-.blup_scores <- function(evals) {
-  if (!requireNamespace("lme4", quietly = TRUE)) return(NULL)
+# Why .blup_scores() would decline, checked in the order it checks -- so the report can name
+# the reason rather than print nothing. NULL means the fit can run.
+.blup_skip_reason <- function(evals) {
+  if (!requireNamespace("lme4", quietly = TRUE)) return("lme4 is not installed")
   d <- evals[evals$.usable, , drop = FALSE]
-  if (!nrow(d) || dplyr::n_distinct(d$trial_id) < 2L) return(NULL)
+  if (!nrow(d)) return("no usable rows (a finite score and n_test >= min_n_test)")
+  if (dplyr::n_distinct(d$trial_id) < 2L) return("only 1 distinct trial")
   # Identifiability: with one config per trial the trial effect and the residual are the same
   # term. lme4 errors on this ("number of levels ... must be < number of observations"), so
   # check rather than rely on the error.
-  per_trial <- tapply(d$config_hash, d$trial_id, function(x) length(unique(x)))
-  if (max(per_trial) < 2L) return(NULL)
-  if (dplyr::n_distinct(d$config_hash) < 2L) return(NULL)
+  if (max(tapply(d$config_hash, d$trial_id, function(x) length(unique(x)))) < 2L)
+    return("no trial has 2 configs -- the trial effect is not separable from the residual")
+  if (dplyr::n_distinct(d$config_hash) < 2L) return("only 1 distinct config")
+  NULL
+}
 
+# Config BLUPs from a two-way random-effects fit, plus the variance components. NULL when the
+# design or the packages cannot support it -- the caller then keeps its pooled estimate.
+.blup_scores <- function(evals) {
+  if (!is.null(.blup_skip_reason(evals))) return(NULL)
+  d <- evals[evals$.usable, , drop = FALSE]
   m <- suppressMessages(lme4::lmer(.z ~ 1 + (1 | trial_id) + (1 | config_hash),
                                    data = d, weights = .w))
   # condVar = TRUE attaches each level's posterior variance, which is what the contender rule
@@ -296,8 +328,18 @@ choose_trial <- function(con, settings, conn = NULL, cfg_hash = NULL) {
              filter_evals_to_domain(td) |>
              filter_evals_to_scheme(settings$optimize_scheme) |>
              filter_evals_to_build(settings$build %||% OPTIMIZER_BUILD)
+  # Trials this config has already been run on, PLUS the ones other workers are running it on
+  # right now. `evals` holds only finished work, so without the claims a one-entry backlog
+  # handed every worker the same trial and they all evaluated the identical pair. This is the
+  # advisory half; claim_eval() in optimizer_step is the half that is actually atomic.
   seen <- if (is.null(cfg_hash)) character()
-          else unique(as.character(evals$trial_id[evals$config_hash == cfg_hash]))
+          else {
+            done <- unique(as.character(evals$trial_id[evals$config_hash == cfg_hash]))
+            live <- tryCatch(active_claims(con, settings$optimize_scheme),
+                             error = function(e) NULL)
+            union(done, if (is.null(live)) character()
+                        else as.character(live$trial_id[live$config_hash == cfg_hash]))
+          }
   if (base <= 1L || !nrow(evals)) return(.sample_unseen_trial(settings, conn, seen))
   r <- .trial_target(settings, dplyr::n_distinct(evals$config_hash[is.finite(evals$score)]))
 

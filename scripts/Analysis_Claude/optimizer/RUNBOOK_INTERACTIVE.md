@@ -53,7 +53,6 @@ numbered section that follows.
 
 **Launch**
 
-- [ ] `rm -f "$STOP_FILE"`
 - [ ] `nohup ./run_workers.sh 8 > logs/workers.out 2>&1 &`
 - [ ] `nohup ./monitor_memory.sh > /dev/null 2>&1 &` — *after* the workers
 - [ ] No WAL warning in `logs/run_w1.out`; it says `worker=1, leader`
@@ -89,7 +88,6 @@ find $OPTIMIZER_HOME/cache -type f | wc -l   # how many files in the home cache
 rsync -a $OPTIMIZER_HOME/cache/ cache/       # trailing slashes!
 # If the workdir cache has more then:
 rsync -a cache/ $OPTIMIZER_HOME/cache/       # trailing slashes!
-rm -f "$STOP_FILE"
 nohup ./run_workers.sh 8 > logs/workers.out 2>&1 &   # 8 workers, 2 BLAS threads each
 nohup ./monitor_memory.sh > /dev/null 2>&1 &         # AFTER the workers
 tail -f logs/run_w1.out
@@ -396,16 +394,11 @@ disk and is backed up to `$HOME/T3optimizer/cache`. It is large but regenerable.
     Rscript run_optimizer.R </dev/null > logs/warm.out 2>&1 &
     tail -f logs/warm.out                  # watch for downloads to stop dominating
     touch "$STOP_FILE"                     # then stop it
-    rm    "$STOP_FILE"                     # and clear the flag
     ```
+
+  Leave the stop file in place — `run_workers.sh` clears a leftover one itself.
 
 ## 4. Launch
-
-- [ ] **Clear a leftover stop file** — `run_workers.sh` refuses to start while it exists:
-
-    ``` bash
-    rm -f "$STOP_FILE"
-    ```
 
 - [ ] **Start the workers.**
 
@@ -499,7 +492,7 @@ normal: it just means no worker has finished an evaluation recently.
     touch "$STOP_FILE"
     ```
 
-    Remove it before relaunching.
+    Leave it there — the next launch clears it.
 
 - [ ] **Save the store — this is the essential one.** The run *is* that file: the incumbent,
   the surrogate's training data, and what to try next are all recomputed from it.

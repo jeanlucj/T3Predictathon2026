@@ -506,3 +506,71 @@ Size a machine from the *maximum* per worker, not the median -- SLURM kills a jo
 its allocation rather than throttling it -- and expect a job's final hours to lose whatever is
 in flight, because a 33-hour evaluation cannot be finished by any amount of margin.
 **Lives in.** `report_timing.R`, `report_memory.R`, `settings$dosage_total_budget_bytes`.
+
+### 29. A stop file on durable storage outlives the job that consumed it
+
+**Trap.** `touch "$STOP_FILE"` halts a run cleanly, so the same file was left to be cleaned up
+"at startup" by the leader -- `unlink(settings$stop_file)` in `run_optimizer.R`. But the state
+directory is durable by design, so the file survives the job, and the *launcher*
+`run_workers.sh` had its own pre-flight check that refused to start while it existed. The check
+ran in a different process, in a different language, 38 lines before the first worker was
+spawned, so the clearing code was unreachable on every path that went through the launcher --
+which is every SLURM launch and every multi-worker interactive one. Stopping a job through the
+stop file therefore bricked the next one: `exit 1`, no evaluations, and `--dependency=singleton`
+released the job after that to fail identically. The runbook confidently documented the
+behaviour that could not happen.
+**Why the tests did not catch it.** The oracle (`tests/test_subtasks.R`, "a stale stop-file does
+not halt the next run") calls `run_optimizer()` directly in R. It asserts exactly the right
+thing about exactly the path nobody uses in production.
+**Generalise.** When a guard and its remedy live in different processes, work out which one
+runs first -- an unreachable remedy reads like working code. And a cleanup step belongs in
+whatever *starts* the thing, not in the thing being started: only the launcher runs before all
+N workers, so only the launcher can clear a flag that all N of them test.
+**Lives in.** `run_workers.sh` (clear-or-refuse, keyed on `OPTIMIZER_FIRST_WORKER`),
+`run_optimizer.R` (still clears it, for a bare `Rscript run_optimizer.R`).
+
+### 30. Catching `warning` alongside `error` threw away a good fit, and took contender replication with it
+
+**Trap.** `aggregate_scores` guarded the random-effects fit with
+`tryCatch(.blup_scores(evals), error = function(e) NULL, warning = function(w) NULL)`. The
+warning handler reads as prudence and is not: `lmer` returns a perfectly usable fit and *then*
+warns, and this design warns routinely, because `sd_config` (~0.04) sits near the boundary
+against `sd_trial` (~0.10) — the regime that produces "Model failed to converge". Every such
+fit was discarded and silently replaced by the pooled estimate.
+**What it cost, which was not the obvious thing.** The report losing `sd_trial`/`sd_config`/
+`sd_resid` was the visible symptom. The real damage: `se` is supplied *only* by that fit, and
+`.contenders()` filters on `is.finite(se)`, so no fit meant no contenders, which meant the
+`$extra` tier of the replication backlog was permanently empty and `replicate_every` had
+nothing to ration. A whole scheduling tier was switched off by an error handler. Measured on a
+4-worker simulate run: `estimator: pooled, contenders: 0` before, `blup, contenders: 8` after.
+**Generalise.** `tryCatch(warning=)` does not "handle" a warning, it *aborts the call* — the
+computation never returns. Use `withCallingHandlers` + `invokeRestart("muffleWarning")` to keep
+the result and record the message. And never let a fallback be silent: every path that
+substitutes a weaker estimate now writes `estimator_note`, which the report prints, because
+"pooled" with nothing after it looked like a choice rather than a failure.
+**Lives in.** `R/optimizer.R::aggregate_scores` / `.blup_skip_reason`, `R/report.R`.
+
+### 31. Excluding in-flight work needs the exclusion where the write is, not where the decision is
+
+**Trap.** Two workers could run the identical `(config, trial, scheme)` — deterministic, so the
+second recomputes a known number and double-counts it in that config's mean. `choose_trial`
+excluded trials from `read_evals()`, which sees only *committed* rows, so a one-entry backlog
+handed every worker the same trial. Adding a `claims` table with `PRIMARY KEY (config_hash,
+trial_id, scheme)` fixed the concurrent case cleanly — and duplicates kept appearing.
+**The half-fix.** The claim answered "is anyone running this?" but not "is this already done?".
+The holder commits its row and releases ~2 ms later; a worker whose selection read the store
+just before that commit finds the pair neither claimed nor (in its stale copy) evaluated, and
+claims it legitimately. Six duplicates in 240 evaluations, all pairs of different workers in
+the same second. Widening the advisory filter cannot close this: **any** read is stale by the
+time the caller acts on it.
+**Generalise.** A test-and-set must test everything that makes the action wrong, in the same
+statement that performs it. Here that is one `INSERT ... SELECT ... WHERE NOT EXISTS (SELECT 1
+FROM evals ...)`: in flight *or* already finished, decided at the write. The advisory filter
+still earns its place — it stops most collisions before an expensive selection — but it is an
+optimization, never the guarantee.
+**And staleness is a dead owner, never elapsed time.** A claim held for three days is a
+three-day evaluation (33 h observed maximum, #28); expiring it would start a duplicate of live
+work. `.pid_alive()` is the test, run only when a claim is refused, so the `ps` sweep is paid
+for on contention rather than on every selection.
+**Lives in.** `R/store.R::claim_eval` / `.purge_dead_claims` / `.pid_alive`,
+`run_optimizer.R::optimizer_step`, `R/optimizer.R::choose_trial`.

@@ -76,6 +76,21 @@ open_store <- function(path, busy_timeout_ms = 60000) {
     )"))
   .with_busy_retry(function()
     DBI::dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_hash ON evals(config_hash)"))
+  # In-flight work, so a worker can see what the others are RUNNING -- `evals` holds only what
+  # finished, and selection reading it alone let N workers start the same (config, trial).
+  # The PRIMARY KEY is the interlock: two workers issue the same INSERT OR IGNORE, SQLite
+  # permits one row, and the winner is the one that inserted it. See claim_eval().
+  .with_busy_retry(function() DBI::dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS claims (
+      config_hash TEXT,
+      trial_id    TEXT,
+      scheme      TEXT,
+      worker      TEXT,
+      host        TEXT,
+      pid         INTEGER,
+      ts          TEXT,
+      PRIMARY KEY (config_hash, trial_id, scheme)
+    )"))
   # Migrations: columns that older stores lack. `detail` holds the failure funnel. The four
   # domain columns reuse the catalogue's names, so .apply_target_domain filters sampling and
   # evals identically. peak_rss_mb is the figure to size a machine from; peak_r_mb is kept for
@@ -284,6 +299,93 @@ store_eval <- function(con, cfg, trial_id, scheme, score, n_test, status,
                   as.character(build %||% NA_character_)))))
 }
 
+# --- in-flight claims ------------------------------------------------------
+# The pipeline is deterministic in (config, trial, scheme), so two workers running the same
+# triple burn a node-hour to recompute a known number and then count it twice in that config's
+# mean. Selection cannot prevent that on its own: it reads committed rows and is blind to what
+# is running. These three functions are the missing piece.
+#
+# A config being picked by several workers at once is FINE and wanted -- a config owed more
+# than one repeat should be spread across workers. Only the (config, trial) pair is exclusive.
+
+# Is `pid` still running on this host? Used to decide whether a claim's owner died, which is
+# the ONLY thing that makes a claim stale -- never elapsed time. A claim held for three days is
+# a three-day evaluation, and expiring it would start a duplicate of work that is still going.
+.pid_alive <- function(pid) {
+  pid <- suppressWarnings(as.integer(pid))
+  if (!is.finite(pid) || pid <= 0) return(FALSE)
+  if (dir.exists("/proc")) return(dir.exists(file.path("/proc", pid)))   # Linux: exact, cheap
+  identical(suppressWarnings(system2("ps", c("-p", pid), stdout = FALSE, stderr = FALSE)), 0L)
+}
+
+# Drop claims whose owning process is gone. Only rows from THIS host are judged: a pid from
+# another machine says nothing here, and all workers share one node by design, so that path is
+# rare. PID reuse across a reboot is covered by clear_claims() at leader startup.
+.purge_dead_claims <- function(con) {
+  here <- DBI::dbGetQuery(con, "SELECT rowid, pid FROM claims WHERE host = ?",
+                          params = list(Sys.info()[["nodename"]]))
+  if (!nrow(here)) return(invisible(0L))
+  dead <- here$rowid[!vapply(here$pid, .pid_alive, logical(1))]
+  if (!length(dead)) return(invisible(0L))
+  invisible(.with_busy_retry(function() DBI::dbExecute(con,
+    sprintf("DELETE FROM claims WHERE rowid IN (%s)", paste(as.integer(dead), collapse = ",")))))
+}
+
+# Take (config_hash, trial_id, scheme) unless a live worker holds it OR it is already evaluated
+# under this build. TRUE means this worker owns it and must release_claim() when done.
+#
+# BOTH conditions are tested in the one statement, and that is the point. Testing only "is
+# anyone running it" leaves a hole: the holder commits its row and releases, and a worker whose
+# selection read the store just before that commit then claims a pair that is already done. The
+# window is milliseconds and it fired repeatedly in a 4-worker simulate run. A caller's read is
+# always stale by the time it acts on it, so the check has to happen where the write happens.
+#
+# Scoped to `build`: a build that invalidated a row (BUILD_CHANGES) must be able to recompute
+# that pair. Which rows a build retires is R logic, not SQL, so this blocks only same-build
+# duplicates -- the build-aware exclusion is choose_trial's `seen`, which does apply it.
+claim_eval <- function(con, config_hash, trial_id, scheme, worker = NA_character_,
+                       build = NA_character_) {
+  take <- function() .with_busy_retry(function() DBI::dbExecute(con,
+    "INSERT OR IGNORE INTO claims (config_hash, trial_id, scheme, worker, host, pid, ts)
+     SELECT ?,?,?,?,?,?,?
+      WHERE NOT EXISTS (SELECT 1 FROM evals
+                         WHERE config_hash = ? AND trial_id = ? AND scheme IS ? AND build IS ?)",
+    params = list(config_hash, as.character(trial_id), scheme,
+                  as.character(worker %||% NA_character_), Sys.info()[["nodename"]],
+                  Sys.getpid(), format(Sys.time(), tz = "UTC"),
+                  config_hash, as.character(trial_id), scheme,
+                  as.character(build %||% NA_character_))))
+  if (isTRUE(take() == 1L)) return(TRUE)
+  # Refused. Usually a live worker holds it or it is already done -- neither is recoverable.
+  # A dead holder is, but it is the rare case, so the liveness sweep is paid for here rather
+  # than on every claim: it costs a `ps` per claimed row where /proc is unavailable.
+  .purge_dead_claims(con)
+  isTRUE(take() == 1L)
+}
+
+release_claim <- function(con, config_hash, trial_id, scheme) {
+  invisible(.with_busy_retry(function() DBI::dbExecute(con,
+    "DELETE FROM claims WHERE config_hash = ? AND trial_id = ? AND scheme IS ?",
+    params = list(config_hash, as.character(trial_id), scheme))))
+}
+
+# Every claim, as (config_hash, trial_id) pairs -- what selection must avoid.
+active_claims <- function(con, scheme = NULL) {
+  .purge_dead_claims(con)
+  if (is.null(scheme))
+    tibble::as_tibble(DBI::dbGetQuery(con, "SELECT config_hash, trial_id FROM claims"))
+  else
+    tibble::as_tibble(DBI::dbGetQuery(
+      con, "SELECT config_hash, trial_id FROM claims WHERE scheme IS ?", params = list(scheme)))
+}
+
+# Wipe the table. The leader calls this at startup, when no worker can be mid-evaluation, which
+# is what clears claims left by a job the scheduler killed on a durable db_path. (On a cluster
+# db_path is node-local scratch and is wiped with the job, so there is nothing to clear.)
+clear_claims <- function(con) {
+  invisible(.with_busy_retry(function() DBI::dbExecute(con, "DELETE FROM claims")))
+}
+
 # Belt-and-braces around the busy_timeout set in open_store: retry a write that still comes
 # back locked. An evaluation costs minutes, so losing one to a lock that a few seconds of
 # waiting would clear is a bad trade. Anything that is NOT a lock error is re-raised at once.
@@ -310,4 +412,12 @@ n_evals <- function(con) {
 # Configs already tried (by hash), to avoid re-running identical pipelines.
 tried_hashes <- function(con) {
   DBI::dbGetQuery(con, "SELECT DISTINCT config_hash FROM evals")$config_hash
+}
+
+# (config, trial, scheme) cells holding more than one row. The pipeline is deterministic in
+# that triple, so every one of these is a duplicated evaluation -- the thing claim_eval()
+# prevents. Reported so the count can be watched: it should stop growing.
+duplicate_cells <- function(con) {
+  DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM (SELECT 1 FROM evals
+                          GROUP BY config_hash, trial_id, scheme HAVING COUNT(*) > 1)")$n
 }

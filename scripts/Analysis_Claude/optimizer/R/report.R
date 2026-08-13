@@ -141,17 +141,27 @@ write_report <- function(con, settings) {
     # components. sd_resid is reported BOTH ways: the fit uses n_test - 3 as inverse-variance
     # weights, so lmer's figure is the sd at unit weight (n_test = 4) and is not comparable with
     # the other two until divided by sqrt(median weight).
+    #
+    # A missing decomposition is stated, never left blank: no fit also means no `se`, and
+    # .contenders() drops every config without one -- so a silent "pooled" here is the visible
+    # end of contender replication having stopped.
     local({
-      est <- attr(agg, "estimator") %||% "pooled"
-      vc  <- attr(agg, "var_comps")
-      w   <- suppressWarnings(stats::median(as.numeric(evals$n_test), na.rm = TRUE)) - 3
+      est  <- attr(agg, "estimator") %||% "pooled"
+      vc   <- attr(agg, "var_comps")
+      note <- attr(agg, "estimator_note")
+      # The median of the weights the FIT used, from aggregate_scores -- not the median n_test
+      # over every row, which counts failed evaluations and rows below min_n_test that the fit
+      # excluded, and so rescales by a weight that was never applied.
+      w   <- attr(agg, "median_weight") %||% NA_real_
+      if (!is.finite(w)) w <- 1
       paste0("- config score estimator: ", est,
              if (!is.null(vc) && all(is.finite(vc)))
-               sprintf("  (sd_trial %.3f, sd_config %.3f, sd_resid %.3f per eval at median n_test%s)",
-                       vc[["sd_trial"]], vc[["sd_config"]],
-                       vc[["sd_resid"]] / sqrt(max(1, w)),
-                       sprintf("; %.3f at unit weight", vc[["sd_resid"]]))
-             else "")
+               paste0(sprintf("  (sd_trial %.3f, sd_config %.3f, sd_resid %.3f per eval at median n_test; %.3f at unit weight)",
+                              vc[["sd_trial"]], vc[["sd_config"]],
+                              vc[["sd_resid"]] / sqrt(max(1, w)), vc[["sd_resid"]]),
+                      if (!is.null(note)) paste0("  _fit warned: ", note, "_") else "")
+             else paste0("  ** no variance components, and no `se` so contender replication is",
+                         " idle: ", note %||% "reason not recorded", " **"))
     }),
     # How much is still undecided. 1 means the field is settled at this contender_z; every
     # contender being domain-covered means no further evidence about the leaders is obtainable.
@@ -166,6 +176,23 @@ write_report <- function(con, settings) {
              if (length(cand) == 1L) "  ** the field is settled at contender_z; raise it to continue **"
              else if (nu > 0 && all(seen$n_trial >= nu))
                sprintf("  ** all have covered the %d-trial domain; only new configurations can improve the answer **", nu)
+             else "")
+    }),
+    # What replication still owes, and whether workers are colliding. `base` is the unrationed
+    # config_replication floor; `contender` is the tier replicate_every rations, and it is empty
+    # whenever the estimator above supplied no `se`. `duplicated cells` counts (config, trial,
+    # scheme) triples with more than one row -- work done twice, which claim_eval() now
+    # prevents, so the number should stop growing.
+    local({
+      bl <- tryCatch(.replication_backlog(evals, agg, settings, settings$trial_universe),
+                     error = function(e) NULL)
+      if (is.null(bl)) return(NULL)
+      dup <- tryCatch(duplicate_cells(con), error = function(e) NA_integer_)
+      n_claim <- tryCatch(nrow(active_claims(con, settings$optimize_scheme)),
+                          error = function(e) NA_integer_)
+      paste0("- replication backlog: ", length(bl$base), " base, ", length(bl$extra),
+             " contender; ", n_claim, " in flight",
+             if (is.finite(dup) && dup > 0) sprintf("; %d duplicated cell(s) in the store", dup)
              else "")
     }),
     paste0("- optimized scheme: ", settings$optimize_scheme),
