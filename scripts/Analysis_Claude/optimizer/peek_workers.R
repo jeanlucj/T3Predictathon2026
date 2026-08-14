@@ -55,17 +55,35 @@ if (!file.exists(s$db_path)) {
        call. = FALSE)
 }
 
-con <- open_store(s$db_path)
-on.exit(close_store(con), add = TRUE)
-cl <- claims_snapshot(con)
-n_ev <- n_evals(con)
+# READ-ONLY, deliberately not open_store(): that CREATEs the claims tables, runs the ALTER TABLE
+# migrations and sets PRAGMA journal_mode -- all writes. This runs against a store that N
+# workers are writing to, and a diagnostic has no business changing one. SQLITE_RO also means a
+# store from before the claims feature is left exactly as found rather than silently migrated.
+con <- DBI::dbConnect(RSQLite::SQLite(), s$db_path, flags = RSQLite::SQLITE_RO)
+on.exit(DBI::dbDisconnect(con), add = TRUE)
+
+have_claims <- "claims" %in% DBI::dbListTables(con)
+cl <- if (have_claims) claims_snapshot(con) else NULL
+n_ev <- tryCatch(DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM evals")$n,
+                 error = function(e) NA_integer_)
 
 cat("store  : ", s$db_path, " (", n_ev, " evals)\n", sep = "")
 cat("host   : ", Sys.info()[["nodename"]], "\n", sep = "")
 cat("scheme : ", s$optimize_scheme, "\n\n", sep = "")
 
 # --- 1. in-flight work, from the claims table -------------------------------
-if (!nrow(cl)) {
+if (!have_claims) {
+  # An empty claims table and a store that never had one look identical once the table has been
+  # created, and they mean opposite things -- so do not create it, and do not report "nothing".
+  cat("IN FLIGHT: not recorded by this store.\n")
+  cat("  It has no `claims` table, so it predates that feature: the workers writing it are\n")
+  cat("  running code from before in-flight work was tracked. This is what a job launched\n")
+  cat("  under an older build looks like -- it is not a fault, and it is NOT the same as\n")
+  cat("  'no work in flight'. Those workers also cannot prevent two of them evaluating the\n")
+  cat("  same (config, trial); the duplicated-cell count in report.md says how often that\n")
+  cat("  has happened. Restarting the job is what enables both.\n")
+  cat("  The process and log sections below are unaffected and are what to read today.\n\n")
+} else if (!nrow(cl)) {
   cat("IN FLIGHT: nothing.\n")
   cat("  Every worker is between evaluations, or none is running. The process count below\n")
   cat("  distinguishes those two.\n\n")
@@ -96,8 +114,12 @@ if (!nrow(cl)) {
 # The claims table is self-healing: choose_trial purges a dead owner's claim within seconds,
 # so the live table almost never catches a death. claims_reaped is the copy taken before that
 # purge, and is what makes "has anything broken since I launched it" answerable at all.
-rp <- reaped_claims(con)
-if (nrow(rp)) {
+rp <- if ("claims_reaped" %in% DBI::dbListTables(con)) reaped_claims(con) else NULL
+if (is.null(rp)) {
+  cat("\nWORKERS LOST MID-EVALUATION: not recorded by this store (no `claims_reaped` table).\n")
+  cat("  Same reason as above. A worker that died under this build left no record beyond its\n")
+  cat("  own log, so check the tail of each run_w<N>.out for one that stops mid-evaluation.\n")
+} else if (nrow(rp)) {
   cat("\nWORKERS LOST MID-EVALUATION (", nrow(rp), " since this store was created):\n\n", sep = "")
   print(data.frame(
     worker = rp$worker, pid = rp$pid,
@@ -133,20 +155,32 @@ if (!length(logs)) {
 } else {
   age <- as.numeric(difftime(Sys.time(), file.mtime(logs), units = "mins"))
   ord <- order(as.integer(sub(".*run_w([0-9]+)[.]out$", "\\1", logs)))
+  ids <- sub(".*run_w([0-9]+)[.]out$", "\\1", logs[ord])
+  holds <- if (have_claims) ids %in% as.character(cl$worker) else rep(NA, length(ids))
   cat("\nLOGS in ", s$log_dir, ":\n\n", sep = "")
   print(data.frame(
-    worker    = sub(".*run_w([0-9]+)[.]out$", "\\1", logs[ord]),
+    worker    = ids,
     quiet_min = sprintf("%.0f", age[ord]),
-    holding   = ifelse(sub(".*run_w([0-9]+)[.]out$", "\\1", logs[ord]) %in% as.character(cl$worker),
-                       "yes", "no")), row.names = FALSE)
+    holding   = if (have_claims) ifelse(holds, "yes", "no") else "?"), row.names = FALSE)
   cat("\n")
-  # Quiet AND holding nothing is the suspicious combination: a worker mid-evaluation is quiet
-  # for legitimate hours, but one holding no claim should be logging an iteration line.
-  susp <- age[ord] > 30 &
-    !(sub(".*run_w([0-9]+)[.]out$", "\\1", logs[ord]) %in% as.character(cl$worker))
-  if (any(susp))
-    cat("** worker(s) ", paste(sub(".*run_w([0-9]+)[.]out$", "\\1", logs[ord])[susp], collapse = ", "),
-        " have logged nothing for >30 min and hold no claim -- look for an exit at the end of\n",
-        "   their log. A worker mid-evaluation is quiet legitimately; one that is not, is not.\n",
-        sep = "")
+  if (!have_claims) {
+    # Without claims, a quiet worker mid-evaluation and a dead one are indistinguishable from
+    # here -- so report the quiet ones and say what cannot be concluded, rather than accusing.
+    q <- ids[age[ord] > 30]
+    if (length(q))
+      cat("   worker(s) ", paste(q, collapse = ", "), " have logged nothing for >30 min.\n",
+          "   This store records no in-flight work, so that alone does not distinguish a long\n",
+          "   evaluation (legitimately up to 33 h) from a worker that died. Read the tail of\n",
+          "   each of their logs: an iteration line last means it is working, an error or a\n",
+          "   truncated line means it is not.\n", sep = "")
+  } else {
+    # Quiet AND holding nothing is the suspicious combination: a worker mid-evaluation is quiet
+    # for legitimate hours, but one holding no claim should be logging an iteration line.
+    susp <- age[ord] > 30 & !holds
+    if (any(susp))
+      cat("** worker(s) ", paste(ids[susp], collapse = ", "),
+          " have logged nothing for >30 min and hold no claim -- look for an exit at the end of\n",
+          "   their log. A worker mid-evaluation is quiet legitimately; one that is not, is not.\n",
+          sep = "")
+  }
 }

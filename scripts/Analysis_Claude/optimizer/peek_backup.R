@@ -127,6 +127,38 @@ if (is.null(pick)) {
 }
 
 agg <- aggregate_scores(slice)
+
+# The variance decomposition, from the fit aggregate_scores just paid for. Worth printing here
+# and not only in report.md: this is a FRESH process, so it reflects the current code even when
+# the workers writing the store are running an older build and their report.md cannot.
+#
+# sd_resid is on the unit-weight scale (the fit weights by n_test - 3), so it is not comparable
+# with the other two until divided by sqrt(median weight) -- LESSONS #19. Same rendering as
+# R/report.R.
+local({
+  vc   <- attr(agg, "var_comps")
+  note <- attr(agg, "estimator_note")
+  w    <- attr(agg, "median_weight") %||% NA_real_
+  if (!is.finite(w)) w <- 1
+  cat(sprintf("\n  config score estimator: %s\n", attr(agg, "estimator") %||% "pooled"))
+  if (!is.null(vc) && all(is.finite(vc))) {
+    cat(sprintf("    sd_trial %.3f  sd_config %.3f  sd_resid %.3f per eval (%.3f at unit weight)\n",
+                vc[["sd_trial"]], vc[["sd_config"]], vc[["sd_resid"]] / sqrt(max(1, w)),
+                vc[["sd_resid"]]))
+    # The number the replication argument rests on: trials varying more than configs is why
+    # config_replication exists at all.
+    cat(sprintf("    trial effect is %.1fx the config effect\n",
+                vc[["sd_trial"]] / max(vc[["sd_config"]], 1e-9)))
+    if (!is.null(note)) cat("    (fit warned: ", note, ")\n", sep = "")
+  } else {
+    cat("    no variance components: ", note %||% "reason not recorded", "\n", sep = "")
+    cat("    -- and so no `se`, which means .contenders() is empty and contender\n")
+    cat("       replication is idle on this slice.\n")
+  }
+  cand <- .contenders(agg, s$contender_z %||% 1, k = 8L)
+  cat(sprintf("    contenders: %d\n", length(cand)))
+})
+
 inc <- if (nrow(agg)) incumbent_config(agg, s$incumbent_min_reps) else NULL
 if (!is.null(inc)) {
   cat(sprintf("\n  incumbent so far: %.3f over %d trial(s)\n", inc$mean_score, inc$n_ok))
