@@ -369,13 +369,27 @@ and density is not a configuration parameter — so rows made under different bu
 are not comparable. Every row records the budget it ran under (`dosage_budget`), and
 `report_memory.R` warns when a store mixes them.
 
-## Diagnostics — what each script answers
+## Monitoring and diagnostics
 
-Seven standalone scripts. What each one tells you is the same everywhere; **how you invoke it
-differs**, so the commands live in your runbook rather than here.
+Two different questions, and it is worth keeping them apart:
+
+- **Monitoring** — *is it healthy right now, and has anything broken since I launched it?*
+  Worker liveness, throughput, OOM kills, backup freshness. The commands are environment-specific
+  and live in your runbook: **`RUNBOOK_INTERACTIVE.md` §5** or **`RUNBOOK_SLURM.md` §6**. Start
+  with `peek_workers.R` in both.
+- **Diagnostics** — *why did that happen?* The standalone scripts below.
+
+The distinction that trips people up on a cluster: **a dead worker is not a dead job.** SLURM
+kills the job only on the cgroup limit, so one OOM-killed worker leaves `squeue` saying
+`RUNNING` while you quietly run with fewer. `peek_workers.R` is what sees that.
+
+What each script tells you is the same everywhere; **how you invoke it differs**, so the
+commands live in your runbook rather than here.
 
 | script | question it answers | invocation |
 |---|---|---|
+| `peek_workers.R` | which workers are alive, what is each evaluating, and has anything died? | interactive §5 · SLURM §6 |
+| `peek_backup.R` | what would a run start from — what is in the durable backup? | SLURM §6 |
 | `profile_evaluation.R` | where does an evaluation's time actually go? | interactive §7 · SLURM §6 |
 | `surrogate_bakeoff.R` | which surrogate design predicts held-out configurations best, and does it improve as evaluations accumulate? | interactive §7 · SLURM §6 |
 | `peek_failures.R` | why did the non-`ok` evaluations fail? | interactive §7 · SLURM §6 |
@@ -383,6 +397,7 @@ differs**, so the commands live in your runbook rather than here.
 | `prewarm_indices.R` | fill the local wizards so the pipeline needs no BrAPI call | interactive §7 · SLURM §6 |
 | `blas_check.R` | is R's linear algebra actually threaded? | interactive §1 |
 | `report_memory.R` | how much memory did evaluations really use, and how many workers fit? | interactive §5 · SLURM §2 |
+| `report_timing.R` | where does the wall time go, by kernel and geno_select? | interactive §7 · SLURM §6 |
 
 **On a cluster these run inside the container**, which is where the packages are:
 
@@ -395,6 +410,19 @@ A bare `Rscript` uses the cluster module's R, which has **no packages installed*
 is `there is no package called 'here'`. Either go through the container as above, or populate a
 personal library once with `Rscript setup_fallback_libs.R` (see
 `container/FALLBACK_modules.md`); the container is the better answer unless you need RStudio.
+
+**Which store they read.** `resolve_read_store()` picks it: the live `db_path` when it holds
+rows, otherwise `db_backup_path`. On a cluster the second is the usual case — `db_path` is
+node-local scratch belonging to the job that wrote it, so a diagnostic run from any other
+allocation cannot see it. The script prints which file it opened and how stale it is; anything
+evaluated since that backup is not in it. Override with `--store=<path>`. On a login node they
+all refuse, with the `salloc` recipe.
+
+`peek_workers.R` is the exception, and has to be: in-flight work is recorded only in the **live**
+store, so it must run on the node the workers are on — a backup's copy of that table is whatever
+happened to be running when the last `VACUUM INTO` fired. Under SLURM that means attaching to the
+running job (`srun --overlap --jobid=<jid> --pty bash`), not a fresh `salloc`. It says so when the
+live store is absent.
 
 Two properties hold in both environments:
 

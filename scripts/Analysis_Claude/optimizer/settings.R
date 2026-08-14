@@ -55,6 +55,27 @@ remote_server <- .detect_remote_server()
   invisible(TRUE)
 }
 
+# A SLURM head node: the scheduler's tools are on PATH but we hold no allocation. Nothing here
+# belongs on one -- a run needs node-local disk for WAL, and even the read-only diagnostics
+# load a multi-GB store and fit models.
+#
+# LIMITATION: inside the apptainer image `squeue` need not be on PATH, so this can return FALSE
+# on a login node. container/run_in_container.sh makes the same test on the HOST, where squeue
+# always is, and that is the check that covers the documented cluster path.
+.on_login_node <- function() {
+  nzchar(Sys.which("squeue")) && !nzchar(Sys.getenv("SLURM_JOB_ID"))
+}
+
+# The message every caller gives for it, so the recipe is written once.
+.login_node_message <- function(what) {
+  paste0(what, " must not run on a login node.\n",
+         "  Get an allocation first:\n",
+         "    salloc -N1 -n4 --mem=32G -t 1:00:00 -A <account>\n",
+         "    module load apptainer\n",
+         "    ./run_in_container.sh exec <script.R>\n",
+         "  (find your account with: sacctmgr -Pns show user format=account,defaultaccount)")
+}
+
 # Store and cache paths for a run inside a SLURM job, for settings.local.R to splice in:
 #
 #   settings_override <- c(cluster_scratch_paths(), list(dosage_budget_bytes = 16e9))
@@ -67,6 +88,8 @@ cluster_scratch_paths <- function(subdir = paste0("t3opt_", Sys.info()[["user"]]
   # node's shared storage.
   if (!nzchar(tmp))
     stop("TMPDIR is unset -- cannot place the store on node-local disk.")
+  # Deliberately stricter than .on_login_node(): that one also requires squeue on PATH, and a
+  # missing squeue must not be what decides a WAL store may go on shared storage.
   if (!nzchar(Sys.getenv("SLURM_JOB_ID")))
     stop("SLURM_JOB_ID is unset, so this is not running inside a job.\n",
          "  On a login node $TMPDIR is shared storage, and SQLite's WAL cannot work there.\n",

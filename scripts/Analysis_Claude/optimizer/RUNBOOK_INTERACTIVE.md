@@ -99,14 +99,15 @@ Stopping:
 touch "$STOP_FILE"                           # halts all workers, and the monitor
 ```
 
-Which pid is which worker — worker 1 does extra things, so it needs to be alive:
+Which pid is which worker, what each is working on, and what has died:
 
 ``` bash
-for p in $(pgrep -f run_optimizer.R); do
-  w=$(tr '\0' '\n' < /proc/$p/environ 2>/dev/null | sed -n 's/^OPTIMIZER_WORKER=//p')
-  printf 'pid %-8s worker %-4s started %s\n' "$p" "${w:-?}" "$(ps -o lstart= -p $p)"
-done
+Rscript peek_workers.R
 ```
+
+(The old `/proc/$p/environ` loop only worked on Linux and only told you the mapping.
+`peek_workers.R` also names the trial each worker is on and keeps a record of workers lost
+mid-evaluation. Worker 1 is no longer a special case — see §5.)
 
 Two things that matter here:
 
@@ -435,13 +436,12 @@ disk and is backed up to `$HOME/T3optimizer/cache`. It is large but regenerable.
 - [ ] **Confirm it came up.**
     - No WAL warning in `logs/run_w1.out` — a warning means the store is still on NFS, so stop,
       move `db_path`, and restart
-    - `logs/run_w1.out` says `worker=1, leader`
-    - `ps -ef | grep run_optimizer` shows N workers
-    - rows accruing:
+    - `logs/run_w1.out` says `worker=1, leader` — it did the cache restore. Beyond that it is
+      an ordinary worker, so this is a startup check, not something to keep watching
+    - all N workers present, and rows accruing:
 
     ``` bash
-    Rscript -e 'source("settings.R"); source("R/store.R")
-                con <- open_store(optimizer_settings()$db_path); print(n_evals(con))'
+    Rscript peek_workers.R      # process count, who holds what, anything lost
     ```
 
 ## 5. Monitoring
@@ -454,15 +454,62 @@ either case. (Logs living on durable storage is the point: they outlive a purged
 
 ``` bash
 source ./optimizer_paths.sh               # $LOG_DIR, $REPORT_PATH, $STOP_FILE, ...
+Rscript peek_workers.R                    # START HERE: who is alive, on what, what died
 cat  "$REPORT_PATH"                       # best pipeline so far + learning curve
 tail -f "$LOG_DIR/run_w1.out"             # live log (one per worker)
 Rscript report_memory.R                   # peak per evaluation, workers-that-fit table
 Rscript report_timing.R                   # where the wall time goes
-sort -k3 -n logs/memory_*.tsv | tail -5   # most memory-intensive moments
+sort -k3 -n "$LOG_DIR"/memory_*.tsv | tail -5   # most memory-intensive moments
 find cache -type f | wc -l                # number of files in cache
 # Out of memory causing processes to be killed
 dmesg -T 2>/dev/null | grep -iE 'killed process|out of memory' | tail -20
 journalctl -k --since "3 days ago" 2>/dev/null | grep -i -B2 -A6 'out of memory' | tail -40
+```
+
+**`peek_workers.R` is the one to run first.** It answers "what is each worker doing, and has
+anything died since I launched" from three sources at once, because no single one is enough:
+the claims table (a worker killed *mid*-evaluation), the process count, and how long since each
+worker's log was touched. Its **WORKERS LOST MID-EVALUATION** section is the history — a claim
+whose owner is gone is recorded before it is reclaimed, which is the only durable trace of an
+OOM kill, since a killed evaluation writes no store row.
+
+**Worker 1 is no longer special.** Its only exclusive jobs are restoring the cache and clearing
+stale claims at startup; backups are every worker's job (LESSONS #25). Once the run is going,
+`worker=1, leader` in the log means it did the restore, not that it must stay alive — what
+matters is how many workers are alive, which is the first line of `peek_workers.R`'s output.
+
+**Sweep every worker's log at once**, rather than tailing one:
+
+``` bash
+# always a problem
+grep -l -E 'FATAL|step error:|could not put the store in WAL mode' "$LOG_DIR"/run_w*.out
+# what kind, and how much of it
+grep -h -o -E 'FATAL|step error:|could not put the store in WAL mode' "$LOG_DIR"/run_w*.out \
+  | sort | uniq -c | sort -rn
+grep -c 'gave up waiting' "$LOG_DIR"/run_w*.out # cache-lock contention between workers
+find "$LOG_DIR"/run_w*.out -mmin -30            # which logs are still moving
+```
+
+`the store is NOT being backed up` is deliberately **not** in that list: with
+`db_backup_path = NULL` — the default on a laptop — every worker logs it on every iteration, so
+it would match always and mean nothing. On a machine where you *did* configure a backup, add it
+to the pattern; there it is a real alarm.
+
+The last one inverts usefully: a file **missing** from that list has logged nothing for half an
+hour. That is normal for a worker inside a long evaluation — 33 h is the observed maximum
+(LESSONS #28) — and suspicious for one holding no claim. `peek_workers.R` makes exactly that
+distinction for you.
+
+**Throughput — is it still making progress, and how fast?** `report.md`'s best-score line
+cannot answer this, because a run that has stopped improving looks identical to one that has
+stopped running:
+
+``` bash
+Rscript -e 'source("settings.R"); source("R/store.R")
+  con <- open_store(optimizer_settings()$db_path)
+  e <- read_evals(con); close_store(con)
+  e$hour <- substr(e$ts, 1, 13)
+  print(tail(as.data.frame(table(hour = e$hour)), 24))'
 ```
 
 Red flags:
@@ -471,7 +518,7 @@ Red flags:
 |------------------------|------------------------|------------------------|
 | WAL warning at startup | store is on NFS; concurrent writes unsafe | stop, move `db_path` to `/workdir`, restart |
 | `rss_total_mb` approaching RAM | too many workers for the budget | fewer workers, or lower `dosage_total_budget_bytes` |
-| only worker 1's rows in the store | the others died | check `logs/run_w*.out` |
+| fewer workers than you launched | some died — OOM is the usual cause | `Rscript peek_workers.R`: its WORKERS LOST section names them and the trial each was on |
 | `report.md` not updating | no worker has finished an evaluation since the last write | normal if evaluations are long; check `logs/run_w*.out` for progress |
 | every evaluation `infeasible` | usually a data/name bug, not the configs | run the `EVALUATION_CHECKLIST.md` diagnostics |
 | `serving 1 marker in N` messages | the aggregate cap is binding | fine if deliberate; else raise `dosage_total_budget_bytes` |

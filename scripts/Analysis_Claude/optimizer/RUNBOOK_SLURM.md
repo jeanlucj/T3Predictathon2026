@@ -94,13 +94,25 @@ your life easier editting these in RStudio with Ceres ondemand
   run in sequence (`./submit.local.sh; ./submit.local.sh` → a second
   three-week block)
 
+**While it runs** — §6
+
+- [ ] `squeue -u $USER` says `RUNNING`, and
+  `find "$OPTIMIZER_HOME/logs"/run_w*.out -mmin -30` lists every worker.
+  A green `squeue` alone is not enough: one OOM-killed worker leaves the
+  job running with fewer
+- [ ] `peek_workers.R`, from a shell on the job's node
+  (`srun --overlap --jobid=<jid> --pty bash`) — who is alive, on what,
+  and its WORKERS LOST section
+- [ ] `report.md`'s `- store backup:` line is fresh and not `** STALE **`
+
 **After the first job finishes**
 
 - [ ] `sacct -j <jid> --format=JobID,State,Elapsed,MaxRSS,ReqMem` — was
   the memory request anywhere near right?
 - [ ] `report.md` shows a rising best score and a fresh
   `- store backup:` line
-- [ ] `Rscript report_memory.R` before raising the worker count
+- [ ] `./run_in_container.sh exec report_memory.R` before raising the
+  worker count (a bare `Rscript` has no packages on Ceres)
 
 ------------------------------------------------------------------------
 
@@ -163,8 +175,9 @@ workers = usable node RAM / 80 GB      (conservative, start here)
 workers = usable node RAM / 25 GB      (after report_memory.R confirms headroom)
 ```
 
-Not `cores / threads`. Start conservative, run `Rscript report_memory.R`
-after a few hours, and raise it. Because SLURM kills rather than swaps,
+Not `cores / threads`. Start conservative, run
+`./run_in_container.sh exec report_memory.R` after a few hours, and
+raise it. Because SLURM kills rather than swaps,
 err low.
 
 ### Wall-clock limits and resumability
@@ -348,7 +361,132 @@ through the container — see §6.
 | Job starts from zero rows | no backup at `db_backup_path`, or the leader's merge failed. `logs/run_w1.out` has the `store restore:` line; `peek_backup.R` says what the backup holds. |
 | Workers all evaluate the same configuration | Pre-0.7.4 code; `git pull`. |
 
-## 6. Diagnostics
+## 6. Monitoring and diagnostics
+
+**Monitoring** is "is it healthy right now, and has anything broken since
+I submitted" — the first half of this section. **Diagnostics** is "why
+did that happen" — the scripts in the second half. The one distinction
+that governs everything here:
+
+> **A dead worker is not a dead job.** SLURM kills the whole job only
+> when the cgroup memory limit is exceeded. One worker OOM-killed inside
+> a job that is otherwise within its limit just leaves you running with
+> fewer workers, and `squeue` still says `RUNNING`. So a green `squeue`
+> is not evidence that all N workers are alive.
+
+### From the login node, while the job runs
+
+These are the 30-second commands a login node is for. Logs live on
+project storage, so they are readable from anywhere:
+
+``` bash
+squeue -u $USER                                  # is it running, or still queued and why
+squeue -j <jid> -o '%.18i %.9P %.8T %.10M %.6D %R'
+sacct  -j <jid> --format=JobID,State,Elapsed,MaxRSS,ReqMem,ExitCode
+sstat  -j <jid>.batch --format=JobID,MaxRSS,AveRSS   # a RUNNING job (sacct is for finished ones)
+seff   <jid>                                     # efficiency summary; most useful after it ends
+scontrol show job <jid>                          # everything, including the node it landed on
+
+tail -f "$OPTIMIZER_HOME/logs/run_w1.out"        # one worker
+tail -n 40 "$OPTIMIZER_HOME/logs/slurm-<jid>.out"  # the job banner + worker launch lines
+cat "$OPTIMIZER_HOME/state/report.md"            # best pipeline, backlog, backup freshness
+```
+
+Sweep every worker at once rather than tailing one:
+
+``` bash
+cd "$OPTIMIZER_HOME/logs"
+grep -l -E 'FATAL|step error:|NOT being backed up|WAL mode' run_w*.out   # who hit trouble
+find run_w*.out -mmin -30                        # whose log is still moving
+grep -c 'gave up waiting' run_w*.out             # cache-lock contention
+```
+
+A log **missing** from that `find` has been silent for half an hour —
+normal for a worker inside a long evaluation (33 h is the observed
+maximum, LESSONS #28), suspicious for one that is not. The next section
+tells them apart.
+
+### On the compute node — the only place in-flight work is visible
+
+`peek_workers.R` reads the `claims` table, which lives in the **live**
+store on node-local `$TMPDIR`. A separate `salloc` gets a different node
+and cannot see it, so attach to the running job instead:
+
+``` bash
+squeue -u $USER                                  # get <jid>
+srun --overlap --jobid=<jid> --pty bash          # a shell ON that node
+cd /project/<account>/T3Predictathon2026/scripts/Analysis_Claude/optimizer
+./run_in_container.sh exec peek_workers.R
+exit                                             # leaves the job running
+```
+
+It prints, in one pass: every worker with the trial it is on and how long
+it has held it; how many `run_optimizer.R` processes are alive; how long
+since each worker's log moved; and **WORKERS LOST MID-EVALUATION**, the
+record of workers that died. Run it with no live store and it says so,
+with this recipe.
+
+### Was a worker OOM-killed?
+
+Job-level, from anywhere:
+
+``` bash
+sacct -j <jid> --format=JobID,JobName,State,ExitCode,MaxRSS,ReqMem
+```
+
+`State=OUT_OF_MEMORY`, or `ExitCode 0:125`, means SLURM killed the job.
+`MaxRSS` is the whole step — with N workers on one node it is the
+aggregate, not the culprit.
+
+Worker-level, which `sacct` cannot see:
+
+- `peek_workers.R`'s **WORKERS LOST** rows — a claim whose owner is gone,
+  kept before the claim is reclaimed. This is the only durable trace: a
+  killed evaluation writes no store row, so `evals` is censored on
+  exactly the outcome you are looking for.
+- Fewer processes than workers you asked for.
+- A `run_w<i>.out` that stops mid-evaluation with no `optimizer stop` line.
+- What it was using when it went: find the pid in the `pids_rss` column
+  of `$OPTIMIZER_HOME/logs/memory_<node>.tsv`, sampled every 60 s by
+  `monitor_memory.sh`, which the job script starts on the node.
+
+``` bash
+grep -o "$PID:[0-9]*" "$OPTIMIZER_HOME/logs/memory_"*.tsv | tail -5
+```
+
+`dmesg` carries the kernel's exact `anon-rss` for the victim but is
+normally unreadable as a non-root user on Ceres — do not plan on it.
+
+### Is it still making progress?
+
+`report.md`'s best-score line cannot answer this: a run that has stopped
+*improving* looks identical to one that has stopped *running*. Count
+evaluations per hour instead:
+
+``` bash
+./run_in_container.sh exec peek_backup.R         # rows in the durable backup, and its age
+sqlite3 "$OPTIMIZER_HOME/state/evals_backup.sqlite" \
+  "SELECT substr(ts,1,13) AS hour, COUNT(*) FROM evals GROUP BY hour ORDER BY hour DESC LIMIT 24;"
+```
+
+The backup is written after **every** evaluation, so its mtime is the
+sharpest "is anything finishing" signal available off-node. `report.md`'s
+`- store backup:` line says the same thing in words, and flags
+`** STALE **`.
+
+### Are the container and the code the same build?
+
+The job banner echoes the build `sed`-scraped from `settings.R` **on the
+host**; each worker's first log line prints the build the **container's
+R** actually loaded. If they disagree, the bind mount is not delivering
+the code you edited:
+
+``` bash
+grep '^build     :' "$OPTIMIZER_HOME/logs/slurm-<jid>.out"   # host's settings.R
+head -5 "$OPTIMIZER_HOME/logs/run_w1.out" | grep 'optimizer build'  # container's R
+```
+
+### The diagnostic scripts
 
 What each script answers is in `README.md`. On a cluster they run inside
 the container, from an interactive allocation.
@@ -366,8 +504,11 @@ module load apptainer
 cd /project/<account>/T3Predictathon2026/scripts/Analysis_Claude/optimizer
 
 ./run_in_container.sh exec peek_backup.R                      # what a run would start from
+./run_in_container.sh exec peek_workers.R                     # who is alive (ON the job's node)
 ./run_in_container.sh exec peek_failures.R                    # why evals failed
 ./run_in_container.sh exec peek_config.R --ids=4,23           # what those evals ran
+./run_in_container.sh exec report_memory.R                    # how many workers fit
+./run_in_container.sh exec report_timing.R                    # where the wall time goes
 ./run_in_container.sh exec surrogate_bakeoff.R                # surrogate comparison + curve
 ./run_in_container.sh exec profile_evaluation.R --trial=<id>  # where the time goes
 ./run_in_container.sh exec prewarm_indices.R --only=projects --limit=5
@@ -379,11 +520,27 @@ exit
 which writes cache files. The read-only ones copy the database *and* its
 `-wal`/`-shm` sidecars first, so they are safe against a live store.
 
+**Here they read the BACKUP, and they say so.** `db_path` is
+`$TMPDIR/t3opt_<user>/evals.sqlite` — node-local scratch belonging to the
+job that wrote it — so a diagnostic run from a *separate* allocation
+cannot see it. Each script falls back to
+`$OPTIMIZER_HOME/state/evals_backup.sqlite`, printing which file it
+opened, how old it is, and that anything evaluated since that backup is
+not in it. That is expected, not a fault. To read some other file:
+
+``` bash
+./run_in_container.sh exec report_memory.R --store=/path/to/evals.sqlite
+```
+
+On a **login node** all of them refuse outright with the `salloc` recipe
+— `run_in_container.sh` checks before it even looks for the image, so
+you get that message rather than "no image, run ./build.sh first".
+
 `peek_failures.R` needs a store to exist. On a fresh cluster install
-there is none until a job has run — until then it stops with `no store
-at <db_path>`, which is correct behaviour, not a fault. `peek_backup.R`
-is the one to use beforehand: it reads the *backup*, and reports cleanly
-when there is neither.
+there is neither a live one nor a backup until a job has run — until
+then it stops naming both paths, which is correct behaviour, not a
+fault. `peek_backup.R` is the one to use beforehand: comparing the two
+*is* its job, so it reports cleanly when there is neither.
 
 `surrogate_bakeoff.R` prints, in its footer, **the smallest difference
 the current store can resolve**. A gap smaller than that is not evidence
@@ -606,8 +763,8 @@ Measured over 121 real evaluations: `peak_r_mb` median **19 GB**, max
 | Xeon 6240R | 768 GB | \~9 | \~30 |
 | Epyc 9745 | 2,304 GB | \~28 | \~90 |
 
-Start at the conservative column, run `Rscript report_memory.R` after a
-few hours, then raise the count. A single Epyc node at \~28 workers is
+Start at the conservative column, run `./run_in_container.sh exec
+report_memory.R` after a few hours, then raise the count. A single Epyc node at \~28 workers is
 already a large multiple of the BioHPC server's throughput. Request
 memory to match: `--mem-per-cpu` × cores ≥ workers × 82 GB.
 

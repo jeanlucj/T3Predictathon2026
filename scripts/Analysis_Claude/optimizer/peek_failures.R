@@ -38,18 +38,17 @@ here::i_am("peek_failures.R")
 source(here::here("settings.R"))
 for (f in list.files(here::here("R"), pattern = "[.]R$", full.names = TRUE)) source(f)
 
-s <- optimizer_settings()
-if (!file.exists(s$db_path)) stop("no store at ", s$db_path)
+store_path <- resolve_read_store(what = "peek_failures.R")
 
-tmp <- .copy_store_with_sidecars(s$db_path, file.path(tempdir(), "peek.sqlite"))
+tmp <- .copy_store_with_sidecars(store_path, file.path(tempdir(), "peek.sqlite"))
 con <- DBI::dbConnect(RSQLite::SQLite(), tmp)
 e   <- tibble::as_tibble(DBI::dbReadTable(con, "evals"))
 DBI::dbDisconnect(con)
 
-cat("store: ", s$db_path, "\n", sep = "")
-cat("bytes: ", file.info(s$db_path)$size,
-    if (file.exists(paste0(s$db_path, "-wal")))
-      sprintf(" (+ %d in -wal)", file.info(paste0(s$db_path, "-wal"))$size) else "",
+cat("store: ", store_path, "\n", sep = "")
+cat("bytes: ", file.info(store_path)$size,
+    if (file.exists(paste0(store_path, "-wal")))
+      sprintf(" (+ %d in -wal)", file.info(paste0(store_path, "-wal"))$size) else "",
     "\nrows:  ", nrow(e), "\n\n", sep = "")
 print(dplyr::count(e, status, sort = TRUE), n = Inf)
 

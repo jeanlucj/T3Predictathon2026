@@ -42,9 +42,8 @@ o_ids  <- split_csv(opt("ids"))
 o_keys <- split_csv(opt("keys", paste0(c(paste0(names(SUBTASKS), ".method"),
                                          "pheno_prep.ge_weighting"), collapse = ",")))
 
-s <- optimizer_settings()
-if (!file.exists(s$db_path)) stop("no store at ", s$db_path)
-tmp <- .copy_store_with_sidecars(s$db_path, file.path(tempdir(), "peekcfg.sqlite"))
+store_path <- resolve_read_store(what = "peek_config.R")
+tmp <- .copy_store_with_sidecars(store_path, file.path(tempdir(), "peekcfg.sqlite"))
 con <- DBI::dbConnect(RSQLite::SQLite(), tmp)
 e   <- tibble::as_tibble(DBI::dbReadTable(con, "evals"))
 DBI::dbDisconnect(con)
@@ -54,7 +53,7 @@ sel <- if (is.null(o_ids)) {
 } else {
   dplyr::filter(e, as.character(id) %in% o_ids)
 }
-cat("store: ", s$db_path, "\nshowing ", nrow(sel), " of ", nrow(e), " evals\n\n", sep = "")
+cat("store: ", store_path, "\nshowing ", nrow(sel), " of ", nrow(e), " evals\n\n", sep = "")
 if (!nrow(sel)) { cat("no matching evals\n"); quit(save = "no") }
 
 for (i in seq_len(nrow(sel))) {

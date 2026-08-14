@@ -10,7 +10,7 @@
 # question of what the machine as a whole is doing right now.)
 #
 # Usage, from the optimizer directory:
-#   ./monitor_memory.sh &                    # 60 s interval, logs/memory_<host>.tsv
+#   ./monitor_memory.sh &                    # 60 s interval, $LOG_DIR/memory_<host>.tsv
 #   ./monitor_memory.sh 30 logs/mem.tsv      # custom interval (s) and output file
 #   nohup ./monitor_memory.sh > /dev/null 2>&1 &     # survives logout
 # Stop it with kill, or by creating the same STOP file the optimizer watches.
@@ -27,13 +27,25 @@ set -u
 
 INTERVAL="${1:-60}"
 HOST="$(hostname -s 2>/dev/null || hostname)"
-OUT="${2:-logs/memory_${HOST}.tsv}"
+OUT="${2:-}"          # defaulted below, once $LOG_DIR is known
 # The optimizer's own stop-file, so stopping the run stops the monitor too. Resolved by
 # asking R: OPTIMIZER_HOME lives in .Renviron, which only R reads, so building this path from
 # the shell environment would silently watch ./state/STOP on a server whose real stop file is
 # under $HOME -- and the monitor would never exit. (See optimizer_paths.sh.)
-. "$(dirname "$0")/optimizer_paths.sh"
+#
+# Skipped when the caller already exported STOP_FILE. Under SLURM this runs on the compute node
+# OUTSIDE the container, where the module's Rscript has no packages, so asking R would print a
+# confusing failure to reach settings while the answer was already in hand.
+if [ -z "${STOP_FILE:-}" ]; then
+  . "$(dirname "$0")/optimizer_paths.sh"
+fi
 STOP_FILE="${STOP_FILE:-./state/STOP}"
+
+# Default the output into settings$log_dir, the same place run_workers.sh puts run_w<N>.out --
+# which is $OPTIMIZER_HOME/logs on a server and ./logs on a laptop. A relative default put the
+# memory trace in the launching shell's cwd while the worker logs went to durable storage, so
+# the two halves of the same run landed in different directories.
+OUT="${OUT:-${LOG_DIR:-logs}/memory_${HOST}.tsv}"
 
 mkdir -p "$(dirname "$OUT")"
 if [ ! -s "$OUT" ]; then

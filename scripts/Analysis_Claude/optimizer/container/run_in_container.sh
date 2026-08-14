@@ -35,6 +35,22 @@ REPO="${OPTIMIZER_REPO:-$(dirname "$HERE")}"
 SIF="${OPTIMIZER_SIF:-$HERE/optimizer.sif}"
 MODE="${1:-workers}"; shift || true
 
+# FIRST, before the image and module checks: on a login node those fail for their own reasons
+# and send you off fixing the wrong thing. The scheduler's tools are here but we hold no
+# allocation -- nothing in this repository belongs on a login node, since a run needs
+# node-local disk for WAL and even the read-only diagnostics load a multi-GB store and fit
+# models. settings.R::.on_login_node makes the same test, but squeue need not be on PATH inside
+# the image, so this copy -- on the host -- is the one that reliably fires.
+if command -v squeue >/dev/null 2>&1 && [ -z "${SLURM_JOB_ID:-}" ]; then
+  echo "run_in_container.sh: this is a login node (squeue is here, but no SLURM_JOB_ID)." >&2
+  echo "  Get an allocation first:" >&2
+  echo "    salloc -N1 -n4 --mem=32G -t 1:00:00 -A <account>" >&2
+  echo "    module load apptainer" >&2
+  echo "    $0 $MODE" >&2
+  echo "  (find your account with: sacctmgr -Pns show user format=account,defaultaccount)" >&2
+  exit 1
+fi
+
 [ -f "$SIF" ] || { echo "no image at $SIF -- run ./build.sh first" >&2; exit 1; }
 # Performs Ceres's required `module load apptainer`; a no-op where it is already on PATH.
 . "$HERE/lib_apptainer.sh"

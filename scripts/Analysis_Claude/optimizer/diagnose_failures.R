@@ -120,13 +120,16 @@ cat("  trial catalogue:   ", nrow(cat_tbl), " trials",
     if ("latitude" %in% names(cat_tbl))
       sprintf(", %d with coordinates", sum(!is.na(cat_tbl$latitude))) else "", "\n", sep = "")
 if (!nrow(cat_tbl)) stop("trial catalogue came back EMPTY -- fix that before reading anything below")
-cat("  store:             ", settings$db_path, "\n", sep = "")
+store_path <- resolve_read_store(what = "diagnose_failures.R")
+cat("  store:             ", store_path, "\n", sep = "")
 cat("  statuses:          ", paste(o_status, collapse = ", "),
     if (length(o_report)) sprintf("   (%s: reported, not diagnosed)", paste(o_report, collapse = ", ")) else "",
     "\n", sep = "")
 cat("  replay:            ", if (o_replay) "on (run_pipeline -- SLOW)" else "off", "\n", sep = "")
 
-con <- open_store(settings$db_path)
+# A sidecar copy, not the file itself: open_store() is a WRITE (it creates the schema and puts
+# the database in WAL mode), and store_path may be the durable backup on shared storage.
+con <- open_store(.copy_store_with_sidecars(store_path, file.path(tempdir(), "diagnose.sqlite")))
 evals <- read_evals(con)
 
 # --- store-wide summary ----------------------------------------------------

@@ -2184,7 +2184,107 @@ check(claim_eval(con6, config_hash(s1), "t9", "CV0", "1", "0.0.1-other"),
 # reported so the number can be watched for growth once claims are live.
 store_eval(con6, s1, "t9", "CV0", 0.3, 40L, "ok", build = OPTIMIZER_BUILD)
 check(duplicate_cells(con6) == 1, "and one counts a cell evaluated twice")
+
+# Oracle: a death is RECORDED before the claim is reclaimed. .purge_dead_claims runs on every
+# choose_trial, so a dead owner's claim is gone within seconds of the death -- measured on a
+# 4-worker run, where killing a claim-holder left no trace at all. claims_reaped is the copy
+# taken first, and is the only thing that makes "did anything die" answerable after the fact.
+clear_claims(con6)
+invisible(DBI::dbExecute(con6, "DELETE FROM claims_reaped"))
+check(claim_eval(con6, "cfgD", "t1", "CV0", "7"), "a worker takes a claim")
+invisible(DBI::dbExecute(con6, "UPDATE claims SET pid = 999999999 WHERE config_hash = 'cfgD'"))
+snap <- claims_snapshot(con6)
+check(nrow(snap) == 1 && isFALSE(snap$alive[1]),
+      "claims_snapshot shows it as not alive")
+check(nrow(claims_snapshot(con6)) == 1,
+      "and does NOT purge -- looking at the table must not destroy the evidence")
+check(claim_eval(con6, "cfgD", "t1", "CV0", "8"), "the pair is reclaimable by a live worker")
+rp <- reaped_claims(con6)
+check(nrow(rp) == 1 && identical(rp$worker[1], "7") && identical(rp$trial_id[1], "t1"),
+      "and the death is kept in claims_reaped: which worker, on which trial")
+# A leader clearing stale claims at startup is the wall-clock-kill case, and counts as a death.
+invisible(DBI::dbExecute(con6, "DELETE FROM claims_reaped"))
+clear_claims(con6)
+check(nrow(reaped_claims(con6)) == 1,
+      "clear_claims records what was in flight when the last job was killed")
 close_store(con6); unlink(dbp6)
+
+# ===========================================================================
+cat("resolve_read_store: prefer the live store, fall back to the durable backup\n")
+# Oracle: on a cluster db_path is node-local scratch belonging to the job that wrote it, so a
+# diagnostic run from any other allocation finds nothing there. It must read db_backup_path
+# rather than report "no store" while a good backup sits on /project.
+local({
+  live <- tempfile(fileext = ".sqlite"); bak <- tempfile(fileext = ".sqlite")
+  mk <- function(p, n) {
+    cn <- open_store(p)
+    for (i in seq_len(n))
+      store_eval(cn, seed_configs("CV0")[[1]], paste0("t", i), "CV0", 0.3, 40L, "ok",
+                 build = OPTIMIZER_BUILD)
+    close_store(cn)
+  }
+  st <- function(...) modifyList(optimizer_settings(), list(...))
+  quiet <- function(expr) suppressMessages(expr)
+
+  # Both present -> the live one, because it is the only one with rows since the last backup.
+  mk(live, 2); mk(bak, 1)
+  with_settings <- function(s, expr) {
+    real <- optimizer_settings
+    optimizer_settings <<- function(...) s
+    on.exit(optimizer_settings <<- real, add = TRUE)
+    force(expr)
+  }
+  s_both <- st(db_path = live, db_backup_path = bak)
+  check(identical(with_settings(s_both, quiet(resolve_read_store())), live),
+        "with both present it reads the LIVE store")
+
+  # Live absent -> the backup. This is the Ceres case: $TMPDIR belongs to another job.
+  unlink(live)
+  check(identical(with_settings(s_both, quiet(resolve_read_store())), bak),
+        "with the live store absent it falls back to the BACKUP")
+
+  # Live present but EMPTY -> still the backup. open_store() creates a full empty schema at any
+  # path it is handed, so a node that merely started a job would otherwise shadow the backup.
+  cn <- open_store(live); close_store(cn)
+  check(file.exists(live), "an empty live store exists on disk")
+  check(identical(with_settings(s_both, quiet(resolve_read_store())), bak),
+        "a live store with zero rows does not shadow a backup that has some")
+
+  # An explicit path wins over both, and a bad one is named.
+  check(identical(quiet(resolve_read_store(bak)), bak), "an explicit path is used as given")
+  check(inherits(try(quiet(resolve_read_store(tempfile())), silent = TRUE), "try-error"),
+        "an explicit path that does not exist stops")
+  # report_*.R hand argv[1] in for their positional form, so a FLAG must not be read as a
+  # filename -- both spellings have to work in the same script.
+  check(identical(with_settings(s_both, quiet(resolve_read_store("--store=/x/y.sqlite"))), bak),
+        "a flag passed as the positional argument is not mistaken for a path")
+
+  # Neither -> one error naming both, not a silent empty store.
+  unlink(c(live, bak))
+  e <- try(with_settings(s_both, quiet(resolve_read_store())), silent = TRUE)
+  check(inherits(e, "try-error") && grepl("no store to read", conditionMessage(attr(e, "condition"))),
+        "with neither present it stops, naming both paths")
+})
+
+# Oracle: a login node is refused outright. Detected by SLURM's tools being on PATH while we
+# hold no allocation.
+local({
+  stub <- file.path(tempdir(), "loginstub"); dir.create(stub, showWarnings = FALSE)
+  writeLines("#!/bin/sh\nexit 0", file.path(stub, "squeue"))
+  Sys.chmod(file.path(stub, "squeue"), "0755")
+  old_path <- Sys.getenv("PATH"); old_job <- Sys.getenv("SLURM_JOB_ID")
+  on.exit({ Sys.setenv(PATH = old_path)
+            if (nzchar(old_job)) Sys.setenv(SLURM_JOB_ID = old_job) else Sys.unsetenv("SLURM_JOB_ID")
+            unlink(stub, recursive = TRUE) }, add = TRUE)
+  Sys.setenv(PATH = paste(stub, old_path, sep = .Platform$path.sep))
+  Sys.unsetenv("SLURM_JOB_ID")
+  check(.on_login_node(), "squeue on PATH with no allocation is a login node")
+  e <- try(resolve_read_store(), silent = TRUE)
+  check(inherits(e, "try-error") && grepl("login node", conditionMessage(attr(e, "condition"))),
+        "and resolve_read_store refuses there, whatever the store situation")
+  Sys.setenv(SLURM_JOB_ID = "1")
+  check(!.on_login_node(), "inside an allocation it is not a login node")
+})
 
 # ===========================================================================
 cat(sprintf("\nTier 1 subtask tests: %d passed, %d failed\n", ok, fail))

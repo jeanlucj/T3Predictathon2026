@@ -109,6 +109,23 @@ echo "workers   : $N_WORKERS x $N_THREADS threads"
 echo "build     : $(sed -n 's/^OPTIMIZER_BUILD *<- *"\(.*\)".*/\1/p' "$REPO/settings.R" 2>/dev/null || echo '?')"
 apptainer inspect "$SIF" 2>/dev/null | grep -iE "r.version|sha" || true
 
+# Per-PID memory sampling, on the NODE and outside the container -- `ps` there sees the worker
+# processes, and this is the only record of what a worker was using when the OOM killer took
+# it (store rows are written on completion, so a killed evaluation leaves none). It exits on
+# the same STOP file the workers watch, and dies with the job otherwise.
+#
+# STOP_FILE and LOG_DIR are passed in because out here the module's Rscript has no packages,
+# so monitor_memory.sh cannot ask settings.R for them. Both are the values settings.R computes
+# for a cluster run; if you change db_path/log_dir in settings.local.R, change them here too.
+MEM_TSV="$OPTIMIZER_HOME/logs/memory_$(hostname -s).tsv"
+STOP_FILE="$OPTIMIZER_HOME/state/STOP" LOG_DIR="$OPTIMIZER_HOME/logs" \
+  "$REPO/monitor_memory.sh" 60 "$MEM_TSV" > /dev/null 2>&1 &
+MEM_PID=$!
+echo "memory    : sampling every 60s -> $MEM_TSV (pid $MEM_PID)"
+# Backgrounded, so it cannot delay the exec below; killed on the way out in case the job ends
+# without the STOP file ever appearing (the usual case -- SLURM kills at the wall clock).
+trap 'kill "$MEM_PID" 2>/dev/null' EXIT
+
 # The cd into $REPO is load-bearing: R reads .Renviron -- and therefore the T3 credentials
 # -- from the working directory only. Apptainer 1.1+ does not bind $PWD, hence the explicit
 # binds, each mapping a path onto itself so the paths settings.R computes stay valid.

@@ -24,6 +24,9 @@ here::i_am("peek_backup.R")
 source(here::here("settings.R"))
 for (f in list.files(here::here("R"), pattern = "[.]R$", full.names = TRUE)) source(f)
 
+# Not resolve_read_store(): comparing the live store against the backup IS this script's job,
+# so it needs both paths, not a choice between them. Only the login-node refusal is shared.
+if (.on_login_node()) stop(.login_node_message("peek_backup.R"), call. = FALSE)
 s <- optimizer_settings()
 hr <- function(t) cat("\n", t, "\n", strrep("-", nchar(t)), "\n", sep = "")
 mb <- function(b) if (is.na(b)) "-" else sprintf("%.1f MB", b / 1e6)

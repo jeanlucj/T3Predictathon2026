@@ -91,6 +91,20 @@ open_store <- function(path, busy_timeout_ms = 60000) {
       ts          TEXT,
       PRIMARY KEY (config_hash, trial_id, scheme)
     )"))
+  # Claims whose owner died, kept after the claim itself is reclaimed. Without this the record
+  # of a killed worker survives only until the next choose_trial purges it -- seconds. No
+  # primary key: the same pair may legitimately be lost more than once.
+  .with_busy_retry(function() DBI::dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS claims_reaped (
+      config_hash TEXT,
+      trial_id    TEXT,
+      scheme      TEXT,
+      worker      TEXT,
+      host        TEXT,
+      pid         INTEGER,
+      ts          TEXT,
+      reaped_ts   TEXT
+    )"))
   # Migrations: columns that older stores lack. `detail` holds the failure funnel. The four
   # domain columns reuse the catalogue's names, so .apply_target_domain filters sampling and
   # evals identically. peak_rss_mb is the figure to size a machine from; peak_r_mb is kept for
@@ -199,6 +213,58 @@ backup_age_minutes <- function(dest) {
   on.exit(DBI::dbDisconnect(con), add = TRUE)
   tryCatch(as.integer(DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM evals")$n),
            error = function(e) NA_integer_)
+}
+
+# --- which store a READ-ONLY script should open ----------------------------
+# On a cluster db_path is node-local scratch belonging to the job that wrote it, so a
+# diagnostic run from any other allocation finds nothing there -- the durable copy is
+# db_backup_path. Every read-only script used to hand-roll `if (!file.exists(db_path)) stop()`,
+# which on Ceres reported "no store" while a perfectly good backup sat on /project.
+#
+# Order: an explicit path, then --store=, then the live store IF IT HAS ROWS, then the backup.
+resolve_read_store <- function(explicit = NULL, what = "this script") {
+  if (.on_login_node()) stop(.login_node_message(what), call. = FALSE)
+
+  want <- function(p, why) {
+    if (!file.exists(p)) stop("no store at ", p, " (", why, ")", call. = FALSE)
+    message("store: ", p, " (", why, ")")
+    p
+  }
+  # A flag is not a path. report_*.R pass argv[1] straight in for their documented positional
+  # form, so `--store=<path>` would otherwise be taken as a filename by whichever check ran
+  # first, and both spellings have to work in the same script.
+  if (!is.null(explicit) && !is.na(explicit) && nzchar(explicit) &&
+      !grepl("^--", explicit))
+    return(want(explicit, "given on the command line"))
+  flag <- grep("^--store=", commandArgs(trailingOnly = TRUE), value = TRUE)
+  if (length(flag)) return(want(sub("^--store=", "", flag[1]), "from --store="))
+
+  # No tryCatch: on a login node cluster_scratch_paths() raises the message that says how to
+  # fix it, and swallowing that is what used to turn a clear diagnosis into "no store at ...".
+  s <- optimizer_settings()
+
+  # Rows, not existence. open_store() creates a full empty schema at whatever path it is given,
+  # so a node that merely STARTED a job would otherwise shadow a good backup with an empty file.
+  live <- s$db_path
+  if (!is.null(live) && nzchar(live) && isTRUE(.stored_rows(live) > 0)) {
+    message("store: ", live, " (live)")
+    return(live)
+  }
+  bak <- s$db_backup_path
+  if (!is.null(bak) && nzchar(bak) && file.exists(bak)) {
+    age <- backup_age_minutes(bak)
+    message("store: ", bak, "\n  Reading the BACKUP -- the live store (", live,
+            ") is node-local to the job that wrote it and is not on this node.\n  ",
+            .stored_rows(bak), " rows, written ",
+            if (!is.finite(age)) "at an unknown time"
+            else if (age < 90) sprintf("%.0f min ago", age) else sprintf("%.1f h ago", age / 60),
+            ". Anything evaluated since that backup is NOT included.")
+    return(bak)
+  }
+  stop("no store to read.\n  live  : ", live %||% "(not configured)",
+       if (!is.null(live) && file.exists(live)) "  (exists but holds no rows)" else "  (absent)",
+       "\n  backup: ", if (is.null(bak) || !nzchar(bak)) "(not configured)" else paste0(bak, "  (absent)"),
+       "\n  Pass one explicitly with --store=<path> if it is somewhere else.", call. = FALSE)
 }
 
 # Merge the durable backup INTO the working store, the way restore_cache_from_backup() merges
@@ -327,8 +393,18 @@ store_eval <- function(con, cfg, trial_id, scheme, score, n_test, status,
   if (!nrow(here)) return(invisible(0L))
   dead <- here$rowid[!vapply(here$pid, .pid_alive, logical(1))]
   if (!length(dead)) return(invisible(0L))
+  ids <- paste(as.integer(dead), collapse = ",")
+  # COPY BEFORE DELETE. A dead claim is the only record that a worker was killed
+  # mid-evaluation, and this purge runs on every choose_trial -- so the evidence is gone within
+  # seconds of the death unless it is kept. `claims_reaped` is that history: what peek_workers.R
+  # reports as "workers that died", and the answer to "has anything broken since I launched it".
+  .with_busy_retry(function() DBI::dbExecute(con, sprintf(
+    "INSERT INTO claims_reaped (config_hash, trial_id, scheme, worker, host, pid, ts, reaped_ts)
+       SELECT config_hash, trial_id, scheme, worker, host, pid, ts, ?
+         FROM claims WHERE rowid IN (%s)", ids),
+    params = list(format(Sys.time(), tz = "UTC"))))
   invisible(.with_busy_retry(function() DBI::dbExecute(con,
-    sprintf("DELETE FROM claims WHERE rowid IN (%s)", paste(as.integer(dead), collapse = ",")))))
+    sprintf("DELETE FROM claims WHERE rowid IN (%s)", ids))))
 }
 
 # Take (config_hash, trial_id, scheme) unless a live worker holds it OR it is already evaluated
@@ -379,10 +455,42 @@ active_claims <- function(con, scheme = NULL) {
       con, "SELECT config_hash, trial_id FROM claims WHERE scheme IS ?", params = list(scheme)))
 }
 
+# Every claim with all its columns, plus whether its owner is still running. For LOOKING at the
+# table -- what each worker is doing, and which claims belong to a process that died.
+#
+# Deliberately does NOT purge, which is the whole reason it is separate from active_claims():
+# a claim held by a dead pid IS the evidence that a worker was killed mid-evaluation, and
+# purging while displaying would delete it as it was read. Adds hours_held so a long-running
+# evaluation is visible as such -- length is not a fault (LESSONS #28).
+claims_snapshot <- function(con) {
+  cl <- tibble::as_tibble(DBI::dbGetQuery(con, "SELECT * FROM claims ORDER BY worker, ts"))
+  if (!nrow(cl)) return(cl)
+  here <- Sys.info()[["nodename"]]
+  cl$alive <- vapply(seq_len(nrow(cl)), function(i)
+    # A pid from another host says nothing here, so it is reported as unknown rather than dead.
+    if (!identical(cl$host[i], here)) NA else .pid_alive(cl$pid[i]), logical(1))
+  cl$hours_held <- as.numeric(difftime(Sys.time(), as.POSIXct(cl$ts, tz = "UTC"), units = "hours"))
+  cl
+}
+
+# Deaths recorded by .purge_dead_claims and clear_claims, newest first -- the run's history of
+# workers lost mid-evaluation.
+reaped_claims <- function(con) {
+  tibble::as_tibble(DBI::dbGetQuery(
+    con, "SELECT * FROM claims_reaped ORDER BY reaped_ts DESC"))
+}
+
 # Wipe the table. The leader calls this at startup, when no worker can be mid-evaluation, which
 # is what clears claims left by a job the scheduler killed on a durable db_path. (On a cluster
 # db_path is node-local scratch and is wiped with the job, so there is nothing to clear.)
+#
+# Anything still here was held when the last job died, so it is recorded as a death like any
+# other -- that is precisely the "the scheduler killed us mid-evaluation" case worth keeping.
 clear_claims <- function(con) {
+  .with_busy_retry(function() DBI::dbExecute(con,
+    "INSERT INTO claims_reaped (config_hash, trial_id, scheme, worker, host, pid, ts, reaped_ts)
+       SELECT config_hash, trial_id, scheme, worker, host, pid, ts, ? FROM claims",
+    params = list(format(Sys.time(), tz = "UTC"))))
   invisible(.with_busy_retry(function() DBI::dbExecute(con, "DELETE FROM claims")))
 }
 

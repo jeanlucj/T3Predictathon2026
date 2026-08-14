@@ -51,7 +51,9 @@ s <- optimizer_settings()
 # Default to the trial with the most stored evaluations: most likely to have a warm cache,
 # so the profile reflects compute rather than a cold download.
 if (is.null(o_trial)) {
-  con <- DBI::dbConnect(RSQLite::SQLite(), s$db_path)
+  # Only needed to pick a default: with --trial=<id> the store is never opened, so this runs
+  # fine on a machine that has none.
+  con <- DBI::dbConnect(RSQLite::SQLite(), resolve_read_store(what = "profile_evaluation.R"))
   e <- tryCatch(DBI::dbReadTable(con, "evals"), error = function(err) NULL)
   DBI::dbDisconnect(con)
   if (!is.null(e) && nrow(e)) {
