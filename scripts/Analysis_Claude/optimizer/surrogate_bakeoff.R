@@ -86,7 +86,10 @@ F_all <- configs_to_features(lapply(d$config_json, config_from_json))
 # `rows` indexes d. Everything the three arms need is derived from the subset, and the fits
 # are defined INSIDE so they close over it -- the full-store report and every point on the
 # learning curve then run the identical code path.
-cv_at <- function(rows, reps, folds, ntree) {
+# `label` names this pass in the progress lines; NULL silences them. Progress is line-oriented
+# cat + flush.console(), never \r, because this is normally run under nohup into a log file --
+# the same idiom as prewarm_indices.R.
+cv_at <- function(rows, reps, folds, ntree, label = NULL) {
   d0 <- d[rows, , drop = FALSE]
   F0 <- F_all[rows, , drop = FALSE]
   trials <- sort(unique(d0$trial_id))
@@ -112,6 +115,12 @@ cv_at <- function(rows, reps, folds, ntree) {
     if (is.null(m)) return(NULL)
     function(i) predict_surrogate_marginal(m, F0[i, , drop = FALSE], trials)$mean
   }
+  # NOTE on all three closures: `i` is a VECTOR of row indices and the result is a vector.
+  # Both predict functions already take multiple rows -- predict_surrogate vapply()s over the
+  # trees once for the whole newdata frame, and predict_surrogate_marginal is written for n_c
+  # configs. Calling them per config paid the 200-tree loop once per config instead of once per
+  # fold: measured at 5,210 rows / 1,259 configs, 250 configs took 25.1 s one at a time against
+  # 0.15 s batched, for bit-identical values.
   fit_C <- function(tr, iters = 3L) {
     if (!requireNamespace("lme4", quietly = TRUE)) return(NULL)
     dt <- d0[tr, ]; Xt <- F0[tr, , drop = FALSE]
@@ -134,6 +143,9 @@ cv_at <- function(rows, reps, folds, ntree) {
   FITS <- list(A = fit_A, B = fit_B, C = fit_C)
 
   out <- matrix(NA_real_, nrow = length(arms), ncol = reps, dimnames = list(arms, NULL))
+  n_fold <- reps * folds                      # the unit of progress
+  done <- 0L
+  t_start <- Sys.time()
   for (rep_i in seq_len(reps)) {
     set.seed(rep_i * 97)
     fold <- sample(rep_len(seq_len(folds), length(hashes)))
@@ -142,11 +154,24 @@ cv_at <- function(rows, reps, folds, ntree) {
     for (k in seq_len(folds)) {
       te <- hashes[fold == k]; tr <- !(d0$config_hash %in% te)
       fns <- lapply(arms, function(a) FITS[[a]](tr)); names(fns) <- arms
-      for (h in te) {
-        i1 <- which(d0$config_hash == h)[1]
-        for (a in arms)
-          preds[[a]] <- c(preds[[a]], if (is.null(fns[[a]])) NA_real_ else fns[[a]](i1))
-        obs <- c(obs, truth$y[truth$config_hash == h])
+      # One call per arm for the whole fold. match() also replaces a which(==)[1] scan per
+      # config, which was O(rows x configs) on its own.
+      i1 <- match(te, d0$config_hash)
+      for (a in arms)
+        preds[[a]] <- c(preds[[a]],
+                        if (is.null(fns[[a]])) rep(NA_real_, length(i1)) else fns[[a]](i1))
+      obs <- c(obs, truth$y[match(te, truth$config_hash)])
+
+      # After every fold: an ETA from the folds actually done, so the first line lands within
+      # one fold of starting rather than after the whole pass. The first fold is also the
+      # estimate -- there is no separate calibration run.
+      done <- done + 1L
+      if (!is.null(label)) {
+        el <- as.numeric(difftime(Sys.time(), t_start, units = "secs"))
+        cat(sprintf("  [%s] fold %3d/%-3d %3.0f%%  %.1f s/fold  elapsed %.1f min  ETA %.1f min\n",
+                    label, done, n_fold, 100 * done / n_fold, el / done, el / 60,
+                    el / done * (n_fold - done) / 60))
+        utils::flush.console()
       }
     }
     for (a in arms) out[a, rep_i] <- suppressWarnings(cor(preds[[a]], obs, use = "complete.obs"))
@@ -162,7 +187,8 @@ arms <- intersect(o_arms, c("A", "B", "C"))
 cat("scheme ", o_scheme, " | rows ", nrow(d), " | configs ",
     dplyr::n_distinct(d$config_hash), " | trials ", dplyr::n_distinct(d$trial_id), "\n", sep = "")
 cat("running ", o_reps, " x ", o_folds, "-fold CV over configurations...\n\n", sep = "")
-res <- cv_at(seq_len(nrow(d)), o_reps, o_folds, o_ntree)
+res <- cv_at(seq_len(nrow(d)), o_reps, o_folds, o_ntree, label = "main")
+cat("\n")
 
 # --- report -----------------------------------------------------------------
 cat(sprintf("%-45s %8s %7s %10s %8s\n", "arm", "mean cor", "sd", "vs A", "p"))
@@ -206,7 +232,7 @@ if (o_curve) {
   cat(sprintf("%8s %8s %s\n", "n", "configs",
               paste(sprintf("%22s", SHORT[arms]), collapse = "")))
   for (n in grid) {
-    r  <- cv_at(seq_len(n), o_creps, o_folds, o_ntree)
+    r  <- cv_at(seq_len(n), o_creps, o_folds, o_ntree, label = sprintf("curve n=%d", n))
     nc <- dplyr::n_distinct(d$config_hash[seq_len(n)])
     cat(sprintf("%8d %8d %s\n", n, nc,
         paste(vapply(arms, function(a) {

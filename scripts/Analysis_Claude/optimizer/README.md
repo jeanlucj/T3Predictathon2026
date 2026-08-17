@@ -424,14 +424,67 @@ happened to be running when the last `VACUUM INTO` fired. Under SLURM that means
 running job (`srun --overlap --jobid=<jid> --pty bash`), not a fresh `salloc`. It says so when the
 live store is absent.
 
-Two properties hold in both environments:
-
-- **All are read-only against the store except `prewarm_indices.R`**, which writes cache files.
-  The read-only ones copy the database *and* its `-wal`/`-shm` sidecars before reading, so they
-  are safe to run against a live store while workers are going.
 - **`peek_failures.R` and `surrogate_bakeoff.R` need a store that already has rows.** On a
   fresh install they stop with `no store at <db_path>`, which is correct behaviour rather than
   a fault.
+
+### Which of these can run while workers are evaluating
+
+The store is the *easy* half of this question, and the half that used to be documented: the
+read-only scripts copy the database **and** its `-wal`/`-shm` sidecars before reading, so none
+of them can corrupt a live store. That says nothing about the resources they take, and on a
+cluster those are what bind.
+
+| script | store | memory / CPU | network | cache locks | beside a live run |
+|---|---|---|---|---|---|
+| `peek_workers.R` | read-only handle | trivial | — | — | **yes** |
+| `peek_failures.R` | sidecar copy | trivial | — | — | **yes** |
+| `peek_config.R` | sidecar copy | trivial | — | — | **yes** |
+| `report_timing.R` | live, read | trivial | — | — | **yes** |
+| `report_memory.R` | live, read | trivial | — | — | **yes** |
+| `peek_backup.R` | temp copy | one `lmer` + one surrogate fit | — | — | yes, not free |
+| `surrogate_bakeoff.R` | sidecar copy | **one core, saturated, for a long time** | — | — | yes, see below |
+| `blas_check.R` | — | **pins every core, briefly** | — | — | cap threads first |
+| `prewarm_indices.R` | none | trivial | **~7,700 BrAPI calls** | writes cache | `--only=projects` only |
+| `profile_evaluation.R` | live, read | **~12 GB, hours** | full pipeline | **takes dosage locks** | **no** |
+| `diagnose_failures.R` | sidecar copy | **~10 GB per project, hours** | full pipeline | **takes dosage locks** | **no** |
+| `setup_fallback_libs.R` | — | `detectCores()` compiles, 30–60 min | CRAN | — | **no** |
+| `run_optimizer.R` | live, **writes** | a full evaluation | yes | yes | only as a worker |
+
+**`surrogate_bakeoff.R` is the common case and the answer is yes.** No network, no cache, no
+locks — but it is ~780 surrogate fits at `ntree=200` (12 reps × 5 folds × 3 arms, plus a 600-fit
+learning curve), single-threaded. `--no-curve` removes about three-quarters of that.
+
+**On a cluster, memory is the real constraint, and an extra process is not free.** A step started
+with `srun --overlap --jobid=<jid>` **joins the job's cgroup**, so its memory counts against the
+same `--mem` the workers are using — and that is sized tight (`container/t3opt_ceres.sh` asks
+`--mem=1800G` for 22 workers whose measured worst case is 82 GB each, i.e. 1804 GB). SLURM
+**kills rather than throttles**. Typical headroom is large, because 22 × the *median* 19 GB is
+~418 GB — so this is a judgement about free memory right now, not a blanket yes. Check before
+you start anything big:
+
+``` bash
+sstat -j <jid>.batch --format=JobID,MaxRSS,AveRSS
+tail -3 "$OPTIMIZER_HOME/logs/memory_"*.tsv     # rss_total_mb and mem_avail_mb columns
+```
+
+**Cap threads on anything you launch by hand.** Only `run_workers.sh` exports
+`OMP_NUM_THREADS`/`OPENBLAS_NUM_THREADS`/…, and `run_in_container.sh` deliberately avoids
+`--cleanenv` so your shell's environment passes straight through. A script started from an
+`srun` shell therefore inherits *no* cap while the workers sit at one thread each:
+
+``` bash
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 ./container/run_in_container.sh exec surrogate_bakeoff.R --no-curve
+```
+
+**Why the two red pipeline scripts are red.** Both run a real `run_pipeline`, so beyond the hours
+and the tens of GB they take the per-project dosage locks — and `.acquire_lock` breaks any lock
+older than `lock_stale_minutes` (90) on the assumption its holder died. A worker legitimately
+90+ minutes into a large VCF download can have its lock stolen, and `.fetch_and_cache_dosage`
+deletes the raw file before re-downloading, so both sides then fight over the same file. That is
+LESSONS #24 — the exact hazard the lock exists to prevent. `diagnose_failures.R` additionally has
+**replay on by default** (`--no-replay` opts out); `peek_failures.R` answers the same question in
+seconds from the stored funnel, with no network and no re-running.
 
 ## Where to go next
 

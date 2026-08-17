@@ -597,8 +597,15 @@ nohup Rscript prewarm_indices.R > logs/prewarm.out 2>&1 &   # fill the local wiz
 ```
 
 **All are read-only against the store except `prewarm_indices.R`**, which writes cache files.
-The read-only ones copy the database *and* its `-wal`/`-shm` sidecars before reading, so they
-are safe to run against a live store while workers are going.
+The read-only ones copy the database *and* its `-wal`/`-shm` sidecars before reading, so none of
+them can corrupt a live store.
+
+**That is only the store half.** Which of these you can actually run beside working workers also
+depends on memory, CPU, BrAPI load and the dosage cache locks — see the table in `README.md`,
+*Which of these can run while workers are evaluating*. The short version for this machine:
+`profile_evaluation.R` and `diagnose_failures.R` each run a real pipeline (tens of GB, hours, and
+they take locks a worker may be holding), so use `peek_failures.R` instead;
+`surrogate_bakeoff.R` is fine but occupies a core for a long time — `--no-curve` shortens it.
 
 ### Where the time goes
 

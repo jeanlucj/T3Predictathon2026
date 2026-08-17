@@ -518,7 +518,44 @@ exit
 
 **All are read-only against the store except `prewarm_indices.R`**,
 which writes cache files. The read-only ones copy the database *and* its
-`-wal`/`-shm` sidecars first, so they are safe against a live store.
+`-wal`/`-shm` sidecars first, so none of them can corrupt a live store.
+
+**On a cluster the store is the easy half.** Which of these you can run
+beside 22 working workers is decided by memory, and by the dosage cache
+locks — see the table in `README.md`, *Which of these can run while
+workers are evaluating*. Three points specific to here:
+
+- **An `srun --overlap` step joins the job's cgroup.** Its memory counts
+  against the same `--mem` the workers are using, and that is sized
+  tight: `--mem=1800G` against 22 workers × 82 GB measured worst case =
+  1804 GB. SLURM **kills rather than throttles**. Typical headroom is
+  wide (22 × the *median* 19 GB is ~418 GB), so this is a judgement about
+  free memory now, not a blanket no. Check first:
+
+    ``` bash
+    sstat -j <jid>.batch --format=JobID,MaxRSS,AveRSS
+    tail -3 "$OPTIMIZER_HOME/logs/memory_"*.tsv   # rss_total_mb, mem_avail_mb
+    ```
+
+- **Cap threads yourself.** Only `run_workers.sh` exports the
+  `*_NUM_THREADS` variables, and `run_in_container.sh` deliberately does
+  not use `--cleanenv`, so a script started from an `srun` shell inherits
+  no cap while the workers sit at one thread each:
+
+    ``` bash
+    OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+      ./run_in_container.sh exec surrogate_bakeoff.R --no-curve
+    ```
+
+- **`profile_evaluation.R` and `diagnose_failures.R` do not belong on a
+  busy node.** Both run a real `run_pipeline` — tens of GB and hours —
+  and both take the per-project dosage locks, which `.acquire_lock`
+  breaks after `lock_stale_minutes` (90) on the assumption the holder
+  died. A worker deep in a large VCF download can lose its lock that way,
+  and the raw file is deleted before re-download, so both sides then
+  fight over it (LESSONS #24). `diagnose_failures.R` also has **replay on
+  by default**; `peek_failures.R` answers the same question in seconds
+  with no network.
 
 **Here they read the BACKUP, and they say so.** `db_path` is
 `$TMPDIR/t3opt_<user>/evals.sqlite` — node-local scratch belonging to the

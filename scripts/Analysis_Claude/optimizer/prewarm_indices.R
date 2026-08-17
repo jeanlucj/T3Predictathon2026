@@ -12,8 +12,15 @@
 # 795 s evaluation -- 55% of the run. The projects wizard is cheap today only because its
 # cache happens to hit; on a fresh install it is not.
 #
-# SAFE TO INTERRUPT, and safe to run while workers are going. Every fetch is cached as it
-# completes, so re-running skips what is done; workers contribute to the same files.
+# SAFE TO INTERRUPT. Every fetch is cached as it completes, so re-running skips what is done;
+# workers contribute to the same files.
+#
+# BESIDE A LIVE RUN, PREFER --only=projects. It never opens the store and costs no memory, but
+# the trials pass is ~7,600 BrAPI calls against the same server the workers are querying, and it
+# is not free on the shared cache either: the restore below is unconditional (run_optimizer.R
+# keeps that leader-only precisely so N workers do not pull one tree at once), the closing flush
+# passes min_age_minutes = 0, which bypasses the shared throttle AND resets the `.last_sync`
+# stamp the workers schedule from. --only=projects is ~110 calls and about a minute.
 #
 # Brackets itself with the same cache restore and flush the optimizer loop uses, because
 # cache_dir is node-local scratch on a cluster: unrestored it re-fetches what the backup already
