@@ -617,8 +617,8 @@ the network" from "compute-bound on one core".
 ### Which surrogate is best
 
 ``` bash
-Rscript surrogate_bakeoff.R --no-curve --reps=12   # just the full-store table, tighter bars
-Rscript surrogate_bakeoff.R --curve-reps=4 --n-grid=4    # faster curve
+Rscript surrogate_bakeoff.R --no-curve --reps=12   # just the full-slice table, tighter bars
+Rscript surrogate_bakeoff.R --curve-reps=4 --curve-min=500   # faster curve (drops the low end)
 ```
 
 Three arms — `pooled` (config means, no trial), `blocked` (`trial_id` in the forest,
