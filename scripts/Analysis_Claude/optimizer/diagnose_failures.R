@@ -35,7 +35,7 @@
 # rather than hour 2.
 #
 #   cd /path/to/optimizer
-#   nohup Rscript diagnose_failures.R --no-replay > logs/diagnose_failures.out 2>&1 &
+#   nohup Rscript diagnose_failures.R > logs/diagnose_failures.out 2>&1 &
 #
 # Options (all optional):
 #   --status=suspect,error status(es) to act on; default
@@ -45,14 +45,16 @@
 #                          an eval with one of the selected statuses
 #   --canary=10676         known-good trial used as the calibration control
 #   --scheme=CV00          restrict to one scheme; default: the scheme on the stored eval
-#   --max-projects=8       per-project dosage attribution loop (each project loads a WHOLE
-#                          dosage matrix -- up to ~10 GB apiece). 0 skips it; the panel
-#                          table is the authoritative coverage answer either way.
+#   --max-projects=8       per-project dosage attribution loop; each project loads a whole
+#                          dosage matrix. 0 skips it; the panel table is the authoritative
+#                          coverage answer either way.
 #   --auth-window-min=60   minutes of padding either side of an authentication error when
 #                          listing the evals that ran against the same dead connection.
-#   --no-replay            skip the closing run_pipeline() replay. The replay is a COMPLETE
-#                          evaluation (hours on a big trial) and only confirms an outcome
-#                          the store already recorded -- but it is what prints the funnel.
+#   --replay               add the closing run_pipeline() replay: a COMPLETE evaluation,
+#                          hours on a big trial, confirming an outcome the store already
+#                          recorded -- but it is what prints the funnel. Off by default.
+#   --cached-only          probe only projects whose dosage is already cached, and report
+#                          how many were skipped, instead of downloading a VCF per project.
 
 # Guard the working directory FIRST, with an actionable message. here::i_am() below also
 # halts from the wrong directory, but only in the cases where it cannot find the project --
@@ -85,7 +87,8 @@ o_canary  <- opt("canary", "10676")
 o_scheme  <- opt("scheme")
 o_maxproj <- as.integer(opt("max-projects", "8"))
 o_authpad <- as.numeric(opt("auth-window-min", "60"))
-o_replay  <- !("--no-replay" %in% args)
+o_replay  <- "--replay" %in% args
+o_cached  <- "--cached-only" %in% args
 
 # `error` evals are reported, never diagnosed (see the header). Split the requested
 # statuses into the two groups once, here.
@@ -93,7 +96,10 @@ REPORT_ONLY  <- "error"
 o_diagnose   <- setdiff(o_status, REPORT_ONLY)
 o_report     <- intersect(o_status, REPORT_ONLY)
 
-settings <- optimizer_settings()
+# The per-project probe below intersects dosage ROWNAMES with the trial's accessions, so
+# marker density cannot change its answer. Re-densifying a cache thinned under
+# dosage_total_budget_bytes would re-download a whole VCF per project to no effect.
+settings <- modifyList(optimizer_settings(), list(dosage_redensify = FALSE))
 
 # --- preflight: prove the network path works BEFORE spending hours ----------
 # Everything diagnose_trial prints first (accession counts, observation rows, per-project
@@ -106,6 +112,24 @@ if (!file.exists(".Renviron"))
   stop("no .Renviron in the working directory -- cd to the optimizer folder and re-run.\n",
        "  R reads .Renviron from the working directory only; from anywhere else the T3\n",
        "  credentials come from ~/.Renviron (or nowhere) and every catalogue fetch 401s.")
+
+# cache_dir is node-local; the durable copy is cache_backup_dir. Without this every accession
+# list, observation set and project VCF below comes over the network instead of off local disk.
+# A bulk rsync, minutes at worst, against one VCF download per project otherwise.
+cat("  cache:             ", settings$cache_dir, "\n", sep = "")
+local({
+  n_before <- length(list.files(settings$cache_dir, recursive = TRUE))
+  restored <- restore_cache_from_backup(settings)
+  n_after  <- length(list.files(settings$cache_dir, recursive = TRUE))
+  cat("  cache restore:     ",
+      if (!isTRUE(restored)) paste0("no backup configured or reachable (", 
+                                    settings$cache_backup_dir %||% "unset",
+                                    ") -- reading from the NETWORK")
+      else if (n_after > n_before) sprintf("%d file(s) from %s", n_after - n_before,
+                                           settings$cache_backup_dir)
+      else sprintf("already up to date (%d file(s))", n_after),
+      "\n", sep = "")
+})
 cat("  T3_USERNAME:       ", Sys.getenv("T3_USERNAME"), "\n", sep = "")
 cat("  T3_PASSWORD:       ", if (nzchar(Sys.getenv("T3_PASSWORD"))) "set" else "EMPTY", "\n", sep = "")
 
@@ -126,6 +150,9 @@ cat("  statuses:          ", paste(o_status, collapse = ", "),
     if (length(o_report)) sprintf("   (%s: reported, not diagnosed)", paste(o_report, collapse = ", ")) else "",
     "\n", sep = "")
 cat("  replay:            ", if (o_replay) "on (run_pipeline -- SLOW)" else "off", "\n", sep = "")
+cat("  project probe:     ", if (o_maxproj <= 0L) "off (--max-projects=0)"
+    else sprintf("up to %d per trial%s", o_maxproj,
+                 if (o_cached) ", cached dosages only" else ""), "\n", sep = "")
 
 # A sidecar copy, not the file itself: open_store() is a WRITE (it creates the schema and puts
 # the database in WAL mode), and store_path may be the durable backup on shared storage.
@@ -207,7 +234,7 @@ for (tid in o_trials) {
     cat("\n--- REPRODUCE: stored config from eval id ", bad$id[i],
         " (", bad$status[i], " / ", bad$reason[i] %||% "?", ") ---\n", sep = "")
     diagnose_trial(tid, settings, conn, cfg = bad$cfg[[i]], scheme = bad$scheme[i],
-                   max_projects = o_maxproj, replay = o_replay)
+                   max_projects = o_maxproj, replay = o_replay, cached_only = o_cached)
   }
 
   # Same trial, permissive default config. If this succeeds where the stored config failed,
@@ -216,7 +243,7 @@ for (tid in o_trials) {
   cat("\n--- CONTROL: permissive default config ---\n")
   diagnose_trial(tid, settings, conn, cfg = canary_config(),
                  scheme = if (!is.null(o_scheme)) o_scheme else bad$scheme[1],
-                 max_projects = o_maxproj, replay = o_replay)
+                 max_projects = o_maxproj, replay = o_replay, cached_only = o_cached)
 }
 
 # --- calibration: a trial we KNOW is feasible ------------------------------
@@ -226,7 +253,7 @@ if (nzchar(o_canary)) {
   cat("\n\n########## CANARY ", o_canary, " ##########\n", sep = "")
   diagnose_trial(o_canary, settings, conn, cfg = canary_config(),
                  scheme = if (!is.null(o_scheme)) o_scheme else settings$schemes[1],
-                 max_projects = o_maxproj, replay = o_replay)
+                 max_projects = o_maxproj, replay = o_replay, cached_only = o_cached)
 }
 
 close_store(con)

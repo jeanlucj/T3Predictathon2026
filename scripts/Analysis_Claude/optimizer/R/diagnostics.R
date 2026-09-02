@@ -337,14 +337,16 @@ failed_configs <- function(con, trial_id,
 # Two parts are expensive and optional, since the panel table is what discriminates a name
 # problem from a panel-selection problem:
 #   max_projects  caps the per-project attribution loop, which loads each project's whole dosage
-#                 matrix (up to ~10 GB apiece). It only attributes a cliff to individual
-#                 projects; the panel probe below already says whether ANY panel covers the focal
-#                 lines.
+#                 matrix -- a disk read when cached, a VCF download when not. It only attributes
+#                 a cliff to individual projects; the panel probe below already says whether ANY
+#                 panel covers the focal lines.
+#   cached_only   skip a project with no cached dosage rather than download it, and report the
+#                 count, so the coverage line reads as the lower bound it then is.
 #   replay        FALSE skips the final run_pipeline(), a complete evaluation costing hours on a
 #                 big trial, which only confirms an outcome the store already recorded.
 diagnose_trial <- function(study_id, settings, conn,
                            cfg = canary_config(), scheme = settings$schemes[1],
-                           max_projects = 8L, replay = TRUE) {
+                           max_projects = 8L, replay = TRUE, cached_only = FALSE) {
   id <- as.character(study_id)
   cat("=== diagnose trial ", id, " (scheme ", scheme, ") ===\n", sep = "")
   # Which config this is decides what the output means, and the default is NOT the one that
@@ -367,7 +369,7 @@ diagnose_trial <- function(study_id, settings, conn,
   # intersect the trial's accession names? Load each project's WHOLE population and intersect
   # here -- passing keep_samples = acc returns NULL when nothing matches, swallowing the very
   # cliff this exists to catch.
-  n_cover <- 0L; best_ov <- 0L
+  n_cover <- 0L; best_ov <- 0L; n_skipped <- 0L
   probe <- utils::head(projs, max(0L, as.integer(max_projects)))
   if (length(probe) < length(projs))
     cat(sprintf("  (probing %d of %d projects individually -- max_projects; the panel table below\n",
@@ -375,20 +377,36 @@ diagnose_trial <- function(study_id, settings, conn,
         "   is the authoritative coverage answer)\n", sep = "")
   if (length(probe)) {
     for (pid in probe) {
+      # Announced BEFORE the load, and flushed: an uncached project is a VCF download, and a
+      # run that dies in one has to be able to say which. Both lookups are pure cache reads.
+      st  <- .project_stat(settings, pid)
+      hit <- .find_densest_dosage(settings, pid)
+      cat(sprintf("    project %-7s %s%s ... ", pid,
+                  if (is.null(hit)) "NOT cached -- downloading" else "cached",
+                  if (is.null(st)) "" else sprintf(" (%d x %d)", st$n_samples, st$n_markers)))
+      utils::flush.console()
+      if (isTRUE(cached_only) && is.null(hit)) {
+        n_skipped <- n_skipped + 1L
+        cat("skipped (--cached-only)\n"); next
+      }
       d <- tryCatch(get_project_dosage(pid, NULL, conn, settings), error = function(e) NULL)
-      if (is.null(d)) { cat(sprintf("    project %-7s dosage: NULL (download/parse failed)\n", pid)); next }
+      if (is.null(d)) { cat("dosage: NULL (download/parse failed)\n"); next }
       ov <- length(intersect(rownames(d), acc))
       if (ov > 0) n_cover <- n_cover + 1L
       best_ov <- max(best_ov, ov)
-      cat(sprintf("    project %-7s dosage: %d samples x %d markers, overlap with accessions = %d%s\n",
-                  pid, nrow(d), ncol(d), ov,
+      cat(sprintf("dosage: %d samples x %d markers, overlap with accessions = %d%s\n",
+                  nrow(d), ncol(d), ov,
                   if (nrow(d) > 0 && ov == 0) "   <-- no name overlap in THIS project" else ""))
     }
-    # Denominator is what was PROBED: under max_projects this is a sample, so it can suggest a
-    # cliff but not establish one. The panel table does that.
-    partial <- length(probe) < length(projs)
+    if (n_skipped)
+      cat(sprintf("  %d of %d probed project(s) skipped as uncached -- coverage below is a LOWER bound\n",
+                  n_skipped, length(probe)))
+    # Denominator is what was actually LOADED: under max_projects or --cached-only this is a
+    # sample, so it can suggest a cliff but not establish one. The panel table does that.
+    n_loaded <- length(probe) - n_skipped
+    partial  <- n_loaded < length(projs)
     cat(sprintf("  projects containing >=1 focal accession: %d of %d probed (best single: %d)%s\n",
-                n_cover, length(probe), best_ov,
+                n_cover, n_loaded, best_ov,
                 if (n_cover == 0 && length(acc) > 0)
                   if (partial) "   <-- no overlap in the PROBED projects; check the panel table below"
                   else "   <-- CLIFF: the focal lines are genotyped NOWHERE under these names"
