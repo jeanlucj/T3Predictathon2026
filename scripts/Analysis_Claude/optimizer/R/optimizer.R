@@ -14,24 +14,22 @@
 
 library(tidyverse)
 
-# Restrict a set of evaluations to those whose trial falls in the current target
-# domain. evals.sqlite is a shared archive of EVERY evaluation ever run (across
-# target domains); a specific optimization only wants evidence from its own domain,
-# on the premise that the best pipeline for a domain is the one to deploy on a new
-# trial FROM that domain. The domain attributes were stored on each row under the
-# catalogue's own column names, so the identical predicate that restricts trial
-# sampling (.apply_target_domain) restricts the eval slice here. A NULL domain (e.g.
-# simulate mode) is no constraint -> all rows. Rows with unknown attributes (NA,
-# e.g. pre-migration or simulated) are out-of-domain whenever a constraint is set.
-filter_evals_to_domain <- function(evals, td) {
-  if (is.null(td) || !nrow(evals)) return(evals)
-  .apply_target_domain(evals, td)
+# Restrict a set of evaluations to the run's trial universe. evals.sqlite is a shared archive
+# of EVERY evaluation ever run (across target domains); a specific optimization only wants
+# evidence from its own, on the premise that the best pipeline for a domain is the one to
+# deploy on a new trial FROM that domain. The domain is DEFINED on the catalogue by
+# .apply_target_domain() and resolved once per run into trial ids (pin_trial_universe), so
+# membership here is a set test on an immutable id and nothing a trial's metadata does later
+# can move a stored row in or out. A NULL universe (simulate mode) is no constraint.
+filter_evals_to_universe <- function(evals, universe) {
+  if (!length(universe) || !nrow(evals)) return(evals)
+  dplyr::filter(evals, as.character(trial_id) %in% as.character(universe))
 }
 
 # Restrict evaluations to a single CV scheme. evals.sqlite is a shared archive that
 # may hold rows for BOTH schemes (e.g. from an earlier run that optimized the other
 # one); a given optimization targets exactly one, since CV0 and CV00 are distinct
-# tasks that can have different optimal pipelines. Composes with filter_evals_to_domain.
+# tasks that can have different optimal pipelines. Composes with filter_evals_to_universe.
 filter_evals_to_scheme <- function(evals, scheme) {
   if (is.null(scheme) || !nrow(evals)) return(evals)
   dplyr::filter(evals, scheme == !!scheme)
@@ -309,6 +307,20 @@ incumbent_config <- function(agg, min_reps = 2) {
   if (!is.finite(w) || w < 1L) 1L else w
 }
 
+# Trials started but not yet replicated to `r` distinct configurations, in the order they are
+# served. Restricted to the run's universe, so a trial that is no longer in it cannot hold the
+# backlog open -- a non-empty backlog stops fresh trials being drawn at all.
+.trial_backlog <- function(evidence, seen = character(), universe = NULL, r = 2L) {
+  if (!nrow(evidence)) return(character())
+  bl <- evidence |>
+    dplyr::group_by(trial_id) |>
+    dplyr::summarise(n_cfg = dplyr::n_distinct(config_hash), .groups = "drop") |>
+    dplyr::filter(n_cfg >= 1L, n_cfg < r, !(as.character(trial_id) %in% as.character(seen)))
+  if (length(universe))
+    bl <- dplyr::filter(bl, as.character(trial_id) %in% as.character(universe))
+  sort(as.character(bl$trial_id))
+}
+
 # Decide the trial for the next evaluation.
 #
 # A trial must reach settings$trial_replication DISTINCT configurations before the search
@@ -318,42 +330,42 @@ incumbent_config <- function(agg, min_reps = 2) {
 #
 # `cfg_hash` is the configuration this trial is for, when the caller has one; trials it has
 # already been run on are then excluded.
-choose_trial <- function(con, settings, conn = NULL, cfg_hash = NULL) {
+#
+# `universe` is the run's pinned trial ids (pin_trial_universe); NULL is unconstrained.
+choose_trial <- function(con, settings, conn = NULL, cfg_hash = NULL, universe = NULL) {
   base <- suppressWarnings(as.integer(settings$trial_replication %||% 1L))
   if (!is.finite(base)) base <- 1L
   if (base <= 1L && is.null(cfg_hash)) return(sample_trial(settings, conn))
 
-  td <- if (isTRUE(settings$simulate)) NULL else settings$target_domain
-  evals <- read_evals(con) |>
-             filter_evals_to_domain(td) |>
-             filter_evals_to_scheme(settings$optimize_scheme) |>
-             filter_evals_to_build(settings$build %||% OPTIMIZER_BUILD)
+  # Two views of the store, for two different questions. `computed` answers "has this pair
+  # already been run", and is keyed exactly as claim_eval() keys it -- if the two disagree, a
+  # pair can be proposed forever and claimed never. `evidence` answers "what does this run know
+  # about the domain", and is the one the replication target is measured against.
+  computed <- read_evals(con) |>
+                filter_evals_to_scheme(settings$optimize_scheme) |>
+                filter_evals_to_build(settings$build %||% OPTIMIZER_BUILD)
+  evidence <- filter_evals_to_universe(computed, universe)
   # Trials this config has already been run on, PLUS the ones other workers are running it on
-  # right now. `evals` holds only finished work, so without the claims a one-entry backlog
+  # right now. `computed` holds only finished work, so without the claims a one-entry backlog
   # handed every worker the same trial and they all evaluated the identical pair. This is the
   # advisory half; claim_eval() in optimizer_step is the half that is actually atomic.
   seen <- if (is.null(cfg_hash)) character()
           else {
-            done <- unique(as.character(evals$trial_id[evals$config_hash == cfg_hash]))
+            done <- unique(as.character(computed$trial_id[computed$config_hash == cfg_hash]))
             live <- tryCatch(active_claims(con, settings$optimize_scheme),
                              error = function(e) NULL)
             union(done, if (is.null(live)) character()
                         else as.character(live$trial_id[live$config_hash == cfg_hash]))
           }
-  if (base <= 1L || !nrow(evals)) return(.sample_unseen_trial(settings, conn, seen))
-  r <- .trial_target(settings, dplyr::n_distinct(evals$config_hash[is.finite(evals$score)]))
+  if (base <= 1L || !nrow(evidence)) return(.sample_unseen_trial(settings, conn, seen))
+  r <- .trial_target(settings, dplyr::n_distinct(evidence$config_hash[is.finite(evidence$score)]))
 
-  # Trials that have been started but not yet replicated to `r` distinct configurations.
-  backlog <- evals |>
-    dplyr::group_by(trial_id) |>
-    dplyr::summarise(n_cfg = dplyr::n_distinct(config_hash), .groups = "drop") |>
-    dplyr::filter(n_cfg >= 1L, n_cfg < r, !(trial_id %in% seen)) |>
-    dplyr::arrange(trial_id)
-  if (!nrow(backlog)) return(.sample_unseen_trial(settings, conn, seen))
+  backlog <- .trial_backlog(evidence, seen, universe, r)
+  if (!length(backlog)) return(.sample_unseen_trial(settings, conn, seen))
 
   # Offset by worker: without it every worker revisits the same trial and the backlog drains
   # one trial at a time. Wrapping is right here -- a one-entry backlog wants every worker on it.
-  id <- backlog$trial_id[((.worker_index(settings) - 1L) %% nrow(backlog)) + 1L]
+  id <- backlog[((.worker_index(settings) - 1L) %% length(backlog)) + 1L]
 
   if (isTRUE(settings$simulate)) return(.sim_trial(id))
   tryCatch(build_trial_descriptor(id, conn, settings),
@@ -381,18 +393,13 @@ choose_trial <- function(con, settings, conn = NULL, cfg_hash = NULL) {
 # .replication_backlog(). `replicate = FALSE` skips the replication phase, for a caller whose
 # replication pick turned out to have no trial left.
 choose_config <- function(con, settings, universe = NULL, replicate = TRUE) {
-  # The store is global; this optimization only learns from its own target domain.
-  # Filtering here scopes EVERYTHING downstream -- seeds, the done/avoid set,
-  # aggregation, the surrogate, and the incumbent -- to the in-domain slice, so a
-  # config evaluated only in some OTHER domain counts as untried here and gets run
-  # to build in-domain evidence.
-  # In simulate mode there is no real target domain (synthetic trials carry no
-  # program/location/year), so no domain filtering applies. The scheme filter always
-  # applies: this run optimizes exactly one scheme, and the store may hold rows for
-  # the other from a previous run.
-  td          <- if (isTRUE(settings$simulate)) NULL else settings$target_domain
+  # The store is global; this optimization only learns from its own universe. Filtering here
+  # scopes EVERYTHING downstream -- seeds, the done/avoid set, aggregation, the surrogate, and
+  # the incumbent -- to that slice, so a config evaluated only in some OTHER domain counts as
+  # untried here and gets run to build in-domain evidence. The scheme filter always applies:
+  # this run optimizes exactly one scheme, and the store may hold rows for the other.
   evals       <- read_evals(con) |>
-                   filter_evals_to_domain(td) |>
+                   filter_evals_to_universe(universe) |>
                    filter_evals_to_scheme(settings$optimize_scheme) |>
                    filter_evals_to_build(settings$build %||% OPTIMIZER_BUILD)
   done_hashes <- unique(evals$config_hash)

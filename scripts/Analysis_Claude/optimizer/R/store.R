@@ -105,6 +105,20 @@ open_store <- function(path, busy_timeout_ms = 60000) {
       ts          TEXT,
       reaped_ts   TEXT
     )"))
+  # One row per run: the settings it searched under and the trial universe pinned to them.
+  # Every worker in a run reads that universe from here instead of resolving its own.
+  .with_busy_retry(function() DBI::dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS runs (
+      run_id        TEXT PRIMARY KEY,
+      started_ts    TEXT,
+      build         TEXT,
+      scheme        TEXT,
+      settings_hash TEXT,
+      settings_json TEXT,
+      universe_json TEXT,
+      catalog_ts    TEXT,
+      host          TEXT
+    )"))
   # Migrations: columns that older stores lack. `detail` holds the failure funnel. The four
   # domain columns reuse the catalogue's names, so .apply_target_domain filters sampling and
   # evals identically. peak_rss_mb is the figure to size a machine from; peak_r_mb is kept for
@@ -115,7 +129,8 @@ open_store <- function(path, busy_timeout_ms = 60000) {
   add <- c(detail = "TEXT", study_name = "TEXT", program_name = "TEXT",
            location_name = "TEXT", year = "INTEGER",
            peak_r_mb = "REAL", rss_mb = "REAL", worker = "TEXT", dosage_budget = "REAL",
-           peak_rss_mb = "REAL", em_df_method = "TEXT", build = "TEXT")
+           peak_rss_mb = "REAL", em_df_method = "TEXT", build = "TEXT",
+           run_id = "TEXT")
   for (col in names(add)) {
     if (col %in% have) next
     # Two workers starting together both see the column missing and both try to add it.
@@ -341,13 +356,15 @@ store_eval <- function(con, cfg, trial_id, scheme, score, n_test, status,
                        location_name = NA_character_, year = NA_integer_,
                        peak_r_mb = NA_real_, rss_mb = NA_real_, peak_rss_mb = NA_real_,
                        worker = NA_character_, dosage_budget = NA_real_,
-                       em_df_method = NA_character_, build = NA_character_) {
+                       em_df_method = NA_character_, build = NA_character_,
+                       run_id = NA_character_) {
   invisible(.with_busy_retry(function() DBI::dbExecute(con,
     "INSERT INTO evals
        (config_hash, config_json, trial_id, study_name, program_name, location_name, year,
         scheme, score, n_test, status, reason, detail, seconds, ts,
-        peak_r_mb, rss_mb, worker, dosage_budget, peak_rss_mb, em_df_method, build)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        peak_r_mb, rss_mb, worker, dosage_budget, peak_rss_mb, em_df_method, build,
+        run_id)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     params = list(config_hash(cfg), config_to_json(cfg), trial_id,
                   study_name %||% NA_character_, program_name %||% NA_character_,
                   location_name %||% NA_character_,
@@ -362,7 +379,57 @@ store_eval <- function(con, cfg, trial_id, scheme, score, n_test, status,
                   as.numeric(dosage_budget %||% NA_real_),
                   as.numeric(peak_rss_mb %||% NA_real_),
                   as.character(em_df_method %||% NA_character_),
-                  as.character(build %||% NA_character_)))))
+                  as.character(build %||% NA_character_),
+                  as.character(run_id %||% NA_character_)))))
+}
+
+# --- run provenance --------------------------------------------------------
+# A run is identified by the settings that DEFINE its search, so resuming with the same
+# settings continues the same run and inherits its pinned trial universe, while changing one
+# of them starts a new run. Paths, worker ids and other per-worker settings are excluded.
+.RUN_SIGNATURE_KEYS <- c("optimize_scheme", "target_domain", "focal_trait_db_id",
+                         "min_trial_acc", "trial_replication", "config_replication",
+                         "replicate_every", "contender_z", "n_random_init", "simulate")
+
+run_id_for <- function(settings, build = NA_character_) {
+  substr(rlang::hash(c(settings[.RUN_SIGNATURE_KEYS], list(build = build))), 1, 12)
+}
+
+read_run <- function(con, run_id) {
+  r <- tibble::as_tibble(DBI::dbGetQuery(con, "SELECT * FROM runs WHERE run_id = ?",
+                                         params = list(run_id)))
+  if (!nrow(r)) NULL else r[1, , drop = FALSE]
+}
+
+# The trial ids a run is pinned to. NULL means unconstrained (simulate mode).
+run_universe <- function(row) {
+  if (is.null(row) || !nrow(row) || is.na(row$universe_json)) return(NULL)
+  u <- jsonlite::fromJSON(row$universe_json)
+  if (!length(u$id)) NULL else as.character(u$id)
+}
+
+# INSERT OR IGNORE: workers may arrive together, the first one wins, and all of them then read
+# the same universe back.
+record_run <- function(con, run_id, settings, build, universe_ids = character(),
+                       universe_names = NULL, catalog_ts = NA_character_) {
+  uni <- if (!length(universe_ids)) NA_character_ else as.character(jsonlite::toJSON(
+    list(id = as.character(universe_ids),
+         name = as.character(universe_names %||% rep(NA_character_, length(universe_ids))))))
+  keep <- vapply(settings, function(x) is.atomic(x) || is.list(x), logical(1))
+  sj <- tryCatch(as.character(jsonlite::toJSON(settings[keep], auto_unbox = TRUE,
+                                               digits = NA, null = "null")),
+                 error = function(e) NA_character_)
+  invisible(.with_busy_retry(function() DBI::dbExecute(con,
+    "INSERT OR IGNORE INTO runs
+       (run_id, started_ts, build, scheme, settings_hash, settings_json, universe_json,
+        catalog_ts, host)
+     VALUES (?,?,?,?,?,?,?,?,?)",
+    params = list(run_id, format(Sys.time(), tz = "UTC"),
+                  as.character(build %||% NA_character_),
+                  as.character(settings$optimize_scheme %||% NA_character_),
+                  run_id_for(settings, build), sj, uni,
+                  as.character(catalog_ts %||% NA_character_),
+                  Sys.info()[["nodename"]]))))
 }
 
 # --- in-flight claims ------------------------------------------------------

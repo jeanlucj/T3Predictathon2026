@@ -90,10 +90,9 @@ failure_summary <- function(evals) {
 # Write a Markdown snapshot to disk.
 write_report <- function(con, settings) {
   all_evals <- read_evals(con)
-  # This optimization's own domain + scheme -- what the surrogate learns from. n_other keeps
-  # the global count for context.
-  td      <- if (isTRUE(settings$simulate)) NULL else settings$target_domain
-  evals   <- filter_evals_to_domain(all_evals, td) |>
+  # This run's own universe + scheme -- what the surrogate learns from. n_other keeps the
+  # global count for context.
+  evals   <- filter_evals_to_universe(all_evals, settings$trial_universe) |>
                filter_evals_to_scheme(settings$optimize_scheme) |>
                filter_evals_to_build(settings$build %||% OPTIMIZER_BUILD)
   n_other <- nrow(all_evals) - nrow(evals)
@@ -136,6 +135,19 @@ write_report <- function(con, settings) {
              else sprintf(", %d row(s) behind", behind),
              if (isTRUE(is.finite(age) && !is.na(behind) && behind > 0 && age > 5))
                "  ** STALE **" else "")
+    }),
+    # The backup runs on every loop iteration, storing rows or not, so its age says the workers
+    # are alive and nothing about whether they are producing. This is the one that says that.
+    local({
+      if (!nrow(all_evals)) return("- newest row: _none_")
+      last <- suppressWarnings(max(all_evals$ts, na.rm = TRUE))
+      mins <- suppressWarnings(as.numeric(difftime(Sys.time(),
+                                 as.POSIXct(last, tz = "UTC"), units = "mins")))
+      paste0("- newest row: ",
+             if (!is.finite(mins)) last
+             else if (mins < 90) sprintf("%.0f min ago", mins)
+             else sprintf("%.1f h ago", mins / 60),
+             if (isTRUE(is.finite(mins) && mins > 120)) "  ** NOTHING STORED **" else "")
     }),
     # Which estimator ranked the configs and, when the random-effects fit ran, the variance
     # components. sd_resid is reported BOTH ways: the fit uses n_test - 3 as inverse-variance

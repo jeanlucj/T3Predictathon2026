@@ -1275,24 +1275,47 @@ store_eval(con, cfgA, "102", "CV0", 0.20, 50L, "ok",
 ev <- read_evals(con)
 check(nrow(ev) == 2 && setequal(ev$program_name, c("Cornell", "OSU")),
       "store_eval persists program_name for each row")
-# Oracle: filter_evals_to_domain keeps only the matching program; NULL domain keeps all.
-cornell <- filter_evals_to_domain(ev, list(programs = "Cornell"))
-check(nrow(cornell) == 1 && cornell$program_name == "Cornell",
-      "filter_evals_to_domain restricts to the target program")
-check(nrow(filter_evals_to_domain(ev, NULL)) == 2,
-      "filter_evals_to_domain: NULL domain is no constraint")
-check(nrow(filter_evals_to_domain(ev, list(programs = "Cornell", years = 2023))) == 0,
-      "filter_evals_to_domain: a year mismatch excludes the row")
-# Oracle: an unknown/NA-attribute row (e.g. simulated or pre-migration) is out of
-# domain once a constraint is set, but retained when the domain is NULL.
-store_eval(con, sample_config(), "sim_9", "CV0", 0.5, 10L, "ok")   # all attrs NA
+# Oracle: filter_evals_to_universe keeps only the pinned trials; NULL is no constraint.
+c101 <- filter_evals_to_universe(ev, "101")
+check(nrow(c101) == 1 && c101$trial_id == "101",
+      "filter_evals_to_universe restricts to the pinned trials")
+check(nrow(filter_evals_to_universe(ev, NULL)) == 2,
+      "filter_evals_to_universe: NULL universe is no constraint")
+check(nrow(filter_evals_to_universe(ev, character())) == 2,
+      "filter_evals_to_universe: an empty universe is no constraint")
+check(nrow(filter_evals_to_universe(ev, "999")) == 0,
+      "filter_evals_to_universe: a trial outside the universe is excluded")
+# Oracle: membership is decided on the id alone, so a row whose stored study_name no longer
+# matches the catalogue's is still in the universe its trial belongs to.
+store_eval(con, sample_config(), "101", "CV0", 0.5, 10L, "ok", study_name = "renamed_later")
 ev2 <- read_evals(con)
-check(nrow(filter_evals_to_domain(ev2, list(programs = "Cornell"))) == 1,
-      "filter_evals_to_domain: NA-attribute rows are out-of-domain under a constraint")
-check(nrow(filter_evals_to_domain(ev2, NULL)) == 3,
-      "filter_evals_to_domain: NA-attribute rows kept when domain is NULL")
+check(nrow(filter_evals_to_universe(ev2, "101")) == 2,
+      "filter_evals_to_universe: a renamed trial's rows stay in the universe")
 close_store(con); unlink(dbp)
-# Oracle: a config seen only OUT of the current domain still counts as untried, so
+
+# ===========================================================================
+cat("run provenance: the universe is pinned once and read back
+")
+# Oracle: the run row round-trips, and the same settings resolve to the same run_id -- which is
+# what lets a restart resume a run rather than start a second one beside it.
+dbpR <- tempfile(fileext = ".sqlite"); conR <- open_store(dbpR)
+sR   <- modifyList(optimizer_settings(), list(simulate = TRUE, optimize_scheme = "CV00"))
+ridR <- run_id_for(sR, "0.0.0")
+check(identical(ridR, run_id_for(sR, "0.0.0")), "run_id_for is stable for the same settings")
+check(!identical(ridR, run_id_for(modifyList(sR, list(trial_replication = 9)), "0.0.0")),
+      "run_id_for changes when a search-defining setting changes")
+check(identical(ridR, run_id_for(modifyList(sR, list(worker_id = "7")), "0.0.0")),
+      "run_id_for ignores per-worker settings")
+check(is.null(read_run(conR, ridR)), "read_run: no row before the run is recorded")
+record_run(conR, ridR, sR, "0.0.0", c("E1", "E2", "E3"), c("n1", "n2", "n3"))
+check(setequal(run_universe(read_run(conR, ridR)), c("E1", "E2", "E3")),
+      "record_run/run_universe round-trip the pinned trial ids")
+record_run(conR, ridR, sR, "0.0.0", c("Z9"))       # a second writer must not overwrite
+check(setequal(run_universe(read_run(conR, ridR)), c("E1", "E2", "E3")),
+      "record_run: the first writer wins, so all workers read one universe")
+check(is.null(run_universe(NULL)), "run_universe: no row means no constraint")
+close_store(conR); unlink(dbpR)
+# Oracle: a config seen only OUTSIDE this run's universe still counts as untried, so
 # choose_config re-offers a seed rather than treating it as done.
 dbp2 <- tempfile(fileext = ".sqlite"); con2 <- open_store(dbp2)
 # Pin the scheme rather than inheriting it: optimizer_settings() layers in settings.local.R,
@@ -1300,19 +1323,19 @@ dbp2 <- tempfile(fileext = ".sqlite"); con2 <- open_store(dbp2)
 # for the wrong reason. The seed must come from the SAME scheme for the hashes to correspond.
 TEST_SCHEME <- "CV0"
 seed1 <- seed_configs(TEST_SCHEME)[[1]]
-# Stamp the current build: these oracles are about the DOMAIN/SCHEME filters, and an
+# Stamp the current build: these oracles are about the UNIVERSE/SCHEME filters, and an
 # unstamped row would additionally be retired by filter_evals_to_build, making the seed look
 # untried for the wrong reason.
 store_eval(con2, seed1, "900", TEST_SCHEME, 0.3, 40L, "ok",
-           study_name = "elsewhere", program_name = "OSU", location_name = "X", year = 2024,
-           build = OPTIMIZER_BUILD)
-# simulate = FALSE so the (real-data) target-domain filter actually engages.
+           study_name = "elsewhere", build = OPTIMIZER_BUILD)
 st <- modifyList(optimizer_settings(),
-                 list(simulate = FALSE, optimize_scheme = TEST_SCHEME,
-                      target_domain = list(programs = "Cornell")))
-pick <- choose_config(con2, st)
+                 list(simulate = FALSE, optimize_scheme = TEST_SCHEME))
+pick <- choose_config(con2, st, universe = c("901", "902"))
 check(identical(config_hash(pick$cfg), config_hash(seed1)) && grepl("^seed:", pick$source),
-      "choose_config: an out-of-domain seed eval does not count as done in this domain")
+      "choose_config: a seed eval outside the universe does not count as done in this run")
+check(!identical(config_hash(choose_config(con2, st, universe = c("900", "901"))$cfg),
+                config_hash(seed1)),
+      "choose_config: the same row inside the universe does count as done")
 # Control: with NO domain restriction, that same seed eval DOES count as done, so
 # choose_config moves past seed1 to a later unevaluated seed.
 st0  <- modifyList(optimizer_settings(),
@@ -1705,6 +1728,38 @@ check(identical(choose_trial(con6, tset())$id, "simtrial_222"),
 close_store(con6); unlink(dbp6)
 
 # ===========================================================================
+cat(".trial_backlog: what may hold the gate open\n")
+# Oracle: a non-empty backlog stops fresh trials being drawn, so anything that can sit in it
+# unsatisfiably stalls the whole search. The two views the caller passes are what keep that
+# from happening -- evidence decides who is owed replication, `seen` (built from every computed
+# row, exactly as claim_eval keys them) decides what has already been done.
+bl_ev <- function(...) tibble::tibble(trial_id = c(...),
+                                      config_hash = paste0("c", seq_along(c(...))),
+                                      score = 0.3)
+check(setequal(.trial_backlog(bl_ev("A", "B"), r = 2L), c("A", "B")),
+      ".trial_backlog: under-replicated trials are owed a revisit")
+check(!length(.trial_backlog(bl_ev("A", "A"), r = 2L)),
+      ".trial_backlog: a trial at the replication target leaves the backlog")
+check(!length(.trial_backlog(bl_ev("A"), seen = "A", r = 2L)),
+      ".trial_backlog: a trial this config already ran is not re-proposed")
+check(identical(.trial_backlog(bl_ev("A", "B"), universe = "B", r = 2L), "B"),
+      ".trial_backlog: a trial outside the universe cannot hold the gate open")
+check(setequal(.trial_backlog(bl_ev("A", "B"), universe = NULL, r = 2L), c("A", "B")),
+      ".trial_backlog: a NULL universe is no constraint")
+check(!length(.trial_backlog(bl_ev()[0, ], r = 2L)),
+      ".trial_backlog: an empty store has no backlog")
+# The regression this all exists for: rows that were COMPUTED but are not evidence (their trial
+# is no longer in the universe) must not be able to keep proposing that trial, or selection and
+# claim_eval disagree forever -- proposed every iteration, claimable never.
+local({
+  computed <- bl_ev("A", "OUT")
+  evidence <- filter_evals_to_universe(computed, "A")
+  seen     <- unique(as.character(computed$trial_id))
+  check(!length(.trial_backlog(evidence, seen, "A", r = 2L)),
+        ".trial_backlog: a computed-but-not-evidence trial is never re-proposed")
+})
+
+# ===========================================================================
 cat("choose_config (config_replication) and the trial it is paired with\n")
 # Oracle: a configuration short of config_replication evaluations must come back, and must come
 # back paired with a trial it has NOT already been run on -- the real pipeline is deterministic
@@ -2060,7 +2115,7 @@ local({
 # ===========================================================================
 cat("evals store: optimizer targets ONE scheme (per-scheme slice of the archive)\n")
 # Oracle: filter_evals_to_scheme keeps only the target scheme; NULL keeps all; and
-# it composes with filter_evals_to_domain.
+# it composes with filter_evals_to_universe.
 dbp3 <- tempfile(fileext = ".sqlite"); con3 <- open_store(dbp3)
 cfgS <- sample_config()
 store_eval(con3, cfgS, "201", "CV0",  0.4, 50L, "ok", program_name = "Cornell")
@@ -2072,9 +2127,9 @@ check(nrow(filter_evals_to_scheme(evS, "CV0")) == 2 &&
       "filter_evals_to_scheme keeps only the target scheme")
 check(nrow(filter_evals_to_scheme(evS, NULL)) == 3,
       "filter_evals_to_scheme: NULL scheme is no constraint")
-check(nrow(filter_evals_to_domain(evS, list(programs = "Cornell")) |>
+check(nrow(filter_evals_to_universe(evS, c("201", "202")) |>
              filter_evals_to_scheme("CV0")) == 1,
-      "domain + scheme filters compose (Cornell & CV0 -> 1 row)")
+      "universe + scheme filters compose (201/202 & CV0 -> 1 row)")
 close_store(con3); unlink(dbp3)
 # Oracle: a config seen only under the OTHER scheme counts as untried here, so
 # choose_config re-offers a seed; once it exists under this scheme it is done.

@@ -37,7 +37,8 @@ cat(sprintf("rows   : %d, %s to %s\n", nrow(ev), min(ev$ts, na.rm = TRUE), max(e
 cat(sprintf("build  : %s   scheme: %s\n", s$build %||% OPTIMIZER_BUILD, s$optimize_scheme))
 
 # The real predicates, not a re-implementation, so this cannot drift from what the run does.
-in_dom <- ev |> filter_evals_to_domain(s$target_domain) |> pull(id)
+universe <- run_universe(read_run(con, run_id_for(s, s$build %||% OPTIMIZER_BUILD)))
+in_dom <- ev |> filter_evals_to_universe(universe) |> pull(id)
 ev <- ev |> mutate(
   dom    = if_else(id %in% in_dom, "in-domain", "out-of-domain"),
   sch    = if_else(scheme == s$optimize_scheme, "scheme-ok", "scheme-no"),

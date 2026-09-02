@@ -99,8 +99,9 @@ merged <- restore_store_from_backup(modifyList(s, list(db_path = tmp)))
 con <- open_store(tmp)
 
 evals <- read_evals(con)
+universe <- run_universe(read_run(con, run_id_for(s, s$build %||% OPTIMIZER_BUILD)))
 slice <- evals |>
-  filter_evals_to_domain(if (isTRUE(s$simulate)) NULL else s$target_domain) |>
+  filter_evals_to_universe(universe) |>
   filter_evals_to_scheme(s$optimize_scheme) |>
   filter_evals_to_build(s$build %||% OPTIMIZER_BUILD)
 cat(sprintf("  after the leader's restore: %d rows\n", nrow(evals)))

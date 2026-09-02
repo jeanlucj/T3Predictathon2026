@@ -406,6 +406,61 @@ eligible_trial_ids <- function(conn, settings) {
   unique(as.character(.eligible_trials(conn, settings)$study_db_id))
 }
 
+# When the catalogue this universe was resolved from was last refreshed.
+.trial_catalog_ts <- function(settings) {
+  f <- tryCatch(.cache_existing(settings, "trial_catalog", NULL), error = function(e) NA)
+  if (is.na(f)) NA_character_ else format(file.info(f)$mtime, "%Y-%m-%d %H:%M:%S")
+}
+
+# The trial universe for this run, resolved ONCE and shared through the store. The leader
+# resolves it from the catalogue and records the run; every other worker reads it back. The
+# universe is a set of trial ids, so a catalogue that later reports a trial differently cannot
+# change what this run searches. Returns list(run_id, universe, resumed); a NULL universe means
+# unconstrained.
+pin_trial_universe <- function(con, conn, settings, leader = TRUE, wait_s = 600) {
+  build  <- settings$build %||% OPTIMIZER_BUILD
+  run_id <- run_id_for(settings, build)
+
+  row <- read_run(con, run_id)
+  if (!is.null(row)) return(list(run_id = run_id, universe = run_universe(row), resumed = TRUE))
+
+  if (isTRUE(settings$simulate)) {
+    record_run(con, run_id, settings, build)
+    return(list(run_id = run_id, universe = NULL, resumed = FALSE))
+  }
+
+  if (!leader) {
+    waited <- 0
+    while (is.null(row) && waited < wait_s) {
+      Sys.sleep(5); waited <- waited + 5
+      row <- read_run(con, run_id)
+    }
+    if (is.null(row))
+      fatal(paste0("no run row after ", round(wait_s / 60), " min: the leader never recorded ",
+                   "run ", run_id), "no_run_row")
+    return(list(run_id = run_id, universe = run_universe(row), resumed = TRUE))
+  }
+
+  cand <- .eligible_trials(conn, settings)
+  ids  <- unique(as.character(cand$study_db_id))
+  if (!length(ids))
+    fatal("no trials match the target domain in settings", "no_trials_in_domain")
+  # The catalogue must account for every named trial before a multi-day search is pinned to it:
+  # a trial that is absent here is one the run can never reach.
+  want <- settings$target_domain$trials
+  if (!is.null(want)) {
+    missing <- setdiff(as.character(want), as.character(cand$study_name))
+    if (length(missing))
+      fatal(paste0(length(missing), " of ", length(want), " target_domain$trials are not in ",
+                   "the resolved universe: ", paste(missing, collapse = ", ")),
+            "domain_not_covered")
+  }
+  record_run(con, run_id, settings, build, ids,
+             cand$study_name[match(ids, as.character(cand$study_db_id))],
+             catalog_ts = .trial_catalog_ts(settings))
+  list(run_id = run_id, universe = ids, resumed = FALSE)
+}
+
 sample_real_trial <- function(settings, conn, max_tries = 12) {
   # trial_catalog() already restricts to focal-trait trials when focal_trait_db_id is set; the
   # per-trial observation check in the loop below is the safety net (and the only trait filter
@@ -433,7 +488,7 @@ sample_real_trial <- function(settings, conn, max_tries = 12) {
 .trial_descriptor <- function(row, acc) {
   list(
     id          = as.character(row$study_db_id),
-    study_name  = as.character(row$study_name %||% row$study_db_id),
+    study_name  = as.character(row$study_name %||% NA_character_),
     accessions  = acc,
     n_acc       = length(acc),
     program     = as.character(row$program_name %||% NA),

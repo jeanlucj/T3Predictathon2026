@@ -27,7 +27,8 @@ optimizer_step <- function(con, settings, conn = NULL) {
   exhausted <- FALSE
   pick_trial <- function(cfg) {
     exhausted <<- FALSE
-    tryCatch(choose_trial(con, settings, conn, cfg_hash = config_hash(cfg)),
+    tryCatch(choose_trial(con, settings, conn, cfg_hash = config_hash(cfg),
+                          universe = settings$trial_universe),
              optimizer_trials_exhausted = function(e) { exhausted <<- TRUE; NULL },
              optimizer_sample_failed = function(e) {
                message("  trial sampling: ", conditionMessage(e)); NULL })
@@ -52,7 +53,8 @@ optimizer_step <- function(con, settings, conn = NULL) {
     if (exhausted) {
       choice <- choose_config(con, settings, settings$trial_universe, replicate = FALSE)
       trial  <- pick_trial(choice$cfg)
-      if (exhausted) return(list(source = choice$source, skipped = TRUE))
+      if (exhausted) return(list(source = choice$source, skipped = TRUE,
+                                 trial = trial$id %||% NA_character_))
     }
     if (is.null(trial)) return(list(source = choice$source, sampling_failed = TRUE))
     claimed <- claim_eval(con, config_hash(choice$cfg), trial$id, scheme,
@@ -62,7 +64,7 @@ optimizer_step <- function(con, settings, conn = NULL) {
     message("  (", trial$id, " for this config is already running or already done",
             if (attempt < 3) " -- picking again)" else " -- giving the step up)")
   }
-  if (!claimed) return(list(source = choice$source, skipped = TRUE))
+  if (!claimed) return(list(source = choice$source, skipped = TRUE, trial = trial$id))
   # Released whichever way the evaluation ends. A SIGKILL skips this, and the dead-pid check in
   # claim_eval() is what recovers from that.
   on.exit(release_claim(con, config_hash(choice$cfg), trial$id, scheme), add = TRUE)
@@ -88,7 +90,8 @@ optimizer_step <- function(con, settings, conn = NULL) {
              # not a config parameter, so without it rows from before and after the
              # 2026-07-31 switch would be averaged together (EM_COMBINE_COMPARISON.md item 1).
              em_df_method  = "effective_n",
-             build         = settings$build %||% OPTIMIZER_BUILD)
+             build         = settings$build %||% OPTIMIZER_BUILD,
+             run_id        = settings$run_id %||% NA_character_)
   # scores/statuses kept as length-1 vectors so the main-loop logging is unchanged.
   list(source = choice$source, trial = trial$id,
        scores = ev$score, statuses = ev$status, ei = choice$ei %||% NA_real_,
@@ -157,15 +160,19 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
   if (!settings$simulate && is.null(conn)) {
     conn <- t3_connect(settings)
   }
-  # The eligible trial universe, resolved once per run from the weekly-cached catalogue. A
-  # config evaluated on all of it is dropped from the replication backlog, and the report says
-  # so when every contender has covered it.
-  if (!isTRUE(settings$simulate))
-    settings$trial_universe <- tryCatch(eligible_trial_ids(conn, settings),
-                                        error = function(e) NULL)
-
   con <- open_store(settings$db_path)
   on.exit(close_store(con), add = TRUE)
+
+  # The trial universe, resolved ONCE per run and shared through the store: the leader records
+  # it, the others read it back. Every eval is filtered against it, a config evaluated on all
+  # of it is dropped from the replication backlog, and the report says so when every contender
+  # has covered it.
+  pin <- pin_trial_universe(con, conn, settings, leader = leader)
+  settings$run_id         <- pin$run_id
+  settings$trial_universe <- pin$universe
+  message(sprintf("run %s (%s): %d trial(s) in the universe", pin$run_id,
+                  if (isTRUE(pin$resumed)) "resumed" else "new",
+                  length(pin$universe %||% character())))
   # No worker can be mid-evaluation when the leader starts, so any claim here is left over from
   # a job the scheduler killed. Only matters on a durable db_path: cluster scratch is wiped with
   # the job, and restore_store_from_backup copies `evals` alone.
@@ -184,6 +191,7 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
   start_n <- n_evals(con)
   iter <- 0
   consec_sample_fail <- 0L
+  consec_skipped <- 0L
   fatal_hit <- FALSE
   message(sprintf("[%s] optimizer start (simulate=%s, worker=%s%s); %d evaluations already in store",
                   format(start), settings$simulate, settings$worker_id %||% "1",
@@ -207,11 +215,24 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
     iter <- iter + 1
 
     if (!is.null(step) && isTRUE(step$skipped)) {
-      consec_sample_fail <- 0L                 # nothing wrong; this config had no trial left
-      message(sprintf("[%s] iter %d  src=%-16s skipped: every eligible trial already run",
-                      format(Sys.time()), iter, step$source))
+      # A skip stores nothing. One is ordinary -- that config had no trial left. An unbroken
+      # run of them means the search cannot place work anywhere, whether because the domain is
+      # exhausted or because selection keeps proposing what cannot be claimed; both are reasons
+      # to stop and say so, and neither is visible from the iteration rate alone.
+      consec_sample_fail <- 0L
+      consec_skipped <- consec_skipped + 1L
+      message(sprintf("[%s] iter %d  src=%-16s skipped: %s already run (%d consecutive)",
+                      format(Sys.time()), iter, step$source,
+                      if (is.null(step$trial) || is.na(step$trial)) "every eligible trial"
+                      else paste("trial", step$trial),
+                      consec_skipped))
+      if (consec_skipped >= settings$max_consec_skip) {
+        message("nothing evaluated in ", consec_skipped, " consecutive iterations -> halting; ",
+                "check that the trial universe still has work this run can claim."); break
+      }
     } else if (!is.null(step) && isTRUE(step$sampling_failed)) {
       consec_sample_fail <- consec_sample_fail + 1L
+      consec_skipped <- 0L
       message(sprintf("[%s] iter %d  trial sampling failed (%d consecutive)",
                       format(Sys.time()), iter, consec_sample_fail))
       if (consec_sample_fail >= settings$max_sample_fail) {
@@ -220,6 +241,7 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
       }
     } else {
       consec_sample_fail <- 0L
+      consec_skipped <- 0L
       if (!is.null(step)) {
         message(sprintf("[%s] iter %d  src=%-16s trial=%s  scores=%s  status=%s  peak=%s",
                         format(Sys.time()), iter, step$source, step$trial,

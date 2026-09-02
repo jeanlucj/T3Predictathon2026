@@ -469,10 +469,11 @@ sqlite3 "$OPTIMIZER_HOME/state/evals_backup.sqlite" \
   "SELECT substr(ts,1,13) AS hour, COUNT(*) FROM evals GROUP BY hour ORDER BY hour DESC LIMIT 24;"
 ```
 
-The backup is written after **every** evaluation, so its mtime is the
-sharpest "is anything finishing" signal available off-node. `report.md`'s
-`- store backup:` line says the same thing in words, and flags
-`** STALE **`.
+The backup is written after **every** loop iteration, including ones that
+store nothing, so its mtime says the workers are alive and nothing about
+whether they are producing. The query above is the honest signal, and
+`report.md`'s `- newest row:` line is the same measure in words (`- store
+backup:` reports only whether backups themselves are keeping up).
 
 ### Are the container and the code the same build?
 
@@ -745,7 +746,7 @@ to over-worry:
 - **Several workers sharing one store is fully supported.** That is what
   WAL on node-local disk is for, and it is the ordinary N-worker
   configuration. Nor is the *archive* single-purpose:
-  `filter_evals_to_domain` / `filter_evals_to_scheme` /
+  `filter_evals_to_universe` / `filter_evals_to_scheme` /
   `filter_evals_to_build` (`R/optimizer.R:32-45`) exist precisely so
   runs with different domains and schemes coexist in one file.
 - **What genuinely does not work is two concurrent runs**, because both

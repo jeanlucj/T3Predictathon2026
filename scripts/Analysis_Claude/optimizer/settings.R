@@ -203,6 +203,8 @@ optimizer_settings <- function(local_overrides = TRUE) {
     replicate_every    = 3,      # rations the CONTENDER tier only: 1 worker in this many takes
                                  # from it. The config_replication floor is never rationed.
     max_sample_fail    = 25,     # consecutive trial-sampling failures before halting
+    max_consec_skip    = 50,     # consecutive iterations storing nothing before halting: the
+                                 # liveness bound, not a tuning knob
 
     # Known-feasible trials used as a bug oracle by check_canaries(): failure here means the
     # code is hiding real data. NULL disables. The nine Predictathon focal trials, named

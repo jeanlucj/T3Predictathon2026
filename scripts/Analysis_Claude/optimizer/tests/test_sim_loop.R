@@ -108,5 +108,37 @@ if (!(inc_q > seed_q)) {
 # ---------------------------------------------------------------------------------------
 
 close_store(con)
+
+# ---------------------------------------------------------------------------------------
+# Liveness: a run of iterations that store NOTHING must stop the worker.
+#
+# A skip is ordinary on its own -- that configuration had no trial left. An unbroken run of
+# them means the search cannot place work anywhere, and it looks identical from the outside to
+# a healthy run: same iteration rate, same backup age. Without this bound a worker spins until
+# the scheduler kills it. optimizer_step is stubbed because the point is the loop's response,
+# not any particular reason for the skip.
+cat("\nliveness: consecutive skips halt the run\n")
+real_step <- optimizer_step
+optimizer_step <- function(con, settings, conn = NULL)
+  list(source = "replicate", skipped = TRUE, trial = "simtrial_fixed")
+msgs <- character()
+withCallingHandlers(
+  run_optimizer(modifyList(settings, list(
+    db_path = tempfile(fileext = ".sqlite"), stop_file = tempfile(),
+    report_path = tempfile(fileext = ".md"),
+    max_iters = 500, max_consec_skip = 5, checkpoint_every = 1000))),
+  message = function(m) { msgs <<- c(msgs, conditionMessage(m)); invokeRestart("muffleMessage") })
+optimizer_step <- real_step
+
+iters <- suppressWarnings(as.integer(sub(".*iter ([0-9]+).*", "\\1",
+                                         grep("iter [0-9]+", msgs, value = TRUE))))
+if (!any(grepl("nothing evaluated in", msgs))) {
+  cat("\nFAIL: an unbroken run of skips did not halt the worker\n"); fail <- 1L
+}
+if (!(length(iters) && max(iters, na.rm = TRUE) <= 6L)) {
+  cat(sprintf("\nFAIL: ran %d iterations on a max_consec_skip of 5\n",
+              if (length(iters)) max(iters, na.rm = TRUE) else 0L)); fail <- 1L
+}
+
 if (fail == 0L) cat("\nPASS: the surrogate search beats random search and the submissions on an exact objective.\n")
 quit(status = fail)
