@@ -446,12 +446,14 @@ choose_config <- function(con, settings, universe = NULL, replicate = TRUE) {
     return(list(cfg = fresh_random(done_hashes), source = "random_init"))
   }
 
-  # Phase 4: surrogate-guided. Which fit is safe depends on the DESIGN of the store:
-  #   BLOCKED  one row per (config, trial), trial_id a factor. Removes the trial variance from
-  #            every config's estimate and keeps the replication weighting that collapsing to
-  #            means throws away -- LESSONS #19.
-  #   POOLED   one row per config mean, when the design cannot support trial_id
-  #            (trial_feature_usable).
+  # Phase 4: surrogate-guided. Three ways to handle the trial effect, most structured first:
+  #   MERF     one row per (config, trial), the trial effect a shrunken random effect fitted
+  #            outside the forest. Costs one variance parameter rather than competing for tree
+  #            structure, and predicts the trial-marginal value directly.
+  #   BLOCKED  the same rows with trial_id as a forest feature, marginalised at prediction.
+  #            Removes the trial variance from every config's estimate and keeps the
+  #            replication weighting that collapsing to means throws away -- LESSONS #19.
+  #   POOLED   one row per config mean, when the design cannot support a trial effect at all.
   scored  <- agg |> dplyr::filter(is.finite(mean_score))
   rows    <- dplyr::filter(evals, is.finite(score))
   # Drop rows whose trial has not yet been replicated, keeping trial_id in the model for the
@@ -461,19 +463,31 @@ choose_config <- function(con, settings, universe = NULL, replicate = TRUE) {
     n_cfg <- tapply(rows$config_hash, rows$trial_id, function(x) length(unique(x)))
     rows  <- rows[n_cfg[as.character(rows$trial_id)] >= 2L, , drop = FALSE]
   }
-  blocked <- nrow(rows) > 0 && dplyr::n_distinct(rows$trial_id) >= 2L
-  if (blocked) {
-    feats  <- configs_to_features(lapply(rows$config_json, config_from_json))
-    feats$trial_id <- factor(rows$trial_id)
-    surro  <- fit_surrogate(feats, rows$score,
-                            ntree = settings$ntree, min_obs = settings$n_random_init)
-    if (is.null(surro)) blocked <- FALSE          # too few rows after dropping -> pooled path
+  # merf -> blocked -> pooled, each falling through when it cannot be fitted. settings$
+  # surrogate_method names the most structured one to attempt; the trial effect needs at least
+  # two trials either way.
+  want    <- settings$surrogate_method %||% "merf"
+  grouped <- nrow(rows) > 0 && dplyr::n_distinct(rows$trial_id) >= 2L
+  mode    <- "pooled"
+  surro   <- NULL
+  if (grouped && identical(want, "merf")) {
+    feats <- configs_to_features(lapply(rows$config_json, config_from_json))
+    surro <- fit_surrogate_merf(feats, rows$score, rows$trial_id,
+                                ntree = settings$ntree, min_obs = settings$n_random_init)
+    if (!is.null(surro)) mode <- "merf"
   }
-  if (!blocked) {
-    cfgs   <- lapply(scored$config_json, config_from_json)
-    feats  <- configs_to_features(cfgs)
-    surro  <- fit_surrogate(feats, scored$mean_score,
-                            ntree = settings$ntree, min_obs = settings$n_random_init)
+  if (is.null(surro) && grouped && want %in% c("merf", "blocked")) {
+    feats <- configs_to_features(lapply(rows$config_json, config_from_json))
+    feats$trial_id <- factor(rows$trial_id)
+    surro <- fit_surrogate(feats, rows$score,
+                           ntree = settings$ntree, min_obs = settings$n_random_init)
+    if (!is.null(surro)) mode <- "blocked"
+  }
+  if (is.null(surro)) {
+    feats <- configs_to_features(lapply(scored$config_json, config_from_json))
+    surro <- fit_surrogate(feats, scored$mean_score,
+                           ntree = settings$ntree, min_obs = settings$n_random_init)
+    mode  <- "pooled"
   }
   if (is.null(surro)) return(list(cfg = fresh_random(done_hashes), source = "random_fallback"))
 
@@ -483,12 +497,17 @@ choose_config <- function(con, settings, universe = NULL, replicate = TRUE) {
   cfeats  <- configs_to_features(cands)
   # Score a candidate as its EXPECTED value over the observed trials -- the objective is
   # "best on a random trial", so trial_id is marginalised away rather than chosen.
-  pr      <- if (blocked) predict_surrogate_marginal(surro, cfeats, levels(feats$trial_id))
-             else         predict_surrogate(surro, cfeats)
+  # merf already predicts the marginal -- its forest was fit to y - b, so the random effect is
+  # zero at prediction. blocked has to average trial_id away explicitly.
+  pr      <- if (identical(mode, "blocked"))
+               predict_surrogate_marginal(surro, cfeats, levels(feats$trial_id))
+             else predict_surrogate(surro, cfeats)
   best    <- max(scored$mean_score)
   ei      <- expected_improvement(pr$mean, pr$sd, best, settings$ei_xi)
 
   pick <- which.max(ei)
-  list(cfg = cands[[pick]], source = if (blocked) "acquisition_blocked" else "acquisition",
+  list(cfg = cands[[pick]],
+       source = switch(mode, merf = "acquisition_merf", blocked = "acquisition_blocked",
+                       "acquisition"),
        ei = ei[pick], pred_mean = pr$mean[pick], pred_sd = pr$sd[pick])
 }

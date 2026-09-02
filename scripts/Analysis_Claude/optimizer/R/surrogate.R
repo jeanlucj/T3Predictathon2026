@@ -44,6 +44,46 @@ fit_surrogate <- function(features, y,
             class = "rf_surrogate")
 }
 
+# The trial effect as a SHRUNKEN random effect OUTSIDE the tree (a mixed-effects random forest,
+# Hajjem, Bellavance & Larocque 2014). Fit the forest to y - b, re-estimate b from y - f(X),
+# iterate. A many-level grouping factor then costs one variance parameter instead of competing
+# for tree structure, which is what an LMM does with it.
+#
+# The forest is fit to y - b, so predict_surrogate() already returns the group-marginal value
+# the objective wants: no marginalisation step, and trial_id is NOT among the features.
+# Returns NULL -- so the caller falls back -- when lme4 is missing, when there are fewer than
+# two groups, or when the forest itself declines.
+fit_surrogate_merf <- function(features, y, groups,
+                               ntree = 300, min_obs = 12, iters = 3L) {
+  if (!requireNamespace("lme4", quietly = TRUE)) return(NULL)
+  ok <- is.finite(y) & !is.na(groups)
+  features <- features[ok, , drop = FALSE]
+  y        <- y[ok]
+  groups   <- factor(as.character(groups[ok]))
+  if (length(y) < min_obs || nlevels(groups) < 2L) return(NULL)
+
+  work <- y                      # the response the LMM sees; y minus the forest, after round 1
+  m <- NULL
+  for (it in seq_len(max(1L, as.integer(iters)))) {
+    re <- tryCatch(suppressMessages(lme4::lmer(work ~ 1 + (1 | g),
+                                               data = data.frame(work = work, g = groups))),
+                   error = function(e) NULL)
+    if (is.null(re)) return(NULL)
+    b <- lme4::ranef(re)$g[as.character(groups), 1]
+    if (!length(b) || anyNA(b)) return(NULL)
+    m <- fit_surrogate(features, y - b, ntree = ntree, min_obs = min_obs)
+    if (is.null(m)) return(NULL)
+    fitted_rf <- rowMeans(vapply(m$trees, function(tr)
+      as.numeric(stats::predict(tr, newdata = features)), numeric(nrow(features))))
+    work <- y - fitted_rf
+  }
+  # predict_surrogate() floors the EI uncertainty at 0.25 * sd(y_obs). The fit ran on y - b,
+  # which has the between-group variance removed, so keeping that here would shrink the floor
+  # and explore less. The floor belongs to the response as observed.
+  m$y_obs <- y
+  m
+}
+
 # Is the eval slice replicated enough for trial_id to be a SAFE surrogate feature?
 #
 # rpart splits a many-level factor by ordering its levels on the response and cutting along that

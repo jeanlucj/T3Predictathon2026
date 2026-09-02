@@ -55,6 +55,9 @@
 #                          recorded -- but it is what prints the funnel. Off by default.
 #   --cached-only          probe only projects whose dosage is already cached, and report
 #                          how many were skipped, instead of downloading a VCF per project.
+#   --dosage-budget-gb=4   memory the panel probe may spend on dosage matrices. The default is
+#                          well below the optimizer's, because everything the probe reports is
+#                          arithmetic on sample names -- marker density changes none of it.
 
 # Guard the working directory FIRST, with an actionable message. here::i_am() below also
 # halts from the wrong directory, but only in the cases where it cannot find the project --
@@ -89,6 +92,7 @@ o_maxproj <- as.integer(opt("max-projects", "8"))
 o_authpad <- as.numeric(opt("auth-window-min", "60"))
 o_replay  <- "--replay" %in% args
 o_cached  <- "--cached-only" %in% args
+o_budget  <- suppressWarnings(as.numeric(opt("dosage-budget-gb", "4")))
 
 # `error` evals are reported, never diagnosed (see the header). Split the requested
 # statuses into the two groups once, here.
@@ -96,10 +100,15 @@ REPORT_ONLY  <- "error"
 o_diagnose   <- setdiff(o_status, REPORT_ONLY)
 o_report     <- intersect(o_status, REPORT_ONLY)
 
-# The per-project probe below intersects dosage ROWNAMES with the trial's accessions, so
-# marker density cannot change its answer. Re-densifying a cache thinned under
-# dosage_total_budget_bytes would re-download a whole VCF per project to no effect.
-settings <- modifyList(optimizer_settings(), list(dosage_redensify = FALSE))
+# Everything this script reports about genotypes -- per-project overlap, the panel table,
+# .best_panel's pick -- is arithmetic on dosage ROWNAMES. Marker density changes none of it, so
+# neither re-densifying a thinned cache (a whole VCF re-download per project) nor carrying the
+# optimizer's much larger dosage budget buys anything here.
+if (!isTRUE(o_budget > 0))
+  stop("--dosage-budget-gb must be a positive number of gigabytes")
+settings <- modifyList(optimizer_settings(),
+                       list(dosage_redensify = FALSE,
+                            dosage_total_budget_bytes = o_budget * 1e9))
 
 # --- preflight: prove the network path works BEFORE spending hours ----------
 # Everything diagnose_trial prints first (accession counts, observation rows, per-project
@@ -108,6 +117,30 @@ settings <- modifyList(optimizer_settings(), list(dosage_redensify = FALSE))
 # and the catalogue here, up front, where a failure is unambiguous.
 cat("=== preflight ===\n")
 cat("  working directory: ", getwd(), "\n", sep = "")
+
+# The panel probe replays subtask C, which holds every covering project resident at once and
+# then builds merged copies of them -- so peak is about TWICE the budget below. Checked here,
+# before the cache rsync and before any trial, because the alternative is an OOM kill an hour in.
+# GB decimal, as the pipeline's own `geno:` line reports it, with the allocation also shown the
+# way SLURM was asked for it -- --mem=32G is 32 GiB, which is 34.4 GB, and the mismatch reads
+# like a bug otherwise.
+.gb  <- function(x) sprintf("%.1f GB", x / 1e9)
+job_mem    <- .job_memory_bytes()
+peak_bytes <- 2 * settings$dosage_total_budget_bytes
+cat("  job memory:        ",
+    if (is.finite(job_mem)) sprintf("%s (%.0f GiB)", .gb(job_mem), job_mem / 2^30)
+    else "unknown (not in a job?)", "\n", sep = "")
+cat("  dosage budget:     ", .gb(settings$dosage_total_budget_bytes),
+    " (panel probe peaks at ~", .gb(peak_bytes), ")\n", sep = "")
+if (is.finite(job_mem) && peak_bytes > job_mem)
+  stop("this allocation cannot hold the panel probe.\n",
+       "  peak ~", .gb(peak_bytes), " against ", .gb(job_mem), " available.\n",
+       "  The factor of two is measured, not assumed: a 14.8 GB plan loaded and a 15.1 GB\n",
+       "  plan was killed, both in the same 32 GiB job.\n",
+       "  Either ask for more (--mem=), or lower --dosage-budget-gb to at most ",
+       floor(job_mem / 2e9), ".\n",
+       "  Lowering it only thins markers; every number this script prints about genotypes is\n",
+       "  sample-name arithmetic, so the panel table is unchanged.", call. = FALSE)
 if (!file.exists(".Renviron"))
   stop("no .Renviron in the working directory -- cd to the optimizer folder and re-run.\n",
        "  R reads .Renviron from the working directory only; from anywhere else the T3\n",

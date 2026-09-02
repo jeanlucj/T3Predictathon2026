@@ -2020,6 +2020,52 @@ local({
 })
 
 # ===========================================================================
+cat("fit_surrogate_merf (trial as a random effect outside the tree)\n")
+# Oracle: the trial effect is fitted OUTSIDE the forest, so the returned model predicts the
+# trial-marginal value with no trial_id feature and no marginalisation step -- and it still
+# ranks candidates on the config feature with a large trial effect present.
+local({
+  set.seed(11); n <- 150
+  tr <- factor(sample(c("t1", "t2", "t3", "t4"), n, TRUE))
+  X  <- data.frame(a = runif(n), b = runif(n))
+  y  <- X$a * 2 + as.numeric(tr) * 3 + rnorm(n, 0, 0.05)      # trial effect dwarfs the signal
+  m  <- fit_surrogate_merf(X, y, tr, ntree = 40, min_obs = 10)
+  if (is.null(m)) {
+    check(!requireNamespace("lme4", quietly = TRUE), "merf returns NULL only when lme4 is absent")
+  } else {
+    check(inherits(m, "rf_surrogate"), "merf returns an rf_surrogate")
+    check(!("trial_id" %in% m$feat_names), "merf keeps trial_id OUT of the features")
+    pr <- predict_surrogate(m, data.frame(a = c(0.2, 0.8), b = c(0.5, 0.5)))
+    check(all(is.finite(pr$mean)) && all(is.finite(pr$sd)), "merf predictions are finite")
+    check(pr$mean[2] > pr$mean[1], "merf ranks on the config feature despite the trial effect")
+    # The EI floor is 0.25 * sd(y_obs); the fit ran on y - b, so keeping the residualised
+    # response would shrink the floor and explore less.
+    check(isTRUE(all.equal(sort(m$y_obs), sort(y))), "merf stores the UNRESIDUALISED y_obs")
+  }
+  check(is.null(fit_surrogate_merf(X, y, factor(rep("only", n)), ntree = 40, min_obs = 10)),
+        "merf returns NULL with a single trial, so the caller falls back")
+  check(is.null(fit_surrogate_merf(X[1:5, ], y[1:5], tr[1:5], ntree = 40, min_obs = 10)),
+        "merf returns NULL below min_obs")
+})
+
+# Oracle: surrogate_method selects the fit, and an un-fittable choice falls through rather than
+# failing. One trial cannot support merf or blocked, so both must land on pooled.
+local({
+  sset <- function(m) modifyList(optimizer_settings(),
+    list(simulate = TRUE, optimize_scheme = "CV00", surrogate_method = m,
+         n_random_init = 8, trial_replication = 1, config_replication = 1))
+  dbm <- tempfile(fileext = ".sqlite"); cm <- open_store(dbm)
+  for (i in 1:14) store_eval(cm, sample_config(), "one_trial", "CV00", 0.2 + i / 100,
+                             40L, "ok", build = OPTIMIZER_BUILD)
+  for (m in c("merf", "blocked", "pooled")) {
+    got <- choose_config(cm, sset(m), replicate = FALSE)
+    check(identical(got$source, "acquisition") || grepl("^seed:|^random", got$source),
+          sprintf("surrogate_method = %s falls back to pooled on a single-trial store", m))
+  }
+  close_store(cm); unlink(dbm)
+})
+
+# ===========================================================================
 cat("restore_store_from_backup (merging the durable backup into the work store)\n")
 # Oracle: the merge is ADDITIVE, like the cache rsync it mirrors. Rows already on the work disk
 # survive; a (config, trial, scheme) cell already present is not duplicated.

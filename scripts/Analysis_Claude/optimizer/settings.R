@@ -143,6 +143,12 @@ optimizer_settings <- function(local_overrides = TRUE) {
     schemes = c("CV0", "CV00"),  # what the diagnostics sanity-check
     optimize_scheme = "CV00",     # the ONE scheme this run targets; must be in `schemes`
 
+    # How the surrogate handles the trial effect. "merf" puts it outside the tree as a shrunken
+    # random effect, "blocked" makes trial_id a forest feature marginalised at prediction,
+    # "pooled" ignores trials and fits per-config means. Each falls back to the next when it
+    # cannot be fitted. surrogate_bakeoff.R scores all three on the current store.
+    surrogate_method = "merf",
+
     # ---- search behaviour -------------------------------------------------
     n_random_init       = 25,    # random configs before the surrogate takes over
     incumbent_min_reps  = 2,     # trials a config needs before it can be "incumbent"
@@ -277,6 +283,10 @@ optimizer_settings <- function(local_overrides = TRUE) {
   )
   s <- .apply_overrides(defaults, if (isTRUE(local_overrides)) .local_overrides() else list())
   # Validate the EFFECTIVE value, so a settings.local.R override is checked too.
+  if (length(s$surrogate_method) != 1L ||
+      !(s$surrogate_method %in% c("merf", "blocked", "pooled")))
+    stop("surrogate_method must be one of merf, blocked, pooled -- got: ",
+         paste(s$surrogate_method, collapse = ", "))
   if (length(s$optimize_scheme) != 1L || !is.character(s$optimize_scheme) ||
       !(s$optimize_scheme %in% s$schemes))
     stop("optimize_scheme must be a single scheme that is one of `schemes` (",

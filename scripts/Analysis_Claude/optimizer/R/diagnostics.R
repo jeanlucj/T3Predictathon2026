@@ -306,6 +306,43 @@ sweep_rich_trials <- function(settings, conn,
   invisible(list(rows = rows, verdict = verdict))
 }
 
+# How much memory this JOB may use, in bytes, or NA when nothing on the system says.
+#
+# SLURM's own variables first, then the cgroup. Deliberately NOT /proc/meminfo: inside a
+# container it reports the whole node's RAM rather than the job's limit, so a check built on it
+# passes and the job is then killed anyway.
+.job_memory_bytes <- function() {
+  mb   <- suppressWarnings(as.numeric(Sys.getenv("SLURM_MEM_PER_NODE")))
+  if (isTRUE(mb > 0)) return(mb * 1024^2)
+  per  <- suppressWarnings(as.numeric(Sys.getenv("SLURM_MEM_PER_CPU")))
+  cpus <- suppressWarnings(as.numeric(Sys.getenv("SLURM_CPUS_ON_NODE")))
+  if (isTRUE(per > 0) && isTRUE(cpus > 0)) return(per * cpus * 1024^2)
+
+  # "max" (v2) and a near-int64 sentinel (v1) both mean unlimited, which is not an answer.
+  lim_of <- function(f) {
+    if (!file.exists(f)) return(NA_real_)
+    v <- tryCatch(trimws(readLines(f, warn = FALSE)[1]), error = function(e) NA_character_)
+    if (is.na(v) || identical(v, "max")) return(NA_real_)
+    v <- suppressWarnings(as.numeric(v))
+    if (!isTRUE(v > 0) || v > 1e15) NA_real_ else v
+  }
+  if (!file.exists("/proc/self/cgroup")) return(NA_real_)      # not Linux, or no cgroup fs
+  rel <- tryCatch(suppressWarnings(
+           sub("^0::", "", grep("^0::", readLines("/proc/self/cgroup", warn = FALSE),
+                                value = TRUE)[1])),
+           error = function(e) NA_character_)
+  if (is.na(rel)) return(NA_real_)
+  # The limit usually sits on the job-level cgroup, not the leaf, so walk up to the root.
+  d <- file.path("/sys/fs/cgroup", rel)
+  repeat {
+    lim <- lim_of(file.path(d, "memory.max"))
+    if (is.finite(lim)) return(lim)
+    if (identical(d, "/sys/fs/cgroup") || identical(d, "/") || identical(d, dirname(d))) break
+    d <- dirname(d)
+  }
+  lim_of(file.path("/sys/fs/cgroup/memory", rel, "memory.limit_in_bytes"))
+}
+
 # The configs a trial actually FAILED under, recovered from the store for diagnose_trial(). A
 # failure is a property of (trial x config): the permissive default canary_config() will not
 # reproduce, say, a focal_plus_onehop failure, and returns a false clean bill of health.
