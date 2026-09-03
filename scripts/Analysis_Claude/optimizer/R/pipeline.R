@@ -219,10 +219,10 @@ select_training_trials <- function(cfg, trial, conn, settings) {
       counts
     } else {
       # Fallback: ask the wizard which trials to consider, exactly as before. Reached when the
-      # index does not yet cover the catalogue (run prewarm_trial_index.R) or discovery is
+      # index does not yet cover the catalogue (run tools/prepare_indices.R) or discovery is
       # pinned to "wizard".
       .note_geno_once("trial_discovery_mode", sprintf(
-        "trial discovery: WIZARD (index covers %d of %d catalogue trials) -- run prewarm_trial_index.R",
+        "trial discovery: WIZARD (index covers %d of %d catalogue trials) -- run tools/prepare_indices.R",
         if (is.null(idx)) 0L else sum(cat_ids %in% union(attr(idx, "keys") %||% character(),
                                                          .attempted(settings, "acc"))),
         length(cat_ids)))
@@ -469,10 +469,11 @@ choose_geno_sources <- function(cfg, train_acc, test_acc, conn, settings) {
   dl <- dl[setdiff(names(dl), poor)]
   if (!length(dl)) return(structure(list(), n_projects = length(projs)))
 
-  if (identical(cfg$geno_select.method, "best_single_project")) {
-    cover <- vapply(dl, function(d) length(intersect(rownames(d), need)), integer(1))
-    dl <- dl[which.max(cover)]
-  }
+  # "Best" is .best_panel_index's criterion, not max coverage of `need`: a project thick with
+  # training lines and holding none of the focal ones cannot predict the trial, however large.
+  # Subset rather than extract, so the project name survives for .group_by_panel.
+  if (identical(cfg$geno_select.method, "best_single_project"))
+    dl <- dl[.best_panel_index(dl, need, test_acc, .min_test(settings), .min_train(settings))]
 
   groups <- .group_by_panel(dl, settings)
   out <- purrr::map(groups, function(pids) {
@@ -601,7 +602,7 @@ build_kernel <- function(cfg, dosage_list, need, settings = NULL, focal = NULL) 
     # which covariance_combiner stitches the separately-built per-panel GRMs. Keep them in
     # each GRM alongside the needed accessions (they may not be needed themselves), then
     # drop them from the combined result. Dropping bridges BEFORE the combine collapses
-    # em_combine to block-diagonal with no error (LESSONS.md #13). `bridge` is empty when
+    # em_combine to block-diagonal with no error (docs/LESSONS.md #13). `bridge` is empty when
     # the panels are disjoint.
     bridge <- .bridge_accessions(dosage_list)
     keep   <- union(need, bridge)
@@ -731,7 +732,11 @@ build_kernel <- function(cfg, dosage_list, need, settings = NULL, focal = NULL) 
   names(counts)[counts >= 2L]
 }
 
-# The protocol group to build a single-panel kernel from.
+# Which of a set of dosage matrices to predict the focal trial from -- THE selection rule,
+# shared by .best_panel (protocol groups, after merging) and choose_geno_sources's
+# `best_single_project` branch (raw projects, before merging). One criterion, one
+# implementation: the two drifted apart once, and a project selection that ignored focal
+# coverage silently starved the kernel of test rows.
 #
 # Maximising coverage of `need` alone is wrong: `need` is union(train, focal), so a panel thick
 # with TRAINING lines can outscore one that covers the focal trial, and the run then fails the
@@ -741,17 +746,23 @@ build_kernel <- function(cfg, dosage_list, need, settings = NULL, focal = NULL) 
 # So prefer panels clearing BOTH downstream guards; among those maximise coverage of `need`.
 # If none qualifies, fall back to best focal coverage -- without focal lines there is nothing
 # to predict. `focal` NULL gives pure max-coverage, for callers with no focal set.
-.best_panel <- function(dosage_list, need, focal = NULL,
-                        min_test = 5L, min_train = 20L) {
-  if (length(dosage_list) == 1) return(dosage_list[[1]])
+.best_panel_index <- function(dosage_list, need, focal = NULL,
+                              min_test = 5L, min_train = 20L) {
+  if (length(dosage_list) == 1) return(1L)
   cover <- vapply(dosage_list, function(d) length(intersect(rownames(d), need)), integer(1))
-  if (is.null(focal) || !length(focal)) return(dosage_list[[which.max(cover)]])
+  if (is.null(focal) || !length(focal)) return(which.max(cover))
   train  <- setdiff(need, focal)
   f_cov  <- vapply(dosage_list, function(d) length(intersect(rownames(d), focal)), integer(1))
   t_cov  <- vapply(dosage_list, function(d) length(intersect(rownames(d), train)), integer(1))
   ok     <- f_cov >= min_test & t_cov >= min_train
-  if (any(ok)) return(dosage_list[[which.max(ifelse(ok, cover, -1L))]])
-  dosage_list[[which.max(f_cov)]]
+  if (any(ok)) return(which.max(ifelse(ok, cover, -1L)))
+  which.max(f_cov)
+}
+
+# The protocol group to build a single-panel kernel from.
+.best_panel <- function(dosage_list, need, focal = NULL,
+                        min_test = 5L, min_train = 20L) {
+  dosage_list[[.best_panel_index(dosage_list, need, focal, min_test, min_train)]]
 }
 
 # VanRaden GRM over `need`, centred and scaled on the allele frequencies of the FULL population

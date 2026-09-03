@@ -731,9 +731,9 @@ projects_for_accessions <- function(accessions, conn, settings) {
     return(unique(unlist(idx[intersect(acc, names(idx))], use.names = FALSE)))
   }
 
-  # Fallback: ask the wizard. Reached until prewarm_indices.R has filled the projects map.
+  # Fallback: ask the wizard. Reached until tools/prepare_indices.R has filled the projects map.
   .note_geno_once("project_discovery_mode",
-                  "project discovery: WIZARD -- run prewarm_indices.R to answer this locally")
+                  "project discovery: WIZARD -- run tools/prepare_indices.R to answer this locally")
   # Deliberately NOT cached: the key would be an arbitrary accession set, which almost never
   # recurs, so a cache of it would hold stale answers without ever hitting. The projects index
   # above is what makes this question cheap. A failed batch yields nothing and the run proceeds

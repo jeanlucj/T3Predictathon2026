@@ -1,4 +1,4 @@
-# report_timing.R
+# tools/report_timing.R
 #
 # Where does an evaluation's wall time actually go? Reads the results store and decomposes
 # it, so a "the optimizer is slow" impression becomes a number attached to a subtask method.
@@ -17,7 +17,7 @@
 # wrong thing.
 #
 # READ-ONLY: safe to run while the optimizer is going.
-# Run on the server (R 4.6.1) from the optimizer directory:  Rscript report_timing.R
+# Run on the server (R 4.6.1) from the optimizer directory:  Rscript tools/report_timing.R
 
 suppressMessages(library(tidyverse))
 options(width = 200)   # keep the tables from wrapping
@@ -25,8 +25,8 @@ options(width = 200)   # keep the tables from wrapping
 # Optional argument: a store to read instead of the live one, so an archived store (e.g. one
 # set aside when a semantic change made its rows incomparable) can still be summarized and
 # compared against the current run.
-#   Rscript report_timing.R                                  # the live store
-#   Rscript report_timing.R state/evals_pre_seedaudit.sqlite  # an archived one
+#   Rscript tools/report_timing.R                                  # the live store
+#   Rscript tools/report_timing.R state/evals_pre_seedaudit.sqlite  # an archived one
 # Which store to read is resolve_read_store()'s decision -- ASK IT, do not rebuild the path
 # from OPTIMIZER_HOME. settings.local.R commonly moves db_path (onto /workdir, or onto a SLURM
 # node's $TMPDIR), and guessing then silently reports on a stale copy no worker is writing to.
@@ -34,7 +34,7 @@ options(width = 200)   # keep the tables from wrapping
 # node-local to the job that wrote it.
 source(here::here("settings.R"))
 source(here::here("R", "store.R"))
-store_path <- resolve_read_store(commandArgs(trailingOnly = TRUE)[1], "report_timing.R")
+store_path <- resolve_read_store(commandArgs(trailingOnly = TRUE)[1], "tools/report_timing.R")
 
 con <- DBI::dbConnect(RSQLite::SQLite(), store_path)
 e <- DBI::dbGetQuery(con, "SELECT id, config_json, trial_id, scheme, status, reason,

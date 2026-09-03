@@ -1,4 +1,4 @@
-# prewarm_indices.R
+# tools/prepare_indices.R
 #
 # Fill the two PRIMARY maps so the pipeline can answer its relationship questions locally,
 # with no BrAPI wizard call at all:
@@ -27,7 +27,7 @@
 # holds, and unflushed the whole run dies with the allocation.
 #
 #   cd <repo>/scripts/Analysis_Claude/optimizer
-#   nohup Rscript prewarm_indices.R > logs/prewarm.out 2>&1 &
+#   nohup Rscript tools/prepare_indices.R > logs/prewarm.out 2>&1 &
 #
 # Options:
 #   --only=projects|trials   do one map only (projects first is the best value: ~1 min)
@@ -35,14 +35,19 @@
 #   --sleep=0.05             seconds between calls. T3 is shared; do not set 0 casually.
 #   --force                  re-fetch keys already present
 
-if (!file.exists("prewarm_indices.R"))
-  stop("run this FROM the optimizer directory:\n",
+# The optimizer ROOT, not this script's directory: `.Renviron` -- and so the T3
+# credentials -- is read from the WORKING DIRECTORY only, with no parent walk. `settings.R`
+# is the marker for that root. here::i_am() below also halts from the wrong place, but only
+# when it cannot find the project at all, and a cwd inside the project is not one of those
+# cases: here() still resolves while .Renviron silently does not.
+if (!file.exists("settings.R"))
+  stop("run this from the optimizer ROOT, so R reads ./.Renviron:\n",
        "  cd <repo>/scripts/Analysis_Claude/optimizer\n",
-       "  Rscript prewarm_indices.R\n",
+       "  Rscript tools/prepare_indices.R\n",
        "  (working directory was: ", getwd(), ")")
 
 suppressMessages(library(tidyverse))
-here::i_am("prewarm_indices.R")
+here::i_am("tools/prepare_indices.R")
 source(here::here("settings.R"))
 for (f in list.files(here::here("R"), pattern = "[.]R$", full.names = TRUE)) source(f)
 

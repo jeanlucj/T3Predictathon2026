@@ -5,7 +5,7 @@
 # Stamped into the log, the report and every stored eval. Last digit for a minor change, middle
 # for a major one. If a bump changes what a configuration COMPUTES, add a BUILD_CHANGES entry
 # (R/optimizer.R) so the invalidated rows can be retired.
-OPTIMIZER_BUILD <- "0.8.6"
+OPTIMIZER_BUILD <- "0.8.7"
 
 # TRUE puts state, logs and the cache backup on durable storage instead of the work directory.
 # OPTIMIZER_REMOTE decides if set; otherwise TRUE whenever OPTIMIZER_HOME is set.
@@ -146,7 +146,7 @@ optimizer_settings <- function(local_overrides = TRUE) {
     # How the surrogate handles the trial effect. "merf" puts it outside the tree as a shrunken
     # random effect, "blocked" makes trial_id a forest feature marginalised at prediction,
     # "pooled" ignores trials and fits per-config means. Each falls back to the next when it
-    # cannot be fitted. surrogate_bakeoff.R scores all three on the current store.
+    # cannot be fitted. dev/surrogate_bakeoff.R scores all three on the current store.
     surrogate_method = "merf",
 
     # ---- search behaviour -------------------------------------------------

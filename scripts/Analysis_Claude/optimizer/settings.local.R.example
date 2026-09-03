@@ -41,7 +41,7 @@ settings_override <- list(
   # node runs 8 workers at ~24 GB of dosage each (~193 GB total) with the cap at 18e9.
   #
   # Start at half the worker count you want, then scale up after checking: run
-  # ./monitor_memory.sh against a live run, then Rscript report_memory.R.
+  # ./tools/watch_memory.sh against a live run, then Rscript tools/report_memory.R.
   # CAUTION: changing dosage_budget_bytes changes marker density and therefore scores, and
   # density is not a config parameter -- rows made under different budgets are not comparable
   # (each row records its dosage_budget so the mixing is at least visible).

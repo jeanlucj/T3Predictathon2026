@@ -56,7 +56,7 @@ SUBTASKS <- list(
   # C. Select which genotyping data (projects / VCFs) to use.
   #
   # Marker density is NOT a search parameter: it is set by settings$dosage_budget_bytes at
-  # parse time, and a per-config request could only subset that cache (LESSONS.md #16).
+  # parse time, and a per-config request could only subset that cache (docs/LESSONS.md #16).
   geno_select = list(
     methods = c("focal_plus_onehop", "best_single_project", "all_projects"),
     params = list(

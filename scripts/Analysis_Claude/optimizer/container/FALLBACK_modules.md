@@ -50,8 +50,8 @@ One script does it:
 ```bash
 cd <repo>/scripts/Analysis_Claude/optimizer
 module load r/4.5.3
-Rscript setup_fallback_libs.R --dry-run     # what it would install, and from where
-Rscript setup_fallback_libs.R               # 30-60 min: lme4, sommer, Matrix compile
+Rscript container/setup_fallback_libs.R --dry-run     # what it would install, and from where
+Rscript container/setup_fallback_libs.R               # 30-60 min: lme4, sommer, Matrix compile
 ```
 
 It **reads the package list, the CRAN snapshot date and both git SHAs out of
@@ -76,7 +76,7 @@ cd <repo>/scripts/Analysis_Claude/optimizer
 Rscript -e 'cat(Sys.which("rsync"), "\n")'   # must be non-empty; the cache backup
                                              # skips SILENTLY without it
 Rscript tests/run_all.R                      # must reach 32 / 8007 / 317
-Rscript peek_failures.R                      # exercises login + catalogue + store, read-only
+Rscript tools/inspect_failures.R                      # exercises login + catalogue + store, read-only
 ```
 
 `rsync` is normally present on a cluster, unlike in a bare container image — but check, because

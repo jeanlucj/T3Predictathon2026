@@ -53,7 +53,10 @@ BUILD_CHANGES <- list(
        what  = paste(".trial_similarity no longer returns NA for a candidate trial with an",
                      "unknown year/coordinates; env_gaussian weighting produced NA targets",
                      "and hence non-finite predictions before this"),
-       affects = function(cfg) identical(cfg$pheno_prep.ge_weighting, "env_gaussian"))
+       affects = function(cfg) identical(cfg$pheno_prep.ge_weighting, "env_gaussian")),
+  list(build = "0.8.7",
+       what  = "best_single_project requires focal coverage, as .best_panel does",
+       affects = function(cfg) identical(cfg$geno_select.method, "best_single_project"))
 )
 
 # Drop rows a later build invalidated. A row goes when it was produced BEFORE a change's

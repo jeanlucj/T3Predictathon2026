@@ -1,6 +1,6 @@
 # Evaluation guide — stepping through the optimizer
 
-This is the document for **evaluating and validating** the optimizer from the RStudio console -- for me now and in six months. `README.md` is for running it; `DESIGN.md` is the static architecture (every function, where outputs go); `BACKGROUND.md` is why it is built this way and the challenges it must handle. This file is the **runbook**: it lists the modules, gives a fast→slow order to check them in, and walks each one step by step -- one console line at a time -- saying what each step should return, what to eyeball, and the subtle failure signatures to hunt for.
+This is the document for **evaluating and validating** the optimizer from the RStudio console -- for me now and in six months. `README.md` is for running it; `docs/DESIGN.md` is the static architecture (every function, where outputs go); `docs/BACKGROUND.md` is why it is built this way and the challenges it must handle. This file is the **runbook**: it lists the modules, gives a fast→slow order to check them in, and walks each one step by step -- one console line at a time -- saying what each step should return, what to eyeball, and the subtle failure signatures to hunt for.
 
 The system is genuinely complex -- the task and the messy T3 data layer make that unavoidable -- so the goal is that **working through this document is faster and more thorough than re-reading all the code**, and that it maximizes the chance of catching the bugs that make the optimizer *look* like it works without delivering on its objective.
 
@@ -516,7 +516,7 @@ For (2), the fair experiment (two arms, 320 evaluations each, both deploying the
 | trial variation only (observation noise off) | 0.513 | 0.525 | −0.012 | 1/3 |
 | full defaults | 0.527 | 0.528 | −0.001 | 2/3 |
 
-The algorithm is sound; its advantage is spent entirely on variance at this budget. Note the middle row: with observation noise **off** the search is still no better than random, so the binding constraint is **trial heterogeneity** — the objective is a mean over a heterogeneous population estimated one trial at a time — not measurement precision. Replicating configs across more trials is what would help; more precise individual evaluations would not. See `BACKGROUND.md` §4.
+The algorithm is sound; its advantage is spent entirely on variance at this budget. Note the middle row: with observation noise **off** the search is still no better than random, so the binding constraint is **trial heterogeneity** — the objective is a mean over a heterogeneous population estimated one trial at a time — not measurement precision. Replicating configs across more trials is what would help; more precise individual evaluations would not. See `docs/BACKGROUND.md` §4.
 
 ### Tiers 2–4 — planned
 
@@ -637,7 +637,7 @@ Replays one trial and prints the data funnel stage by stage **next to an indepen
 
 ### Lessons baked in (don't re-learn the hard way)
 
-The traps that produced the machinery in this section — cache poisoning from a partial download, archives that are not usable VCFs, a download storm from one sick project, an interactive prompt that hangs a batch run, a search-space knob that was never wired, an assertion that tested the RNG — are recorded in **`LESSONS.md`**, one entry each, with the symptom that gave it away and where the fix lives.
+The traps that produced the machinery in this section — cache poisoning from a partial download, archives that are not usable VCFs, a download storm from one sick project, an interactive prompt that hangs a batch run, a search-space knob that was never wired, an assertion that tested the RNG — are recorded in **`docs/LESSONS.md`**, one entry each, with the symptom that gave it away and where the fix lives.
 
 Read it when you are about to simplify something here: most of these look like unnecessary complexity until you know what they are defending against.
 

@@ -59,10 +59,10 @@ your life easier editting these in RStudio with Ceres ondemand
   db_path must be in `$TMPDIR` (node-local), not `$OPTIMIZER_HOME` (networked, permanent)  
   check out `s$db_backup_path` and `s$cache_dir` which should be under `$OPTIMIZER_HOME`
 
-- [ ] `container/run_in_container.sh exec prewarm_indices.R --only=projects --limit=5`
+- [ ] `container/run_in_container.sh exec tools/prepare_indices.R --only=projects --limit=5`
   — credentials and outbound HTTPS together
 
-- [ ] `container/run_in_container.sh exec peek_backup.R` — the pre-flight
+- [ ] `container/run_in_container.sh exec tools/check_backup.R` — the pre-flight
   report. Read three things off it before submitting:
   - **backup**: rows, and when it was written. `MISSING` means this run
     starts from scratch.
@@ -74,7 +74,7 @@ your life easier editting these in RStudio with Ceres ondemand
 
   You do **not** restore the store by hand. The leader merges the backup
   into node-local scratch at startup, keyed on config × trial × scheme,
-  so nothing already there is lost. `peek_backup.R` reports exactly what
+  so nothing already there is lost. `tools/check_backup.R` reports exactly what
   that merge will insert.
 
 - [ ] The same report's **cache** section lists files per category.
@@ -100,7 +100,7 @@ your life easier editting these in RStudio with Ceres ondemand
   `find "$OPTIMIZER_HOME/logs"/run_w*.out -mmin -30` lists every worker.
   A green `squeue` alone is not enough: one OOM-killed worker leaves the
   job running with fewer
-- [ ] `peek_workers.R`, from a shell on the job's node
+- [ ] `tools/watch_workers.R`, from a shell on the job's node
   (`srun --overlap --jobid=<jid> --pty bash`) — who is alive, on what,
   and its WORKERS LOST section
 - [ ] `report.md`'s `- store backup:` line is fresh and not `** STALE **`
@@ -111,7 +111,7 @@ your life easier editting these in RStudio with Ceres ondemand
   the memory request anywhere near right?
 - [ ] `report.md` shows a rising best score and a fresh
   `- store backup:` line
-- [ ] `./run_in_container.sh exec report_memory.R` before raising the
+- [ ] `./run_in_container.sh exec tools/report_memory.R` before raising the
   worker count (a bare `Rscript` has no packages on Ceres)
 
 ------------------------------------------------------------------------
@@ -172,11 +172,11 @@ true RSS. So:
 
 ```         
 workers = usable node RAM / 80 GB      (conservative, start here)
-workers = usable node RAM / 25 GB      (after report_memory.R confirms headroom)
+workers = usable node RAM / 25 GB      (after tools/report_memory.R confirms headroom)
 ```
 
 Not `cores / threads`. Start conservative, run
-`./run_in_container.sh exec report_memory.R` after a few hours, and
+`./run_in_container.sh exec tools/report_memory.R` after a few hours, and
 raise it. Because SLURM kills rather than swaps,
 err low.
 
@@ -215,12 +215,12 @@ with it. Stopping through the stop-file first makes every worker take a
 final backup, report and cache flush on the way out:
 
 ``` bash
-source ./optimizer_paths.sh
+source ./tools/optimizer_paths.sh
 touch "$STOP_FILE"                                   # stops between evaluations
 tail -f "$OPTIMIZER_HOME/logs/run_w1.out"            # wait for "store backed up to"
 scancel <jobid>                                      # only for workers still mid-evaluation
 git pull
-container/run_in_container.sh exec peek_backup.R     # what the next job will start from
+container/run_in_container.sh exec tools/check_backup.R     # what the next job will start from
 ./submit.local.sh
 ```
 
@@ -299,7 +299,7 @@ Two things that still work from the **login node** while a job runs:
 
 ``` bash
 tail -f "$OPTIMIZER_HOME/logs/run_w1.out"           # watch a worker
-source ./optimizer_paths.sh && touch "$STOP_FILE"   # clean stop; workers finish and exit
+source ./tools/optimizer_paths.sh && touch "$STOP_FILE"   # clean stop; workers finish and exit
 ```
 
 ## 3. A minimal job script
@@ -341,7 +341,7 @@ node:
 salloc --nodes=1 --ntasks=4 --mem=32G --time=1:00:00 --account=<account>
 # on some clusters salloc drops you onto the node; on others you then need:
 #   srun --pty --preserve-env bash
-cd /path/to/optimizer && Rscript peek_failures.R
+cd /path/to/optimizer && Rscript tools/inspect_failures.R
 exit                            # releases the allocation -- do not forget
 ```
 
@@ -358,7 +358,7 @@ through the container — see §6.
 | `T3 login was REJECTED` / `could not build descriptor` | `.Renviron` not read — the job did not `cd` to the optimizer directory. |
 | `could not put the store in WAL mode` warning | `db_path` is on a network filesystem. Move it to node-local disk. |
 | `apptainer: command not found` | no `module load apptainer`. The `container/` scripts do this themselves; an interactive shell does not. |
-| Job starts from zero rows | no backup at `db_backup_path`, or the leader's merge failed. `logs/run_w1.out` has the `store restore:` line; `peek_backup.R` says what the backup holds. |
+| Job starts from zero rows | no backup at `db_backup_path`, or the leader's merge failed. `logs/run_w1.out` has the `store restore:` line; `tools/check_backup.R` says what the backup holds. |
 | Workers all evaluate the same configuration | Pre-0.7.4 code; `git pull`. |
 
 ## 6. Monitoring and diagnostics
@@ -408,7 +408,7 @@ tells them apart.
 
 ### On the compute node — the only place in-flight work is visible
 
-`peek_workers.R` reads the `claims` table, which lives in the **live**
+`tools/watch_workers.R` reads the `claims` table, which lives in the **live**
 store on node-local `$TMPDIR`. A separate `salloc` gets a different node
 and cannot see it, so attach to the running job instead:
 
@@ -416,7 +416,7 @@ and cannot see it, so attach to the running job instead:
 squeue -u $USER                                  # get <jid>
 srun --overlap --jobid=<jid> --pty bash          # a shell ON that node
 cd /project/<account>/T3Predictathon2026/scripts/Analysis_Claude/optimizer
-./run_in_container.sh exec peek_workers.R
+./run_in_container.sh exec tools/watch_workers.R
 exit                                             # leaves the job running
 ```
 
@@ -440,7 +440,7 @@ aggregate, not the culprit.
 
 Worker-level, which `sacct` cannot see:
 
-- `peek_workers.R`'s **WORKERS LOST** rows — a claim whose owner is gone,
+- `tools/watch_workers.R`'s **WORKERS LOST** rows — a claim whose owner is gone,
   kept before the claim is reclaimed. This is the only durable trace: a
   killed evaluation writes no store row, so `evals` is censored on
   exactly the outcome you are looking for.
@@ -448,7 +448,7 @@ Worker-level, which `sacct` cannot see:
 - A `run_w<i>.out` that stops mid-evaluation with no `optimizer stop` line.
 - What it was using when it went: find the pid in the `pids_rss` column
   of `$OPTIMIZER_HOME/logs/memory_<node>.tsv`, sampled every 60 s by
-  `monitor_memory.sh`, which the job script starts on the node.
+  `tools/watch_memory.sh`, which the job script starts on the node.
 
 ``` bash
 grep -o "$PID:[0-9]*" "$OPTIMIZER_HOME/logs/memory_"*.tsv | tail -5
@@ -464,7 +464,7 @@ normally unreadable as a non-root user on Ceres — do not plan on it.
 evaluations per hour instead:
 
 ``` bash
-./run_in_container.sh exec peek_backup.R         # rows in the durable backup, and its age
+./run_in_container.sh exec tools/check_backup.R         # rows in the durable backup, and its age
 sqlite3 "$OPTIMIZER_HOME/state/evals_backup.sqlite" \
   "SELECT substr(ts,1,13) AS hour, COUNT(*) FROM evals GROUP BY hour ORDER BY hour DESC LIMIT 24;"
 ```
@@ -489,42 +489,46 @@ head -5 "$OPTIMIZER_HOME/logs/run_w1.out" | grep 'optimizer build'  # container'
 
 ### The diagnostic scripts
 
-What each script answers is in `README.md`. On a cluster they run inside
-the container, from an interactive allocation.
+What each script answers, what it costs, and whether it is safe beside
+working workers is one table: **`tools/README.md`** (and `dev/README.md`
+for the two developer tools). On a cluster they run inside the container,
+from an interactive allocation, with paths **relative to the optimizer
+root** — `run_in_container.sh` does `cd $REPO && Rscript $*`, so
+`exec tools/watch_workers.R` is the form.
 
 > **A bare `Rscript` will not work.** The module's R has no packages, so
 > you get `there is no package called 'here'`. Everything below goes
 > through `run_in_container.sh`. The one exception is RStudio via Ceres
 > OnDemand, which hands you the module's R and cannot easily reach the
 > container — for that, populate a personal library once with
-> `Rscript setup_fallback_libs.R` — see `container/FALLBACK_modules.md`.
+> `Rscript container/setup_fallback_libs.R` — see `container/FALLBACK_modules.md`.
 
 ``` bash
 salloc -N1 -n4 --mem=32G -t 1:00:00 -A <account>
 module load apptainer
 cd /project/<account>/T3Predictathon2026/scripts/Analysis_Claude/optimizer
 
-./run_in_container.sh exec peek_backup.R                      # what a run would start from
-./run_in_container.sh exec peek_workers.R                     # who is alive (ON the job's node)
-./run_in_container.sh exec peek_failures.R                    # why evals failed
-./run_in_container.sh exec peek_config.R --ids=4,23           # what those evals ran
-./run_in_container.sh exec report_memory.R                    # how many workers fit
-./run_in_container.sh exec report_timing.R                    # where the wall time goes
-./run_in_container.sh exec surrogate_bakeoff.R                # surrogate comparison + curve
-./run_in_container.sh exec profile_evaluation.R --trial=<id>  # where the time goes
-./run_in_container.sh exec prewarm_indices.R --only=projects --limit=5
+./run_in_container.sh exec tools/check_backup.R                      # what a run would start from
+./run_in_container.sh exec tools/watch_workers.R                     # who is alive (ON the job's node)
+./run_in_container.sh exec tools/inspect_failures.R                    # why evals failed
+./run_in_container.sh exec tools/inspect_config.R --ids=4,23           # what those evals ran
+./run_in_container.sh exec tools/report_memory.R                    # how many workers fit
+./run_in_container.sh exec tools/report_timing.R                    # where the wall time goes
+./run_in_container.sh exec dev/surrogate_bakeoff.R                # surrogate comparison + curve
+./run_in_container.sh exec dev/profile_evaluation.R --trial=<id>  # where the time goes
+./run_in_container.sh exec tools/prepare_indices.R --only=projects --limit=5
 ./run_in_container.sh test                                    # the whole test suite
 exit
 ```
 
-**All are read-only against the store except `prewarm_indices.R`**,
+**All are read-only against the store except `tools/prepare_indices.R`**,
 which writes cache files. The read-only ones copy the database *and* its
 `-wal`/`-shm` sidecars first, so none of them can corrupt a live store.
 
 **On a cluster the store is the easy half.** Which of these you can run
 beside 22 working workers is decided by memory, and by the dosage cache
-locks — see the table in `README.md`, *Which of these can run while
-workers are evaluating*. Three points specific to here:
+locks — the *safe while workers evaluate* column in `tools/README.md`.
+Three points specific to here:
 
 - **An `srun --overlap` step joins the job's cgroup.** Its memory counts
   against the same `--mem` the workers are using, and that is sized
@@ -545,18 +549,19 @@ workers are evaluating*. Three points specific to here:
 
     ``` bash
     OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
-      ./run_in_container.sh exec surrogate_bakeoff.R --no-curve
+      ./run_in_container.sh exec dev/surrogate_bakeoff.R --no-curve
     ```
 
-- **`profile_evaluation.R` and `diagnose_failures.R` do not belong on a
+- **`dev/profile_evaluation.R` and `tools/diagnose_failures.R` do not belong on a
   busy node.** Both run a real `run_pipeline` — tens of GB and hours —
   and both take the per-project dosage locks, which `.acquire_lock`
   breaks after `lock_stale_minutes` (90) on the assumption the holder
   died. A worker deep in a large VCF download can lose its lock that way,
   and the raw file is deleted before re-download, so both sides then
-  fight over it (LESSONS #24). `diagnose_failures.R` also has **replay on
-  by default**; `peek_failures.R` answers the same question in seconds
-  with no network.
+  fight over it (LESSONS #24). `--cached-only` avoids the downloads, and
+  so the locks, at the cost of reporting coverage as a lower bound;
+  `tools/inspect_failures.R` answers the same first question in seconds
+  with no network at all.
 
 **Here they read the BACKUP, and they say so.** `db_path` is
 `$TMPDIR/t3opt_<user>/evals.sqlite` — node-local scratch belonging to the
@@ -567,20 +572,20 @@ opened, how old it is, and that anything evaluated since that backup is
 not in it. That is expected, not a fault. To read some other file:
 
 ``` bash
-./run_in_container.sh exec report_memory.R --store=/path/to/evals.sqlite
+./run_in_container.sh exec tools/report_memory.R --store=/path/to/evals.sqlite
 ```
 
 On a **login node** all of them refuse outright with the `salloc` recipe
 — `run_in_container.sh` checks before it even looks for the image, so
 you get that message rather than "no image, run ./build.sh first".
 
-`peek_failures.R` needs a store to exist. On a fresh cluster install
+`tools/inspect_failures.R` needs a store to exist. On a fresh cluster install
 there is neither a live one nor a backup until a job has run — until
 then it stops naming both paths, which is correct behaviour, not a
-fault. `peek_backup.R` is the one to use beforehand: comparing the two
+fault. `tools/check_backup.R` is the one to use beforehand: comparing the two
 *is* its job, so it reports cleanly when there is neither.
 
-`surrogate_bakeoff.R` prints, in its footer, **the smallest difference
+`dev/surrogate_bakeoff.R` prints, in its footer, **the smallest difference
 the current store can resolve**. A gap smaller than that is not evidence
 of no effect; it is too little data.
 
@@ -802,7 +807,7 @@ Measured over 121 real evaluations: `peak_r_mb` median **19 GB**, max
 | Epyc 9745 | 2,304 GB | \~28 | \~90 |
 
 Start at the conservative column, run `./run_in_container.sh exec
-report_memory.R` after a few hours, then raise the count. A single Epyc node at \~28 workers is
+tools/report_memory.R` after a few hours, then raise the count. A single Epyc node at \~28 workers is
 already a large multiple of the BioHPC server's throughput. Request
 memory to match: `--mem-per-cpu` × cores ≥ workers × 82 GB.
 
@@ -989,7 +994,7 @@ apptainer test optimizer.sif               # asserts R 4.5.3, every package, rsy
 
 # 4. Needs a real .Renviron: proves BrAPI authenticates and fetches THROUGH the container,
 #    which the test suite cannot show because it stubs the network.
-./run_in_container.sh exec prewarm_indices.R --only=projects --limit=5
+./run_in_container.sh exec tools/prepare_indices.R --only=projects --limit=5
 ```
 
 Note the order: step 4 is the first thing that needs credentials, and
@@ -1054,7 +1059,7 @@ derives `REPO` from its own location. So the only things you edit in
 
 That direction is forced, not a preference: **R overrides the inherited
 environment from `.Renviron` at startup** (see the note in
-`optimizer_paths.sh`). A second value set in the shell would lose to it
+`tools/optimizer_paths.sh`). A second value set in the shell would lose to it
 inside the container, so the shell would bind and restore one directory
 while R wrote to another — and the symptom looks like a permissions
 fault, not a config mismatch. `t3opt_ceres.sh` therefore *requires*
@@ -1198,7 +1203,7 @@ through `run_workers.sh` rather than calling `Rscript` directly.
 
 Getting this wrong produces **no error**. The BrAPI connection falls
 back to anonymous, and every catalogue fetch returns 401 while the run
-continues. `diagnose_failures.R` refuses to start outside the optimizer
+continues. `tools/diagnose_failures.R` refuses to start outside the optimizer
 directory for exactly this reason.
 
 **4. Never put `.Renviron` inside the image.**

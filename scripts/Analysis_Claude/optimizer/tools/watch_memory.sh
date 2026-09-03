@@ -1,18 +1,18 @@
 #!/bin/bash
-# monitor_memory.sh
+# tools/watch_memory.sh
 #
 # Sample the memory footprint of the running optimizer worker(s) and append it to a TSV.
 #
 # READ-ONLY and EXTERNAL: it only reads `ps` and the OS memory counters, so it attaches to a
 # run that is ALREADY GOING -- no restart, no code change, no interaction with the optimizer.
 # (For per-EVALUATION peaks attributed to a configuration, see the peak_r_mb column that
-# R/memory.R records in the store, and report_memory.R. This script answers the different
+# R/memory.R records in the store, and tools/report_memory.R. This script answers the different
 # question of what the machine as a whole is doing right now.)
 #
 # Usage, from the optimizer directory:
-#   ./monitor_memory.sh &                    # 60 s interval, $LOG_DIR/memory_<host>.tsv
-#   ./monitor_memory.sh 30 logs/mem.tsv      # custom interval (s) and output file
-#   nohup ./monitor_memory.sh > /dev/null 2>&1 &     # survives logout
+#   ./tools/watch_memory.sh &                    # 60 s interval, $LOG_DIR/memory_<host>.tsv
+#   ./tools/watch_memory.sh 30 logs/mem.tsv      # custom interval (s) and output file
+#   nohup ./tools/watch_memory.sh > /dev/null 2>&1 &     # survives logout
 # Stop it with kill, or by creating the same STOP file the optimizer watches.
 #
 # Columns (tab-separated, one row per sample):
@@ -31,7 +31,7 @@ OUT="${2:-}"          # defaulted below, once $LOG_DIR is known
 # The optimizer's own stop-file, so stopping the run stops the monitor too. Resolved by
 # asking R: OPTIMIZER_HOME lives in .Renviron, which only R reads, so building this path from
 # the shell environment would silently watch ./state/STOP on a server whose real stop file is
-# under $HOME -- and the monitor would never exit. (See optimizer_paths.sh.)
+# under $HOME -- and the monitor would never exit. (See tools/optimizer_paths.sh.)
 #
 # Skipped when the caller already exported STOP_FILE. Under SLURM this runs on the compute node
 # OUTSIDE the container, where the module's Rscript has no packages, so asking R would print a
@@ -72,10 +72,10 @@ sys_mem() {
   fi
 }
 
-echo "monitor_memory.sh: sampling every ${INTERVAL}s into ${OUT} (Ctrl-C or ${STOP_FILE} to stop)" >&2
+echo "tools/watch_memory.sh: sampling every ${INTERVAL}s into ${OUT} (Ctrl-C or ${STOP_FILE} to stop)" >&2
 
 while true; do
-  [ -f "$STOP_FILE" ] && { echo "monitor_memory.sh: STOP file present -- exiting" >&2; break; }
+  [ -f "$STOP_FILE" ] && { echo "tools/watch_memory.sh: STOP file present -- exiting" >&2; break; }
 
   # Every process whose command line mentions run_optimizer.R, excluding this script and the
   # grep/ps pipeline itself. RSS from ps is in KB. `ps -e -o` is the portable spelling that

@@ -3,7 +3,8 @@
 #
 #   ./run_in_container.sh workers 8 2          # 8 workers, 2 BLAS threads each
 #   ./run_in_container.sh shell                # interactive R inside the container
-#   ./run_in_container.sh exec peek_failures.R # any Rscript in the optimizer directory
+#   ./run_in_container.sh exec tools/inspect_failures.R   # any of the optimizer's scripts,
+#                                                        # path relative to the optimizer root
 #
 # Environment:
 #   OPTIMIZER_SIF    path to the image      (default: <this dir>/optimizer.sif)

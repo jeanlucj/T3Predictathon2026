@@ -1,5 +1,5 @@
 #!/bin/bash
-# check_oom.sh
+# dev/check_oom.sh
 #
 # Did something in this allocation get killed for memory, and how close to the limit did it
 # get? Reads the job's cgroup counters and the accounting record. READ-ONLY.
@@ -8,8 +8,8 @@
 # mark is not reset between processes, so it still holds the peak of a run that has ended, but
 # it disappears with the allocation.
 #
-#   ./check_oom.sh              # this allocation
-#   ./check_oom.sh 12345678     # sacct section for another job id as well
+#   ./dev/check_oom.sh              # this allocation
+#   ./dev/check_oom.sh 12345678     # sacct section for another job id as well
 #
 # The decisive line is `oom_kill` (cgroup v2) or `failcnt` (v1): non-zero means the kernel
 # killed something here for memory. `peak` against `limit` says how much headroom there was.

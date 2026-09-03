@@ -10,14 +10,14 @@
 #SBATCH --output=logs/diag-%j.out
 #SBATCH --error=logs/diag-%j.err
 #
-# diagnose_failures.R on SciNet Ceres, inside the Apptainer image.
+# tools/diagnose_failures.R on SciNet Ceres, inside the Apptainer image.
 #
 # Submit through container/submit_diagnose.sh, which supplies the account, the paths and the
 # real sizing. Arguments for the R script arrive in DIAG_ARGS.
 #
 # Sizing: the panel probe replays subtask C, which holds every covering project resident and
 # then builds merged copies, so it peaks at about twice --dosage-budget-gb (default 4 GB, so
-# ~8 GB). diagnose_failures.R checks that against this job's --mem before doing any work and
+# ~8 GB). tools/diagnose_failures.R checks that against this job's --mem before doing any work and
 # refuses rather than being OOM-killed. --mem=48G leaves room for the store copy and the
 # observation tables on top.
 #
@@ -37,7 +37,7 @@ DIAG_ARGS="${DIAG_ARGS:-}"
 . "$REPO/container/lib_apptainer.sh"
 ensure_apptainer || exit 1
 
-# The cache diagnose_failures.R restores into is node-local, and settings.R places it under
+# The cache tools/diagnose_failures.R restores into is node-local, and settings.R places it under
 # $TMPDIR. Both must be a compute node's, not a login node's shared storage.
 : "${TMPDIR:?TMPDIR is unset -- not inside a SLURM job?}"
 : "${SLURM_JOB_ID:?SLURM_JOB_ID is unset -- this must run as a SLURM job, not on a login node}"
@@ -56,7 +56,7 @@ echo "build     : $(sed -n 's/^OPTIMIZER_BUILD *<- *"\(.*\)".*/\1/p' "$REPO/sett
 # a killed run leaves no other record of what it was holding. Exits with the job.
 MEM_TSV="$OPTIMIZER_HOME/logs/diagmem_${SLURM_JOB_ID}.tsv"
 STOP_FILE="$OPTIMIZER_HOME/state/STOP_DIAG" LOG_DIR="$OPTIMIZER_HOME/logs" \
-  "$REPO/monitor_memory.sh" 30 "$MEM_TSV" > /dev/null 2>&1 &
+  "$REPO/tools/watch_memory.sh" 30 "$MEM_TSV" > /dev/null 2>&1 &
 MEM_PID=$!
 echo "memory    : sampling every 30s -> $MEM_TSV (pid $MEM_PID)"
 trap 'kill "$MEM_PID" 2>/dev/null' EXIT
@@ -69,4 +69,4 @@ apptainer exec \
   --bind "$OPTIMIZER_HOME:$OPTIMIZER_HOME" \
   --bind "$TMPDIR:$TMPDIR" \
   "$SIF" \
-  bash -c "cd '$REPO' && Rscript diagnose_failures.R $DIAG_ARGS"
+  bash -c "cd '$REPO' && Rscript tools/diagnose_failures.R $DIAG_ARGS"

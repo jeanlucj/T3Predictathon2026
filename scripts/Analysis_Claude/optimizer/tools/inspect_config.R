@@ -1,4 +1,4 @@
-# peek_config.R
+# tools/inspect_config.R
 #
 # Print the stored configuration of specific evals. Read-only, no network, seconds.
 #
@@ -9,7 +9,7 @@
 # so that one field is the confirmation.
 #
 #   cd <repo>/scripts/Analysis_Claude/optimizer
-#   Rscript peek_config.R --ids=4,23
+#   Rscript tools/inspect_config.R --ids=4,23
 #
 # Options:
 #   --ids=4,23      eval ids to show. Default: every eval whose status is not `ok`.
@@ -17,16 +17,21 @@
 #                   pheno_prep.ge_weighting. `--keys=all` prints the whole configuration.
 #
 # SAFETY: copies the database and its -wal/-shm sidecars to a temp directory and reads the
-# copy, so the live store is never opened (see peek_failures.R).
+# copy, so the live store is never opened (see tools/inspect_failures.R).
 
-if (!file.exists("peek_config.R"))
-  stop("run this FROM the optimizer directory:\n",
+# The optimizer ROOT, not this script's directory: `.Renviron` -- and so the T3
+# credentials -- is read from the WORKING DIRECTORY only, with no parent walk. `settings.R`
+# is the marker for that root. here::i_am() below also halts from the wrong place, but only
+# when it cannot find the project at all, and a cwd inside the project is not one of those
+# cases: here() still resolves while .Renviron silently does not.
+if (!file.exists("settings.R"))
+  stop("run this from the optimizer ROOT, so R reads ./.Renviron:\n",
        "  cd <repo>/scripts/Analysis_Claude/optimizer\n",
-       "  Rscript peek_config.R --ids=4,23\n",
+       "  Rscript tools/inspect_config.R\n",
        "  (working directory was: ", getwd(), ")")
 
 suppressMessages(library(tidyverse))
-here::i_am("peek_config.R")
+here::i_am("tools/inspect_config.R")
 source(here::here("settings.R"))
 for (f in list.files(here::here("R"), pattern = "[.]R$", full.names = TRUE)) source(f)
 
@@ -42,7 +47,7 @@ o_ids  <- split_csv(opt("ids"))
 o_keys <- split_csv(opt("keys", paste0(c(paste0(names(SUBTASKS), ".method"),
                                          "pheno_prep.ge_weighting"), collapse = ",")))
 
-store_path <- resolve_read_store(what = "peek_config.R")
+store_path <- resolve_read_store(what = "tools/inspect_config.R")
 tmp <- .copy_store_with_sidecars(store_path, file.path(tempdir(), "peekcfg.sqlite"))
 con <- DBI::dbConnect(RSQLite::SQLite(), tmp)
 e   <- tibble::as_tibble(DBI::dbReadTable(con, "evals"))

@@ -88,7 +88,7 @@ optimizer_step <- function(con, settings, conn = NULL) {
              dosage_budget = settings$dosage_budget_bytes %||% NA_real_,
              # How em_combine derived each partial's EM weight. Like dosage_budget, this is
              # not a config parameter, so without it rows from before and after the
-             # 2026-07-31 switch would be averaged together (EM_COMBINE_COMPARISON.md item 1).
+             # 2026-07-31 switch would be averaged together (dev/EM_COMBINE_COMPARISON.md item 1).
              em_df_method  = "effective_n",
              build         = settings$build %||% OPTIMIZER_BUILD,
              run_id        = settings$run_id %||% NA_character_)

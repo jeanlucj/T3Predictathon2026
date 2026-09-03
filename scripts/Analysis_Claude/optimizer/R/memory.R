@@ -21,7 +21,7 @@
 # VmHWM back down to the current VmRSS. mem_reset() does that, so VmHWM read at the end of an
 # evaluation is that evaluation's peak rather than the whole worker's.
 #
-# For the machine as a whole while a run is going, use monitor_memory.sh instead.
+# For the machine as a whole while a run is going, use tools/watch_memory.sh instead.
 
 library(tidyverse)
 

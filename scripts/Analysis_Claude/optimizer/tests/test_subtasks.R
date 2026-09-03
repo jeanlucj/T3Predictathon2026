@@ -910,6 +910,63 @@ check(identical(.best_panel(list(only = thin_a), need_bp, focal10, 5, 20), thin_
       ".best_panel with one panel returns it regardless")
 
 # ===========================================================================
+cat("geno_select = best_single_project (same criterion as .best_panel)\n")
+# Oracle: "best single project" must mean best AT PREDICTING THE FOCAL TRIAL. A project
+# holding 60 training lines and none of the focal ones cannot predict it at any size, so the
+# 35-line project that carries the focal lines is the right pick even though it covers less
+# of union(train, focal). Selecting on union coverage alone handed the kernel a GRM with no
+# test rows and every such eval failed test_in = 0.
+#
+# choose_geno_sources needs the network, so its two data calls are stubbed in the global
+# environment (which is where R/ was sourced, so the real function finds the stubs). This
+# exercises the real selection path rather than a copy of its rule.
+.real_pfa <- projects_for_accessions
+.real_gpd <- get_project_dosage
+gs_settings <- list(dosage_total_budget_bytes = Inf, merge_containment = 0.95,
+                    redundant_acc_overlap = 0.90, min_test_acc = 5L, min_train_acc = 20L)
+gs_cfg <- function(method) list(geno_select.method = method, geno_select.min_bridge = 1)
+gs_train <- paste0("t", 1:60)
+gs_focal <- paste0("f", 1:10)
+
+# Disjoint marker sets, so .group_by_panel leaves each project its own panel and the name of
+# the surviving group is the project id that was chosen.
+gs_stub <- function(panels) {
+  projects_for_accessions <<- function(need, conn, settings) names(panels)
+  get_project_dosage      <<- function(pid, keep, conn, settings, marker_thin = 1L)
+    panels[[as.character(pid)]]
+}
+gs_run <- function(method, panels) {
+  gs_stub(panels)
+  choose_geno_sources(gs_cfg(method), gs_train, gs_focal, NULL, gs_settings)
+}
+
+gs_panels <- list(
+  big_train_only = mkpanel(gs_train, paste0("mBIG", 1:200)),            # focal 0,  train 60
+  small_focal    = mkpanel(c(paste0("t", 1:25), gs_focal), paste0("mFOC", 1:200)))  # focal 10, train 25
+out_bsp <- gs_run("best_single_project", gs_panels)
+check(length(out_bsp) == 1 && identical(names(out_bsp), "small_focal"),
+      "best_single_project takes the focal-covering project over a bigger training-only one")
+check(length(intersect(rownames(out_bsp[[1]]), gs_focal)) == length(gs_focal),
+      "the panel best_single_project returns carries all the focal lines")
+
+# No project covers the focal lines: the fallback must still hand back a panel rather than
+# an empty list, so run_pipeline's own overlap check reports the trial rather than a crash here.
+gs_none <- list(a = mkpanel(gs_train, paste0("mA", 1:200)),
+                b = mkpanel(paste0("t", 1:30), paste0("mB", 1:200)))
+out_none <- gs_run("best_single_project", gs_none)
+check(length(out_none) == 1 && nrow(out_none[[1]]) > 0,
+      "best_single_project falls back to a panel when no project covers the focal lines")
+
+# Anti-drift: the project-level selection and .best_panel must agree on the same input. This
+# is the check that keeps the two from separating again -- they already did once.
+check(identical(out_bsp[[1]],
+                .best_panel(gs_panels, union(gs_train, gs_focal), gs_focal, 5L, 20L)),
+      "best_single_project and .best_panel choose the same panel from the same input")
+
+projects_for_accessions <- .real_pfa
+get_project_dosage      <- .real_gpd
+
+# ===========================================================================
 cat(".effective_n / .center_dfs (em_combine degrees of freedom)\n")
 # Oracle: df is a partial's relative WEIGHT in the Wishart-EM likelihood. .effective_n is the
 # Galwey (2009) effective number of independent samples; it must not move when the matrix is

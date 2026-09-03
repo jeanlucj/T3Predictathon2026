@@ -1,6 +1,6 @@
 # evaluation.R
 #
-# Console tooling for EVALUATING the optimizer, driven by EVALUATION.md from the console.
+# Console tooling for EVALUATING the optimizer, driven by docs/EVALUATION.md from the console.
 # Nothing here is called by run_optimizer():
 #
 #   arm_evaluation(group)   -- debug() every function in a module group, so a pipeline call

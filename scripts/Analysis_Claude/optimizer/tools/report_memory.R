@@ -1,4 +1,4 @@
-# report_memory.R
+# tools/report_memory.R
 #
 # What does one evaluation cost in MEMORY? The answer sets the two numbers that cannot be
 # reasoned out from the code: how big `dosage_budget_bytes` can be on this machine, and how
@@ -15,11 +15,11 @@
 #
 # READ-ONLY: safe to run while the optimizer is going (and in WAL mode a reader never blocks
 # the writers). Run from the optimizer directory:
-#   Rscript report_memory.R                 # the live store
-#   Rscript report_memory.R state/old.sqlite   # an archived one
+#   Rscript tools/report_memory.R                 # the live store
+#   Rscript tools/report_memory.R state/old.sqlite   # an archived one
 #
 # For the machine as a whole in real time -- all workers plus everything else on the node --
-# use monitor_memory.sh, which needs no restart to attach to a running job.
+# use tools/watch_memory.sh, which needs no restart to attach to a running job.
 
 suppressMessages(library(tidyverse))
 options(width = 200)
@@ -31,7 +31,7 @@ options(width = 200)
 # node-local to the job that wrote it.
 source(here::here("settings.R"))
 source(here::here("R", "store.R"))
-store_path <- resolve_read_store(commandArgs(trailingOnly = TRUE)[1], "report_memory.R")
+store_path <- resolve_read_store(commandArgs(trailingOnly = TRUE)[1], "tools/report_memory.R")
 
 con <- DBI::dbConnect(RSQLite::SQLite(), store_path)
 have <- DBI::dbListFields(con, "evals")
@@ -79,7 +79,7 @@ if (!use_rss)
   cat("\n!! No peak_rss_mb in this store, so every figure below comes from R's heap peak and\n",
       "   UNDERSTATES real memory use -- by 2.7x on the one run where both were measured.\n",
       "   Do NOT size a worker count from this. Re-run the optimizer with current code on\n",
-      "   Linux to record peak_rss_mb, and meanwhile use rss_max_mb from monitor_memory.sh.\n",
+      "   Linux to record peak_rss_mb, and meanwhile use rss_max_mb from tools/watch_memory.sh.\n",
       sep = "")
 if (n_missing > 0)
   cat(sprintf("  [%d row(s) predate the instrumentation and carry no memory figure]\n",

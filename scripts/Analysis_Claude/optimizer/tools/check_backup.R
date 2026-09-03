@@ -1,4 +1,4 @@
-# peek_backup.R
+# tools/check_backup.R
 #
 # Pre-flight: what is in the durable backup, what THIS run will see of it, and which phase
 # iteration 1 will land in. Read-only, no network, seconds. Run it before submitting -- an empty
@@ -9,24 +9,29 @@
 # actually does. The same run reports what the leader's restore will insert.
 #
 #   cd <repo>/scripts/Analysis_Claude/optimizer
-#   Rscript peek_backup.R
+#   Rscript tools/check_backup.R
 #
-# SAFETY: opens copies, never the live store (peek_failures.R explains why that matters).
+# SAFETY: opens copies, never the live store (tools/inspect_failures.R explains why that matters).
 
-if (!file.exists("peek_backup.R"))
-  stop("run this FROM the optimizer directory:\n",
+# The optimizer ROOT, not this script's directory: `.Renviron` -- and so the T3
+# credentials -- is read from the WORKING DIRECTORY only, with no parent walk. `settings.R`
+# is the marker for that root. here::i_am() below also halts from the wrong place, but only
+# when it cannot find the project at all, and a cwd inside the project is not one of those
+# cases: here() still resolves while .Renviron silently does not.
+if (!file.exists("settings.R"))
+  stop("run this from the optimizer ROOT, so R reads ./.Renviron:\n",
        "  cd <repo>/scripts/Analysis_Claude/optimizer\n",
-       "  Rscript peek_backup.R\n",
+       "  Rscript tools/check_backup.R\n",
        "  (working directory was: ", getwd(), ")")
 
 suppressMessages(library(tidyverse))
-here::i_am("peek_backup.R")
+here::i_am("tools/check_backup.R")
 source(here::here("settings.R"))
 for (f in list.files(here::here("R"), pattern = "[.]R$", full.names = TRUE)) source(f)
 
 # Not resolve_read_store(): comparing the live store against the backup IS this script's job,
 # so it needs both paths, not a choice between them. Only the login-node refusal is shared.
-if (.on_login_node()) stop(.login_node_message("peek_backup.R"), call. = FALSE)
+if (.on_login_node()) stop(.login_node_message("tools/check_backup.R"), call. = FALSE)
 s <- optimizer_settings()
 hr <- function(t) cat("\n", t, "\n", strrep("-", nchar(t)), "\n", sep = "")
 mb <- function(b) if (is.na(b)) "-" else sprintf("%.1f MB", b / 1e6)

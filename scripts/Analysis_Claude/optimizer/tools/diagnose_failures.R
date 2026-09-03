@@ -1,4 +1,4 @@
-# diagnose_failures.R
+# tools/diagnose_failures.R
 #
 # Investigate the stored evals that did NOT come back `ok`. The four non-ok statuses do not
 # mean the same thing, so they are not treated the same way:
@@ -35,7 +35,7 @@
 # rather than hour 2.
 #
 #   cd /path/to/optimizer
-#   nohup Rscript diagnose_failures.R > logs/diagnose_failures.out 2>&1 &
+#   nohup Rscript tools/diagnose_failures.R > logs/diagnose_failures.out 2>&1 &
 #
 # Options (all optional):
 #   --status=suspect,error status(es) to act on; default
@@ -59,18 +59,19 @@
 #                          well below the optimizer's, because everything the probe reports is
 #                          arithmetic on sample names -- marker density changes none of it.
 
-# Guard the working directory FIRST, with an actionable message. here::i_am() below also
-# halts from the wrong directory, but only in the cases where it cannot find the project --
-# and cwd = optimizer/logs/ is not one of them (here() still resolves to optimizer, while
-# .Renviron, which is read from cwd only, silently does not).
-if (!file.exists("diagnose_failures.R"))
-  stop("run this FROM the optimizer directory, so R reads ./.Renviron:\n",
+# Guard the working directory FIRST, with an actionable message. The marker is `settings.R`
+# at the optimizer ROOT, not this file: `.Renviron` -- and so the T3 credentials -- is read
+# from the WORKING DIRECTORY only. here::i_am() below also halts from the wrong directory,
+# but only in the cases where it cannot find the project -- and cwd = optimizer/logs/ is not
+# one of them (here() still resolves to optimizer, while .Renviron silently does not).
+if (!file.exists("settings.R"))
+  stop("run this from the optimizer ROOT, so R reads ./.Renviron:\n",
        "  cd <repo>/scripts/Analysis_Claude/optimizer\n",
-       "  nohup Rscript diagnose_failures.R --no-replay > logs/diagnose_failures.out 2>&1 &\n",
+       "  nohup Rscript tools/diagnose_failures.R > logs/diagnose_failures.out 2>&1 &\n",
        "  (working directory was: ", getwd(), ")")
 
 library(tidyverse)
-here::i_am("diagnose_failures.R")
+here::i_am("tools/diagnose_failures.R")
 
 source(here::here("settings.R"))
 for (f in list.files(here::here("R"), pattern = "[.]R$", full.names = TRUE)) source(f)
@@ -177,7 +178,7 @@ cat("  trial catalogue:   ", nrow(cat_tbl), " trials",
     if ("latitude" %in% names(cat_tbl))
       sprintf(", %d with coordinates", sum(!is.na(cat_tbl$latitude))) else "", "\n", sep = "")
 if (!nrow(cat_tbl)) stop("trial catalogue came back EMPTY -- fix that before reading anything below")
-store_path <- resolve_read_store(what = "diagnose_failures.R")
+store_path <- resolve_read_store(what = "tools/diagnose_failures.R")
 cat("  store:             ", store_path, "\n", sep = "")
 cat("  statuses:          ", paste(o_status, collapse = ", "),
     if (length(o_report)) sprintf("   (%s: reported, not diagnosed)", paste(o_report, collapse = ", ")) else "",

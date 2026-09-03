@@ -1,11 +1,11 @@
-# blas_check.R
+# dev/check_blas.R
 #
 # Is R's linear algebra actually running on multiple cores? Prints what R is linked against,
 # what the thread environment says, and then MEASURES it -- because the first two can look
 # right while the third is still single-threaded.
 #
-#   Rscript blas_check.R                      # as your shell has it configured
-#   OMP_NUM_THREADS=8 Rscript blas_check.R    # to see whether the setting takes effect
+#   Rscript dev/check_blas.R                      # as your shell has it configured
+#   OMP_NUM_THREADS=8 Rscript dev/check_blas.R    # to see whether the setting takes effect
 #
 # Reading the result -- "cores busy" is user CPU time over elapsed time on a compute-bound
 # matrix multiply:

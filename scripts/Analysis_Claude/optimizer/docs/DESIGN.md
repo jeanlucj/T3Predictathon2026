@@ -183,16 +183,16 @@ Two verification layers, because the failure modes differ:
   against an independent ground truth (the five teams' submission files) via a
   calibrate-then-freeze step and runs at startup in real mode.
 
-See `EVALUATION.md` for how to run and read both layers.
+See `docs/EVALUATION.md` for how to run and read both layers.
 
 ## 6. File map
 
 ```
 optimizer/
   README.md            <- how to run it (user-facing)
-  EVALUATION.md        <- evaluation & validation runbook (arm_evaluation, tests, data-flow, tooling)
-  DESIGN.md            <- this file (what the optimizer is + where everything lives)
-  BACKGROUND.md        <- challenges (statistical + data-management) and how each is met
+  docs/EVALUATION.md        <- evaluation & validation runbook (arm_evaluation, tests, data-flow, tooling)
+  docs/DESIGN.md            <- this file (what the optimizer is + where everything lives)
+  docs/BACKGROUND.md        <- challenges (statistical + data-management) and how each is met
   run_optimizer.R      <- background entry point (budget, stop-file, checkpoint, canary startup)
   settings.R           <- one place for all knobs (budgets, paths, simulate, canary trials)
   R/

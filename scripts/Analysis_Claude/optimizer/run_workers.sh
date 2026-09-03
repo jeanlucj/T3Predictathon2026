@@ -7,7 +7,7 @@
 # store -- so N workers explore N configurations at once and all of them feed the same
 # archive and the same surrogate. They are independent processes, not threads: R's heap is
 # per-process, so N workers cost N times the memory of one. That is the whole reason
-# report_memory.R exists. Size N from its "how many workers fit" table.
+# tools/report_memory.R exists. Size N from its "how many workers fit" table.
 #
 #   ./run_workers.sh 8                  # 8 workers, 2 BLAS threads each
 #   ./run_workers.sh 4 4                # 4 workers, 4 BLAS threads each
@@ -17,7 +17,7 @@
 # Stop them ALL with the usual stop-file (they share it):
 #   touch "${OPTIMIZER_HOME:-.}/state/STOP"
 # There is no need to remove it afterwards: a fresh launch clears a leftover one itself.
-# Watch them:   tail -f logs/run_w1.out    /   nohup ./monitor_memory.sh > /dev/null 2>&1 &
+# Watch them:   tail -f logs/run_w1.out    /   nohup ./tools/watch_memory.sh > /dev/null 2>&1 &
 #
 # Two things this script exists to get right:
 #
@@ -52,10 +52,10 @@ export VECLIB_MAXIMUM_THREADS="$N_THREADS"
 # Resolve the stop file by asking R. OPTIMIZER_HOME is set in .Renviron, which only R reads,
 # so deriving this from the shell environment would act on ./state/STOP while the workers watch
 # a different file -- clearing a stale stop below would then leave the real one in place and
-# every worker would exit at once. (See optimizer_paths.sh.)
-. "$(dirname "$0")/optimizer_paths.sh"
+# every worker would exit at once. (See tools/optimizer_paths.sh.)
+. "$(dirname "$0")/tools/optimizer_paths.sh"
 if [ -z "${STOP_FILE:-}" ]; then
-  echo "run_workers.sh: optimizer_paths.sh could not resolve the stop file from R." >&2
+  echo "run_workers.sh: tools/optimizer_paths.sh could not resolve the stop file from R." >&2
   echo "  Guessing ./state/STOP would act on a different file from the workers." >&2
   echo "  Check: Rscript -e 'source(\"settings.R\"); optimizer_settings()\$stop_file'" >&2
   exit 1

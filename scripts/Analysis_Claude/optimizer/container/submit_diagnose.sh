@@ -1,5 +1,5 @@
 #!/bin/bash
-# submit_diagnose.sh -- queue diagnose_failures.R as a Ceres batch job.
+# submit_diagnose.sh -- queue tools/diagnose_failures.R as a Ceres batch job.
 #
 #   cd <repo>/scripts/Analysis_Claude/optimizer/container
 #   ./submit_diagnose.sh                                  # defaults
@@ -7,7 +7,7 @@
 #   ./submit_diagnose.sh --mem=96G --time=12:00:00 -- --dosage-budget-gb=40
 #   ./submit_diagnose.sh --test-only                      # what it WOULD get; queues nothing
 #
-# Everything before `--` goes to sbatch; everything after it goes to diagnose_failures.R.
+# Everything before `--` goes to sbatch; everything after it goes to tools/diagnose_failures.R.
 #
 # TRACKED, unlike submit.local.sh, because it holds no site values: the account comes from
 # your submit.local.sh (or $ACCOUNT), and OPTIMIZER_HOME from .Renviron. Nothing to re-copy

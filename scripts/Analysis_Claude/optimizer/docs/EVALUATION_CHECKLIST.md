@@ -1,8 +1,8 @@
 # Optimizer evaluation checklist
 
-Tick these off over time. Each line names the `arm_evaluation()` group and the full step-by-step walkthrough lives in **`EVALUATION.md`** at the matching level (L1…L12). Order is fast/offline → slow/online on purpose: do it top to bottom so a cheap bug surfaces before an expensive one. `disarm_evaluation()` at the end of each level, and **always before launching a background run**.
+Tick these off over time. Each line names the `arm_evaluation()` group and the full step-by-step walkthrough lives in **`docs/EVALUATION.md`** at the matching level (L1…L12). Order is fast/offline → slow/online on purpose: do it top to bottom so a cheap bug surfaces before an expensive one. `disarm_evaluation()` at the end of each level, and **always before launching a background run**.
 
-Bootstrap once (see EVALUATION.md §3), then:
+Bootstrap once (see docs/EVALUATION.md §3), then:
 
 ## Offline — `simulate = TRUE`, no network, do these first
 

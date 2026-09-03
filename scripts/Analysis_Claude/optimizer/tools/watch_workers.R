@@ -1,4 +1,4 @@
-# peek_workers.R
+# tools/watch_workers.R
 #
 # Read-only answer to "what is every worker doing right now, and has anything died?".
 #
@@ -24,20 +24,25 @@
 #
 # Run from THIS directory (R reads .Renviron and here() from the working directory):
 #   cd <repo>/scripts/Analysis_Claude/optimizer
-#   Rscript peek_workers.R
+#   Rscript tools/watch_workers.R
 
-if (!file.exists("peek_workers.R"))
-  stop("run this FROM the optimizer directory:\n",
+# The optimizer ROOT, not this script's directory: `.Renviron` -- and so the T3
+# credentials -- is read from the WORKING DIRECTORY only, with no parent walk. `settings.R`
+# is the marker for that root. here::i_am() below also halts from the wrong place, but only
+# when it cannot find the project at all, and a cwd inside the project is not one of those
+# cases: here() still resolves while .Renviron silently does not.
+if (!file.exists("settings.R"))
+  stop("run this from the optimizer ROOT, so R reads ./.Renviron:\n",
        "  cd <repo>/scripts/Analysis_Claude/optimizer\n",
-       "  Rscript peek_workers.R\n",
+       "  Rscript tools/watch_workers.R\n",
        "  (working directory was: ", getwd(), ")")
 
 suppressMessages(library(tidyverse))
-here::i_am("peek_workers.R")
+here::i_am("tools/watch_workers.R")
 source(here::here("settings.R"))
 for (f in list.files(here::here("R"), pattern = "[.]R$", full.names = TRUE)) source(f)
 
-if (.on_login_node()) stop(.login_node_message("peek_workers.R"), call. = FALSE)
+if (.on_login_node()) stop(.login_node_message("tools/watch_workers.R"), call. = FALSE)
 s <- optimizer_settings()
 
 # NOT resolve_read_store(): that falls back to the backup, whose claims table is whatever
@@ -50,8 +55,8 @@ if (!file.exists(s$db_path)) {
        "  separate allocation cannot see it. Attach to the running job instead:\n",
        "    squeue -u $USER                              # find the job id\n",
        "    srun --overlap --jobid=<jid> --pty bash      # a shell ON that node\n",
-       "    cd ", here::here(), " && ./container/run_in_container.sh exec peek_workers.R\n",
-       "  (For finished work, which IS in the backup, use peek_backup.R or report_timing.R.)",
+       "    cd ", here::here(), " && ./container/run_in_container.sh exec tools/watch_workers.R\n",
+       "  (For finished work, which IS in the backup, use tools/check_backup.R or tools/report_timing.R.)",
        call. = FALSE)
 }
 

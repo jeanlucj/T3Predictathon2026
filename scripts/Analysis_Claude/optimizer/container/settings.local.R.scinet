@@ -17,7 +17,7 @@ settings_override <- c(
   list(
     # ---- sizing ----------------------------------------------------------
     # Memory is the binding resource: measured 19 GB median, 82 GB peak per worker. Raise only
-    # after report_memory.R shows headroom on a real Ceres run.
+    # after tools/report_memory.R shows headroom on a real Ceres run.
     dosage_budget_bytes = 16e9
   )
 )

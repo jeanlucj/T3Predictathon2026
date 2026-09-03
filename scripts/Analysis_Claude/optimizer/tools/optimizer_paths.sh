@@ -1,9 +1,9 @@
 #!/bin/bash
-# optimizer_paths.sh
+# tools/optimizer_paths.sh
 #
 # Resolve the optimizer's paths and export them for use in the shell.
 #
-#   source ./optimizer_paths.sh
+#   source ./tools/optimizer_paths.sh
 #   touch "$STOP_FILE"          # stops every worker
 #   ls -la "$DB_PATH"
 #
@@ -19,14 +19,16 @@
 #
 # Exports: OPTIMIZER_HOME STOP_FILE DB_PATH REPORT_PATH LOG_DIR CACHE_DIR
 
-# Directory containing this script, whether it was sourced or executed.
-_opt_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# The optimizer ROOT, which is this script's PARENT directory -- it lives in tools/, and
+# `.Renviron` and `settings.R` are at the root. Resolved from BASH_SOURCE rather than the cwd,
+# so sourcing it from anywhere still finds them.
+_opt_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 
 # The `cd "$_opt_dir"` below is LOAD-BEARING, not tidiness. R reads `.Renviron` at the startup
 # of EVERY R process -- there is no "has R run yet" state to worry about, a fresh Rscript
 # reads it itself -- but it looks for `./.Renviron` in the CURRENT WORKING DIRECTORY (then
-# ~/.Renviron). The optimizer's `.Renviron` lives in this directory, so without the cd, running
-# this script from anywhere else silently misses OPTIMIZER_HOME and returns local-mode paths.
+# ~/.Renviron). The optimizer's `.Renviron` lives at the ROOT, so without the cd, running this
+# script from anywhere else silently misses OPTIMIZER_HOME and returns local-mode paths.
 #
 # `.Renviron` also OVERRIDES a variable already exported in the shell, so it is authoritative
 # and cannot conflict with .bashrc.
@@ -46,8 +48,8 @@ _opt_vals="$(cd "$_opt_dir" && Rscript -e '
 ' 2>/dev/null)"
 
 if [ -z "$_opt_vals" ]; then
-  echo "optimizer_paths.sh: could not read settings from R." >&2
-  echo "  Run from the optimizer directory and check: Rscript -e 'source(\"settings.R\"); optimizer_settings()'" >&2
+  echo "tools/optimizer_paths.sh: could not read settings from R." >&2
+  echo "  Run from the optimizer ROOT and check: Rscript -e 'source(\"settings.R\"); optimizer_settings()'" >&2
 else
   # One path per line, read in the order cat() wrote them.
   {

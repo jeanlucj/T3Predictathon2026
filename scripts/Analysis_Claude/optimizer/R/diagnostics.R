@@ -42,7 +42,7 @@ canary_config <- function() {
 # YT_Urb 10677), which between them carry every demanding branch; the rest get a light filler
 # that only confirms "still predictable". Keyed by studyDbId.
 #
-# EVALUATION.md sec. 9 tabulates which trial exercises which branch; canary_coverage() is the
+# docs/EVALUATION.md sec. 9 tabulates which trial exercises which branch; canary_coverage() is the
 # machine-checkable version and is what to trust.
 canary_configs <- function() {
   mk <- function(...) .make_seed(list(...))
@@ -452,8 +452,7 @@ diagnose_trial <- function(study_id, settings, conn,
 
   # What subtask C hands to the kernel and what .best_panel picks out of it, separating the two
   # causes of test_in = 0: no panel covers the focal lines (a name/data problem), or a covering
-  # panel exists but is passed over (.best_panel maximizes coverage of union(train, focal), which
-  # large training sets dominate). `trial` is reused by the pipeline replay below.
+  # panel exists but is passed over. `trial` is reused by the pipeline replay below.
   trial_err <- NULL
   trial <- tryCatch(build_trial_descriptor(id, conn, settings),
                     error = function(e) { trial_err <<- conditionMessage(e); NULL })
@@ -474,13 +473,20 @@ diagnose_trial <- function(study_id, settings, conn,
       cat(sprintf("  panels from subtask C (%d), focal / train overlap:\n", length(pl)))
       fo <- vapply(pl, function(d) length(intersect(rownames(d), f_acc)), integer(1))
       to <- vapply(pl, function(d) length(intersect(rownames(d), t_acc)), integer(1))
-      # Exactly .best_panel's criterion: coverage of union(train, focal), counted once.
       need <- union(t_acc, f_acc)
       cov  <- vapply(pl, function(d) length(intersect(rownames(d), need)), integer(1))
+      # The two floors .best_panel selects against, printed per panel so its choice is legible:
+      # a panel is `ok` only if it clears BOTH, and only among those is union coverage maximised.
+      mt <- .min_test(settings); mn <- .min_train(settings)
       for (i in seq_along(pl))
-        cat(sprintf("    panel %-20s %6d rows   focal %5d   train %6d   union %6d\n",
-                    names(pl)[i] %||% i, nrow(pl[[i]]), fo[i], to[i], cov[i]))
-      picked <- which.max(cov)
+        cat(sprintf("    panel %-20s %6d rows   focal %5d %-6s train %6d %-6s union %6d\n",
+                    names(pl)[i] %||% i, nrow(pl[[i]]),
+                    fo[i], if (fo[i] >= mt) sprintf(">=%d", mt) else sprintf("<%d!", mt),
+                    to[i], if (to[i] >= mn) sprintf(">=%d", mn) else sprintf("<%d!", mn),
+                    cov[i]))
+      # Ask the real function rather than recomputing its rule -- the recomputation here was
+      # the pre-0.7.1 max-union criterion and misreported a healthy trial as broken.
+      picked <- .best_panel_index(pl, need, f_acc, mt, mn)
       cat(sprintf("  .best_panel picks %s -- focal coverage %d%s\n",
                   names(pl)[picked] %||% picked, fo[picked],
                   if (fo[picked] == 0 && any(fo > 0))

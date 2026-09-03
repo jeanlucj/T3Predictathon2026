@@ -7,13 +7,14 @@ logs/*
 !state/.gitkeep
 !cache/.gitkeep
 !logs/.gitkeep
-T3BrapiHelpers_extraction_proposal.md
 .Renviron
 .Rprofile
 settings.local.R
-EM_COMBINE_COMPARISON.md
-CODE_ASSESSMENT.md
-NEXT_STEPS.md
+# Working notes, not documentation: EM_COMBINE_COMPARISON.md compares this combiner against a
+# sibling pipeline's. dev/README.md is deliberately TRACKED even though its Open threads
+# section came from the untracked NEXT_STEPS.md -- a fresh clone with no orientation in dev/
+# is how that file went stale unnoticed in the first place.
+dev/EM_COMBINE_COMPARISON.md
 nohup.out
 # The container RECIPE is tracked, so `git pull` delivers it to any build host. The BUILT
 # IMAGE never is: build.sh writes optimizer.sif into container/, and that is 1-2 GB of binary

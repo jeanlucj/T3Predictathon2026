@@ -1,4 +1,4 @@
-# peek_trial_names.R
+# dev/check_trial_renames.R
 #
 # Did a trial's study_name CHANGE while the store was being written? Domain membership is
 # decided by study_name, but the replication backlog groups by trial_id, so an id carrying two
@@ -7,19 +7,25 @@
 # Read-only, no network, seconds. Works on a copy, never the live store.
 #
 #   cd <repo>/scripts/Analysis_Claude/optimizer
-#   ./container/run_in_container.sh exec peek_trial_names.R
+#   ./container/run_in_container.sh exec dev/check_trial_renames.R
 
-if (!file.exists("peek_trial_names.R"))
-  stop("run this FROM the optimizer directory:\n",
+# The optimizer ROOT, not this script's directory: `.Renviron` -- and so the T3
+# credentials -- is read from the WORKING DIRECTORY only, with no parent walk. `settings.R`
+# is the marker for that root. here::i_am() below also halts from the wrong place, but only
+# when it cannot find the project at all, and a cwd inside the project is not one of those
+# cases: here() still resolves while .Renviron silently does not.
+if (!file.exists("settings.R"))
+  stop("run this from the optimizer ROOT, so R reads ./.Renviron:\n",
        "  cd <repo>/scripts/Analysis_Claude/optimizer\n",
+       "  Rscript dev/check_trial_renames.R\n",
        "  (working directory was: ", getwd(), ")")
 
 suppressMessages(library(tidyverse))
-here::i_am("peek_trial_names.R")
+here::i_am("dev/check_trial_renames.R")
 source(here::here("settings.R"))
 for (f in list.files(here::here("R"), pattern = "[.]R$", full.names = TRUE)) source(f)
 
-if (.on_login_node()) stop(.login_node_message("peek_trial_names.R"), call. = FALSE)
+if (.on_login_node()) stop(.login_node_message("dev/check_trial_renames.R"), call. = FALSE)
 s  <- optimizer_settings()
 hr <- function(t) cat("\n", t, "\n", strrep("-", nchar(t)), "\n", sep = "")
 

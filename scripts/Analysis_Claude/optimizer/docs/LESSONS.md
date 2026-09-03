@@ -5,9 +5,9 @@ wrong answer**. They are recorded away from the code because a fresh reader does
 history to understand what the code does — but *we* need it, because most of these are re-enterable
 by a well-meaning simplification.
 
-The code cites these by number (`see LESSONS.md #11`). Numbers are stable: append, never renumber.
+The code cites these by number (`see docs/LESSONS.md #11`). Numbers are stable: append, never renumber.
 
-**This is not the debugging guide.** When something looks wrong *right now*, go to `EVALUATION.md`
+**This is not the debugging guide.** When something looks wrong *right now*, go to `docs/EVALUATION.md`
 §6 (subtle-bug catalogue) and §9 (tooling). This file is why those checks exist.
 
 | | |
@@ -209,7 +209,7 @@ disguise — and the SIMULATE world *scored them as if they were real*, so the o
 green throughout.
 **Now.** All three are implemented. The sweep-coverage test asserts every method in `SUBTASKS` is
 exercised by an oracle variant, which would have caught the dead *method* (though not the dead
-*parameters*). When adding to the search space, follow `EVALUATION.md` §10 in full. And when a
+*parameters*). When adding to the search space, follow `docs/EVALUATION.md` §10 in full. And when a
 method looks strangely indistinguishable from another in `method_importance()`, check that it *is*
 distinguishable in the code before believing the result.
 
@@ -279,7 +279,7 @@ the trial effect is estimable and `aggregate_scores()` removes it with random-ef
 over the population it is supposed to generalize to. The two cooperate: the trial backlog supplies
 exactly the under-used trials a replication step needs. Both levels **ramp** (0.8.6) — trials on a
 `sqrt(n_scored)` schedule, configurations by contention, so the budget concentrates on whichever
-configs are still in question. See `DESIGN.md` §3 and `NEXT_STEPS.md` §1.
+configs are still in question. See `docs/DESIGN.md` §3 and `dev/README.md` (Open threads).
 
 **Read the variance components carefully.** `.blup_scores()` weights by `n_test - 3`, so lmer's
 `sd_resid` is the residual sd at *unit weight* while `sd_config` and `sd_trial` are on the score
@@ -316,7 +316,7 @@ a combine that fails anyway raises `infeasible` carrying every partial's shape a
 than an uncaught exception. Rank-deficient partials are reported once per session with their
 duplicate-row count — a non-zero count is evidence about the synonym tail (#6), so the
 regularization does not hide the data problem it papers over.
-**See also.** `EM_COMBINE_COMPARISON.md` — the sibling `Brapi_pipeline_for_selection` also
+**See also.** `dev/EM_COMBINE_COMPARISON.md` — the sibling `Brapi_pipeline_for_selection` also
 regularizes *inside* the E-step (`psi_aa + diag(1e-5)`), which `T3BrapiHelpers` does not, so the
 one place we cannot ridge from outside is exactly where it does. That document also covers the
 degrees-of-freedom difference (this pipeline weights panels by accession count; the sibling by an
@@ -366,9 +366,9 @@ column. Eight of those does not fit in 512 GB.
 coarser out of the existing cache (`get_project_dosage`'s `marker_thin`, so no re-download);
 `.qc_markers` keeps the matrix integer on the `mean_round` path and subsets once instead of twice,
 halving the dominant allocation with bit-identical GRMs; and every evaluation records `peak_r_mb`
-so the budget is set from measurement (`report_memory.R`) rather than from arithmetic.
-**Lives in.** `R/pipeline.R::.dosage_thin_plan` / `.qc_markers`, `R/memory.R`, `report_memory.R`,
-`monitor_memory.sh`.
+so the budget is set from measurement (`tools/report_memory.R`) rather than from arithmetic.
+**Lives in.** `R/pipeline.R::.dosage_thin_plan` / `.qc_markers`, `R/memory.R`, `tools/report_memory.R`,
+`tools/watch_memory.sh`.
 
 ### 24. "SQLite allows one writer" is true and was still the wrong conclusion
 
@@ -501,11 +501,11 @@ ones, which may also be the best; a capped evaluation stores no score, so a conf
 always exceeds the cap can never become incumbent however good it is. Set one and the search
 "discovers" that cheap pipelines win -- an artifact. Memory is bounded instead, and only where
 bounding is safe: `dosage_total_budget_bytes` thins at serve time rather than discarding work.
-**So watch it rather than cap it.** `report_timing.R` and `report_memory.R` exist for this.
+**So watch it rather than cap it.** `tools/report_timing.R` and `tools/report_memory.R` exist for this.
 Size a machine from the *maximum* per worker, not the median -- SLURM kills a job that exceeds
 its allocation rather than throttling it -- and expect a job's final hours to lose whatever is
 in flight, because a 33-hour evaluation cannot be finished by any amount of margin.
-**Lives in.** `report_timing.R`, `report_memory.R`, `settings$dosage_total_budget_bytes`.
+**Lives in.** `tools/report_timing.R`, `tools/report_memory.R`, `settings$dosage_total_budget_bytes`.
 
 ### 29. A stop file on durable storage outlives the job that consumed it
 

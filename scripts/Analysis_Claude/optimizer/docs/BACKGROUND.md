@@ -1,7 +1,7 @@
 # Background: sources and design rationale
 
-`README.md` says *how* to run it, `DESIGN.md` says *what* it is and where every
-function lives, and `EVALUATION.md` is the evaluation/validation runbook. This
+`README.md` says *how* to run it, `docs/DESIGN.md` says *what* it is and where every
+function lives, and `docs/EVALUATION.md` is the evaluation/validation runbook. This
 document records *why* it is built the way it is — the sources consulted, the design
 decisions (including alternatives considered and rejected), and the statistical and
 data-management challenges it must handle and how each is addressed. It is meant as
@@ -245,7 +245,7 @@ returns every trial, metadata without coordinates, protocol ids that are not pro
 archives that are not usable VCFs, sample names that are synonyms of the accession you asked for.
 
 Each was hit during bring-up and each is now handled in `R/data_access.R`. They are catalogued,
-with the symptom that gave each one away, in **`LESSONS.md` §1 (#1–#10)** — worth reading before
+with the symptom that gave each one away, in **`docs/LESSONS.md` §1 (#1–#10)** — worth reading before
 touching the data layer, since most are re-enterable by a reasonable-looking simplification.
 
 ## 3c. Telling genuine infeasibility from a data-hiding bug

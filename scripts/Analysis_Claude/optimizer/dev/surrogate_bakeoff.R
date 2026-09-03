@@ -1,4 +1,4 @@
-# surrogate_bakeoff.R
+# dev/surrogate_bakeoff.R
 #
 # Which surrogate design predicts a held-out configuration best, ON YOUR DATA? Scores the
 # competing designs by REPEATED cross-validation over configurations and reports each with an
@@ -23,7 +23,7 @@
 # Read-only, no network. Copies the store AND its -wal/-shm sidecars and reads the copy.
 #
 #   cd <repo>/scripts/Analysis_Claude/optimizer
-#   Rscript surrogate_bakeoff.R
+#   Rscript dev/surrogate_bakeoff.R
 #
 # Options:
 #   --reps=12        how many independent CV repetitions (more = tighter error bars)
@@ -58,14 +58,19 @@
 # full-slice comparison, always) and, with the curve, <out>/surrogate_bakeoff.tsv (tidy, so the
 # figure can be redrawn without re-running) plus <out>/surrogate_bakeoff.png.
 
-if (!file.exists("surrogate_bakeoff.R"))
-  stop("run this FROM the optimizer directory:\n",
+# The optimizer ROOT, not this script's directory: `.Renviron` -- and so the T3
+# credentials -- is read from the WORKING DIRECTORY only, with no parent walk. `settings.R`
+# is the marker for that root. here::i_am() below also halts from the wrong place, but only
+# when it cannot find the project at all, and a cwd inside the project is not one of those
+# cases: here() still resolves while .Renviron silently does not.
+if (!file.exists("settings.R"))
+  stop("run this from the optimizer ROOT, so R reads ./.Renviron:\n",
        "  cd <repo>/scripts/Analysis_Claude/optimizer\n",
-       "  Rscript surrogate_bakeoff.R\n",
+       "  Rscript dev/surrogate_bakeoff.R\n",
        "  (working directory was: ", getwd(), ")")
 
 suppressMessages(library(tidyverse))
-here::i_am("surrogate_bakeoff.R")
+here::i_am("dev/surrogate_bakeoff.R")
 source(here::here("settings.R"))
 for (f in list.files(here::here("R"), pattern = "[.]R$", full.names = TRUE)) source(f)
 
@@ -97,7 +102,7 @@ o_xtr    <- { v <- opt("exclude-trials"); if (is.null(v)) NULL else trimws(strsp
 
 s_set <- optimizer_settings()
 BUILD <- s_set$build %||% OPTIMIZER_BUILD
-store_path <- resolve_read_store(what = "surrogate_bakeoff.R")
+store_path <- resolve_read_store(what = "dev/surrogate_bakeoff.R")
 tmp <- .copy_store_with_sidecars(store_path, file.path(tempdir(), "bakeoff.sqlite"))
 con <- open_store(tmp)
 e   <- read_evals(con)
@@ -153,7 +158,7 @@ F_all <- configs_to_features(lapply(d$config_json, config_from_json))
 # learning curve then run the identical code path.
 # `label` names this pass in the progress lines; NULL silences them. Progress is line-oriented
 # cat + flush.console(), never \r, because this is normally run under nohup into a log file --
-# the same idiom as prewarm_indices.R.
+# the same idiom as tools/prepare_indices.R.
 cv_at <- function(rows, reps, folds, ntree, label = NULL) {
   d0 <- d[rows, , drop = FALSE]
   F0 <- F_all[rows, , drop = FALSE]

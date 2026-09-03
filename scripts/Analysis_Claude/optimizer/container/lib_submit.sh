@@ -33,7 +33,7 @@ submit_optimizer() {
   repo="$(dirname "$here")"
 
   # .Renviron is the single source for OPTIMIZER_HOME. R overrides the inherited environment
-  # from it at startup (see optimizer_paths.sh), so a value set in the shell would lose to it
+  # from it at startup (see tools/optimizer_paths.sh), so a value set in the shell would lose to it
   # inside the container -- the shell would bind and restore one directory while R used
   # another, and that failure looks like a permissions problem, not a config mismatch.
   renv="$repo/.Renviron"

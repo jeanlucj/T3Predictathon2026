@@ -40,7 +40,7 @@ JOB_NAME=t3opt
 
 # ---- how big -------------------------------------------------------------
 # Memory is the binding resource, not cores: measured 19 GB median and 82 GB peak per worker.
-# MEM should be at least N_WORKERS x 82 GB. Raise the worker count only after report_memory.R
+# MEM should be at least N_WORKERS x 82 GB. Raise the worker count only after tools/report_memory.R
 # shows real headroom -- SLURM kills a job that exceeds its allocation, it does not throttle it.
 #
 # N_WORKERS and N_THREADS are exported because they must reach the JOB, through --export=ALL.

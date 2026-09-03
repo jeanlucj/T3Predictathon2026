@@ -11,7 +11,7 @@ reserved Cornell BioHPC server. If a scheduler decides when your work runs, use
 **`RUNBOOK_SLURM.md`** instead.
 
 The *why* behind any of it is in **`README.md`**; this file is what you tick off.
-`EVALUATION_CHECKLIST.md` is the separate, slower question of whether the pipeline is
+`docs/EVALUATION_CHECKLIST.md` is the separate, slower question of whether the pipeline is
 *correct* — do that before trusting a run's results, not before launching one.
 
 The default path here runs **several workers in parallel** against one store. A single worker
@@ -30,7 +30,7 @@ numbered section that follows.
 - [ ] Right R on `PATH` (`which R`; `loadR` or `module load R/4.6.1`)
 - [ ] `.Renviron` exists, with `T3_USERNAME`, `T3_PASSWORD`, `OPTIMIZER_HOME`
 - [ ] Packages installed, including `BrAPI` and `T3BrapiHelpers`
-- [ ] `source ./optimizer_paths.sh` so your shell knows `$STOP_FILE`, `$DB_PATH`, …
+- [ ] `source ./tools/optimizer_paths.sh` so your shell knows `$STOP_FILE`, `$DB_PATH`, …
 
 **Settings**
 
@@ -54,14 +54,14 @@ numbered section that follows.
 **Launch**
 
 - [ ] `nohup ./run_workers.sh 8 > logs/workers.out 2>&1 &`
-- [ ] `nohup ./monitor_memory.sh > /dev/null 2>&1 &` — *after* the workers
+- [ ] `nohup ./tools/watch_memory.sh > /dev/null 2>&1 &` — *after* the workers
 - [ ] No WAL warning in `logs/run_w1.out`; it says `worker=1, leader`
 - [ ] Rows accruing in the store
 
 **While it runs**
 
 - [ ] `cat "$REPORT_PATH"` shows a rising best score
-- [ ] `Rscript report_memory.R` says there is headroom before you add workers
+- [ ] `Rscript tools/report_memory.R` says there is headroom before you add workers
 
 **Stopping**
 
@@ -80,7 +80,7 @@ Once the drill is familiar, the whole thing is:
 export OPTIMIZER_WORK=/workdir/<user>/T3Predictathon2026/scripts/Analysis_Claude/optimizer
 cd $OPTIMIZER_WORK
 git pull && loadR
-source ./optimizer_paths.sh                  # $STOP_FILE, $DB_PATH, $REPORT_PATH, ...
+source ./tools/optimizer_paths.sh                  # $STOP_FILE, $DB_PATH, $REPORT_PATH, ...
 Rscript tests/run_all.R                      # expect 3/3
 find $OPTIMIZER_WORK/cache -type f | wc -l   # how many files in the workdir cache
 find $OPTIMIZER_HOME/cache -type f | wc -l   # how many files in the home cache
@@ -89,7 +89,7 @@ rsync -a $OPTIMIZER_HOME/cache/ cache/       # trailing slashes!
 # If the workdir cache has more then:
 rsync -a cache/ $OPTIMIZER_HOME/cache/       # trailing slashes!
 nohup ./run_workers.sh 8 > logs/workers.out 2>&1 &   # 8 workers, 2 BLAS threads each
-nohup ./monitor_memory.sh > /dev/null 2>&1 &         # AFTER the workers
+nohup ./tools/watch_memory.sh > /dev/null 2>&1 &         # AFTER the workers
 tail -f logs/run_w1.out
 ```
 
@@ -102,24 +102,24 @@ touch "$STOP_FILE"                           # halts all workers, and the monito
 Which pid is which worker, what each is working on, and what has died:
 
 ``` bash
-Rscript peek_workers.R
+Rscript tools/watch_workers.R
 ```
 
 (The old `/proc/$p/environ` loop only worked on Linux and only told you the mapping.
-`peek_workers.R` also names the trial each worker is on and keeps a record of workers lost
+`tools/watch_workers.R` also names the trial each worker is on and keeps a record of workers lost
 mid-evaluation. Worker 1 is no longer a special case — see §5.)
 
 Two things that matter here:
 
-**`source ./optimizer_paths.sh` first.** `OPTIMIZER_HOME` is set in `.Renviron`, which **only R
+**`source ./tools/optimizer_paths.sh` first.** `OPTIMIZER_HOME` is set in `.Renviron`, which **only R
 reads** — in a shell it is empty, so `"$OPTIMIZER_HOME/state/STOP"` expands to `"/state/STOP"`,
 `touch` fails with permission denied, and you conclude you stopped a run that is still going.
-`optimizer_paths.sh` asks R for the real paths (and so also honours any `settings.local.R`
+`tools/optimizer_paths.sh` asks R for the real paths (and so also honours any `settings.local.R`
 override of `db_path` / `stop_file`). The scripts do this internally already; sourcing it is
 for *your* shell.
 
 **Both launches need `nohup ... &`.** `run_workers.sh` ends in `wait` (so it blocks until the
-workers finish, which is what a SLURM batch job needs) and `monitor_memory.sh` loops forever.
+workers finish, which is what a SLURM batch job needs) and `tools/watch_memory.sh` loops forever.
 Without it the first command occupies the terminal and the rest never run.
 
 ------------------------------------------------------------------------
@@ -161,7 +161,7 @@ Without it the first command occupies the terminal and the rest never run.
 - [ ] **Measure it, do not infer it:**
 
     ``` bash
-    Rscript blas_check.R
+    Rscript dev/check_blas.R
     ```
 
     It prints the BLAS R is linked against, the thread environment, and then times a
@@ -187,7 +187,7 @@ timing line.
     Switch without root:
 
     ``` bash
-    LD_PRELOAD=/usr/lib64/libopenblasp.so.0 OPENBLAS_NUM_THREADS=8 Rscript blas_check.R
+    LD_PRELOAD=/usr/lib64/libopenblasp.so.0 OPENBLAS_NUM_THREADS=8 Rscript dev/check_blas.R
     ```
 
 2.  **Reference BLAS** — a path containing `libRblas`. The *other* single-threaded case, and it
@@ -215,7 +215,7 @@ timing line.
 > rather than FLOP-bound, so they thread poorly even when threads are available.
 >
 > Fixing the thread cap is worth doing for correctness, but **it will not convert spare cores
-> into throughput**. A profiled real evaluation on the server (`profile_evaluation.R`, trial
+> into throughput**. A profiled real evaluation on the server (`dev/profile_evaluation.R`, trial
 > 10938, 803 s) put **`build_kernel` at 6.4 s — 0.8% of the run**, against `.find_related` at
 > 54% and `.group_by_panel` at 13%, with CPU/wall = 0.98: serial R computation, not waiting and
 > not linear algebra. One busy core per worker is what that looks like in `top`, and it is
@@ -224,7 +224,7 @@ timing line.
 - [ ] **Find where the time actually goes** before optimising anything:
 
     ``` bash
-    Rscript profile_evaluation.R --trial=<id>
+    Rscript dev/profile_evaluation.R --trial=<id>
     ```
 
     It runs one real evaluation with per-subtask timing and reports the split plus CPU/wall.
@@ -306,12 +306,12 @@ The one residual cost of the denser cache is a **transient floor**: `readRDS` lo
 file whole before the cap subsets it, so the largest single project (10.2 GB at 16e9, 6.8 GB at
 8e9) is briefly resident on top of everything retained. `README.md` has the full table.
 
-`report_memory.R` sizes from **`peak_rss_mb`** (true peak RSS), not `peak_r_mb` (R's heap peak,
+`tools/report_memory.R` sizes from **`peak_rss_mb`** (true peak RSS), not `peak_r_mb` (R's heap peak,
 which cannot see BLAS/`sommer`/`dist` and understated the real figure by 2.7×). The RSS peak
 needs Linux; elsewhere it is `NA` and the report says its numbers understate.
 
-**Start at half the worker count you want**, confirm with `report_memory.R` and
-`monitor_memory.sh`, then scale up. The 2.3× multiplier is derived from a single node-hour and
+**Start at half the worker count you want**, confirm with `tools/report_memory.R` and
+`tools/watch_memory.sh`, then scale up. The 2.3× multiplier is derived from a single node-hour and
 is more likely too low than too high — it assumed every cached project covered that trial, and
 if fewer did, the real multiplier is larger.
 
@@ -319,7 +319,7 @@ if fewer did, the real multiplier is larger.
 
 ``` bash
 ./run_workers.sh 4                              # workers 1-4 (1 is the leader)
-# ... a day later, once report_memory.R says there is room ...
+# ... a day later, once tools/report_memory.R says there is room ...
 OPTIMIZER_FIRST_WORKER=5 ./run_workers.sh 4     # adds workers 5-8
 ```
 
@@ -427,11 +427,11 @@ disk and is backed up to `$HOME/T3optimizer/cache`. It is large but regenerable.
   appears:
 
     ``` bash
-    nohup ./monitor_memory.sh > /dev/null 2>&1 &
+    nohup ./tools/watch_memory.sh > /dev/null 2>&1 &
     ```
 
     It writes to `logs/memory_<host>.tsv`, so its stdout is only the one startup line. Inside
-    tmux/screen a plain `./monitor_memory.sh &` is fine.
+    tmux/screen a plain `./tools/watch_memory.sh &` is fine.
 
 - [ ] **Confirm it came up.**
     - No WAL warning in `logs/run_w1.out` — a warning means the store is still on NFS, so stop,
@@ -441,24 +441,24 @@ disk and is backed up to `$HOME/T3optimizer/cache`. It is large but regenerable.
     - all N workers present, and rows accruing:
 
     ``` bash
-    Rscript peek_workers.R      # process count, who holds what, anything lost
+    Rscript tools/watch_workers.R      # process count, who holds what, anything lost
     ```
 
 ## 5. Monitoring
 
 **Where the logs are depends on the mode.** `run_workers.sh` writes to `settings$log_dir`,
 which `settings.R` derives from `perm_dir`: `./logs` on a laptop, but **`$OPTIMIZER_HOME/logs`
-whenever `OPTIMIZER_HOME` is set** — which includes a rented BioHPC server. `optimizer_paths.sh`
-exports it as `$LOG_DIR`, so `source ./optimizer_paths.sh` first and the commands below work in
+whenever `OPTIMIZER_HOME` is set** — which includes a rented BioHPC server. `tools/optimizer_paths.sh`
+exports it as `$LOG_DIR`, so `source ./tools/optimizer_paths.sh` first and the commands below work in
 either case. (Logs living on durable storage is the point: they outlive a purged work disk.)
 
 ``` bash
-source ./optimizer_paths.sh               # $LOG_DIR, $REPORT_PATH, $STOP_FILE, ...
-Rscript peek_workers.R                    # START HERE: who is alive, on what, what died
+source ./tools/optimizer_paths.sh               # $LOG_DIR, $REPORT_PATH, $STOP_FILE, ...
+Rscript tools/watch_workers.R                    # START HERE: who is alive, on what, what died
 cat  "$REPORT_PATH"                       # best pipeline so far + learning curve
 tail -f "$LOG_DIR/run_w1.out"             # live log (one per worker)
-Rscript report_memory.R                   # peak per evaluation, workers-that-fit table
-Rscript report_timing.R                   # where the wall time goes
+Rscript tools/report_memory.R                   # peak per evaluation, workers-that-fit table
+Rscript tools/report_timing.R                   # where the wall time goes
 sort -k3 -n "$LOG_DIR"/memory_*.tsv | tail -5   # most memory-intensive moments
 find cache -type f | wc -l                # number of files in cache
 # Out of memory causing processes to be killed
@@ -466,7 +466,7 @@ dmesg -T 2>/dev/null | grep -iE 'killed process|out of memory' | tail -20
 journalctl -k --since "3 days ago" 2>/dev/null | grep -i -B2 -A6 'out of memory' | tail -40
 ```
 
-**`peek_workers.R` is the one to run first.** It answers "what is each worker doing, and has
+**`tools/watch_workers.R` is the one to run first.** It answers "what is each worker doing, and has
 anything died since I launched" from three sources at once, because no single one is enough:
 the claims table (a worker killed *mid*-evaluation), the process count, and how long since each
 worker's log was touched. Its **WORKERS LOST MID-EVALUATION** section is the history — a claim
@@ -476,7 +476,7 @@ OOM kill, since a killed evaluation writes no store row.
 **Worker 1 is no longer special.** Its only exclusive jobs are restoring the cache and clearing
 stale claims at startup; backups are every worker's job (LESSONS #25). Once the run is going,
 `worker=1, leader` in the log means it did the restore, not that it must stay alive — what
-matters is how many workers are alive, which is the first line of `peek_workers.R`'s output.
+matters is how many workers are alive, which is the first line of `tools/watch_workers.R`'s output.
 
 **Sweep every worker's log at once**, rather than tailing one:
 
@@ -497,7 +497,7 @@ to the pattern; there it is a real alarm.
 
 The last one inverts usefully: a file **missing** from that list has logged nothing for half an
 hour. That is normal for a worker inside a long evaluation — 33 h is the observed maximum
-(LESSONS #28) — and suspicious for one holding no claim. `peek_workers.R` makes exactly that
+(LESSONS #28) — and suspicious for one holding no claim. `tools/watch_workers.R` makes exactly that
 distinction for you.
 
 **Throughput — is it still making progress, and how fast?** `report.md`'s best-score line
@@ -518,11 +518,11 @@ Red flags:
 |------------------------|------------------------|------------------------|
 | WAL warning at startup | store is on NFS; concurrent writes unsafe | stop, move `db_path` to `/workdir`, restart |
 | `rss_total_mb` approaching RAM | too many workers for the budget | fewer workers, or lower `dosage_total_budget_bytes` |
-| fewer workers than you launched | some died — OOM is the usual cause | `Rscript peek_workers.R`: its WORKERS LOST section names them and the trial each was on |
+| fewer workers than you launched | some died — OOM is the usual cause | `Rscript tools/watch_workers.R`: its WORKERS LOST section names them and the trial each was on |
 | `report.md` not updating | no worker has finished an evaluation since the last write | normal if evaluations are long; check `logs/run_w*.out` for progress |
-| every evaluation `infeasible` | usually a data/name bug, not the configs | run the `EVALUATION_CHECKLIST.md` diagnostics |
+| every evaluation `infeasible` | usually a data/name bug, not the configs | run the `docs/EVALUATION_CHECKLIST.md` diagnostics |
 | `serving 1 marker in N` messages | the aggregate cap is binding | fine if deliberate; else raise `dosage_total_budget_bytes` |
-| `peak_rss_mb` ≫ `peak_r_mb` in `report_memory.R` | the cost is in compiled code (GRM/BLAS/sommer), which `dosage_total_budget_bytes` does **not** bound | size from `peak_rss_mb`; to cap it you must bound the kernel stage, not the dosage budget |
+| `peak_rss_mb` ≫ `peak_r_mb` in `tools/report_memory.R` | the cost is in compiled code (GRM/BLAS/sommer), which `dosage_total_budget_bytes` does **not** bound | size from `peak_rss_mb`; to cap it you must bound the kernel stage, not the dosage budget |
 
 The store backup appears in `report.md` as `- store backup: N min ago, up to date` or
 `… , 37 row(s) behind`, flagged `** STALE **` when it is behind and more than 5 minutes old.
@@ -584,28 +584,29 @@ already run are skipped by hash, so nothing is repeated.
 
 ## 7. Diagnostics
 
-What each script answers is in `README.md`. Here is how to run them on this kind of machine —
-plainly, from this directory:
+What each script answers, what it costs, and whether it is safe beside working workers is one
+table: **`tools/README.md`** (and `dev/README.md` for the two developer tools). Here is how to
+run them on this kind of machine — plainly, **from the optimizer root**:
 
 ``` bash
-Rscript profile_evaluation.R --trial=<id>          # one real evaluation, per-subtask timing
-Rscript surrogate_bakeoff.R                        # surrogate comparison + learning curve
-Rscript peek_failures.R                            # every non-ok eval, funnel unpacked
-Rscript peek_config.R --ids=4,23                   # the configurations those evals ran
-Rscript blas_check.R                               # is linear algebra threaded (see §1)
-nohup Rscript prewarm_indices.R > logs/prewarm.out 2>&1 &   # fill the local wizards
+Rscript dev/profile_evaluation.R --trial=<id>                     # one real evaluation, per-subtask timing
+Rscript dev/surrogate_bakeoff.R                                   # surrogate comparison + learning curve
+Rscript tools/inspect_failures.R                                  # every non-ok eval, funnel unpacked
+Rscript tools/inspect_config.R --ids=4,23                         # the configurations those evals ran
+Rscript dev/check_blas.R                                          # is linear algebra threaded (see §1)
+nohup Rscript tools/prepare_indices.R > logs/prewarm.out 2>&1 &   # fill the local wizards
 ```
 
-**All are read-only against the store except `prewarm_indices.R`**, which writes cache files.
+**All are read-only against the store except `tools/prepare_indices.R`**, which writes cache files.
 The read-only ones copy the database *and* its `-wal`/`-shm` sidecars before reading, so none of
 them can corrupt a live store.
 
-**That is only the store half.** Which of these you can actually run beside working workers also
-depends on memory, CPU, BrAPI load and the dosage cache locks — see the table in `README.md`,
-*Which of these can run while workers are evaluating*. The short version for this machine:
-`profile_evaluation.R` and `diagnose_failures.R` each run a real pipeline (tens of GB, hours, and
-they take locks a worker may be holding), so use `peek_failures.R` instead;
-`surrogate_bakeoff.R` is fine but occupies a core for a long time — `--no-curve` shortens it.
+**That is only the store half.** Whether you can run one beside working workers also depends on
+memory, CPU, BrAPI load and the dosage cache locks — the *safe while workers evaluate* column in
+`tools/README.md`. The short version for this machine: `dev/profile_evaluation.R` and
+`tools/diagnose_failures.R` each run a real pipeline (tens of GB, hours, and they take locks a
+worker may be holding), so use `tools/inspect_failures.R` instead; `dev/surrogate_bakeoff.R` is
+fine but occupies a core for a long time — `--no-curve` shortens it.
 
 ### Where the time goes
 
@@ -617,8 +618,8 @@ the network" from "compute-bound on one core".
 ### Which surrogate is best
 
 ``` bash
-Rscript surrogate_bakeoff.R --no-curve --reps=12   # just the full-slice table, tighter bars
-Rscript surrogate_bakeoff.R --curve-reps=4 --curve-min=500   # faster curve (drops the low end)
+Rscript dev/surrogate_bakeoff.R --no-curve --reps=12   # just the full-slice table, tighter bars
+Rscript dev/surrogate_bakeoff.R --curve-reps=4 --curve-min=500   # faster curve (drops the low end)
 ```
 
 Three arms — `pooled` (config means, no trial), `blocked` (`trial_id` in the forest,
@@ -639,14 +640,14 @@ The learning curve re-runs the comparison on the first *n* evaluations by timest
 
 ### Why evaluations failed
 
-`peek_failures.R` reads the funnel stored in `detail` and prints a verdict per row — whether
+`tools/inspect_failures.R` reads the funnel stored in `detail` and prints a verdict per row — whether
 the kernel covered training lines but no focal lines, covered neither, or was merely thin. Rows
 whose status comes from scoring carry a reason string instead of a funnel; those are printed
 separately, because the reason *is* the explanation.
 
 ### Fill the local wizards
 
-`prewarm_indices.R` fetches `project -> accessions` (110 projects, ~1 min) and
+`tools/prepare_indices.R` fetches `project -> accessions` (110 projects, ~1 min) and
 `trial -> accessions` (the catalogue, ~25 min) so candidate discovery needs no BrAPI call.
 Resumable, rate-limited, and safe to run beside working workers — every fetch is cached
 independently and workers contribute to the same files. Finish when both lines read

@@ -1,17 +1,17 @@
-# setup_fallback_libs.R
+# container/setup_fallback_libs.R
 #
 # Install the optimizer's packages into R_LIBS_USER, so a BARE `Rscript` works -- RStudio via
 # Ceres OnDemand, or any session where you are not inside the container.
 #
 #   cd <repo>/scripts/Analysis_Claude/optimizer
 #   module load r/4.5.3
-#   Rscript setup_fallback_libs.R --dry-run     # show what would be installed
-#   Rscript setup_fallback_libs.R               # 30-60 min: lme4, sommer, Matrix compile
+#   Rscript container/setup_fallback_libs.R --dry-run     # show what would be installed
+#   Rscript container/setup_fallback_libs.R               # 30-60 min: lme4, sommer, Matrix compile
 #
 # YOU PROBABLY DO NOT NEED THIS. The container already has everything, and running a script in
 # it is one line:
 #
-#   ./container/run_in_container.sh exec peek_failures.R
+#   ./container/run_in_container.sh exec tools/inspect_failures.R
 #
 # This exists for the cases where a container is awkward -- chiefly RStudio OnDemand, which
 # hands you the module's R.
@@ -25,10 +25,12 @@
 # here::i_am(); this one cannot. It runs when those packages are exactly what is missing, so
 # depending on them would make it fail in the only situation it exists for. Do not "fix" this
 # to match the house style.
-if (!file.exists("setup_fallback_libs.R"))
-  stop("run this FROM the optimizer directory:\n",
+# The optimizer ROOT, not this script's directory. `settings.R` is the marker for that root.
+# There is no here::i_am() to fall back on here (see above), so this guard is the only check.
+if (!file.exists("settings.R"))
+  stop("run this from the optimizer ROOT, so R reads ./.Renviron:\n",
        "  cd <repo>/scripts/Analysis_Claude/optimizer\n",
-       "  Rscript setup_fallback_libs.R\n",
+       "  Rscript container/setup_fallback_libs.R\n",
        "  (working directory was: ", getwd(), ")")
 
 args    <- commandArgs(trailingOnly = TRUE)

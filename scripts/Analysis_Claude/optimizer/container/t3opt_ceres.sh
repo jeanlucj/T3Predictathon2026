@@ -75,7 +75,7 @@ ensure_apptainer || exit 1
 : "${SLURM_JOB_ID:?SLURM_JOB_ID is unset -- this must run as a SLURM job, not on a login node}"
 
 # Workers x threads <= ntasks. Memory, not cores, is the binding constraint: raise the
-# worker count only after report_memory.R confirms headroom.
+# worker count only after tools/report_memory.R confirms headroom.
 N_WORKERS="${N_WORKERS:-22}"
 N_THREADS="${N_THREADS:-1}"
 
@@ -115,11 +115,11 @@ apptainer inspect "$SIF" 2>/dev/null | grep -iE "r.version|sha" || true
 # the same STOP file the workers watch, and dies with the job otherwise.
 #
 # STOP_FILE and LOG_DIR are passed in because out here the module's Rscript has no packages,
-# so monitor_memory.sh cannot ask settings.R for them. Both are the values settings.R computes
+# so tools/watch_memory.sh cannot ask settings.R for them. Both are the values settings.R computes
 # for a cluster run; if you change db_path/log_dir in settings.local.R, change them here too.
 MEM_TSV="$OPTIMIZER_HOME/logs/memory_$(hostname -s).tsv"
 STOP_FILE="$OPTIMIZER_HOME/state/STOP" LOG_DIR="$OPTIMIZER_HOME/logs" \
-  "$REPO/monitor_memory.sh" 60 "$MEM_TSV" > /dev/null 2>&1 &
+  "$REPO/tools/watch_memory.sh" 60 "$MEM_TSV" > /dev/null 2>&1 &
 MEM_PID=$!
 echo "memory    : sampling every 60s -> $MEM_TSV (pid $MEM_PID)"
 # Backgrounded, so it cannot delay the exec below; killed on the way out in case the job ends

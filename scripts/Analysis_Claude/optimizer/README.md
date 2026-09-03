@@ -5,8 +5,8 @@ literature methods they missed -- into a genomic-prediction pipeline that beats
 any single submission at predicting grain yield in a **randomly chosen T3 trial**.
 
 This file is for **running** the optimizer. If you want to understand, validate,
-or modify the code, see **`EVALUATION.md`** (evaluation & validation runbook) and
-**`DESIGN.md`** (architecture). `BACKGROUND.md` explains why it is built this way.
+or modify the code, see **`docs/EVALUATION.md`** (evaluation & validation runbook) and
+**`docs/DESIGN.md`** (architecture). `docs/BACKGROUND.md` explains why it is built this way.
 
 ## Start here, then pick a runbook
 
@@ -21,6 +21,25 @@ should not need the other:
 
 The difference that matters is not the size of the machine; it is **who decides when your job
 runs**. If you type the command that starts the workers, you want the interactive runbook.
+
+## Where things live
+
+The directory is partitioned by **what you are trying to do**, so you can ignore two thirds of
+it:
+
+| directory | who it is for | what they are doing |
+|---|---|---|
+| the root, plus **`tools/`** | the **operator** | run the optimizer, watch it, size it, diagnose a failure — `tools/README.md` is the inventory |
+| **`docs/`** | the **reader** | understand what it is, why it is built this way, how it was validated — `docs/README.md` says which document answers which question |
+| **`dev/`** | the **developer** | change the algorithm, or work out why something broke — `dev/README.md`, which also carries the open threads |
+
+`R/` is the pipeline and the search; `tests/` exercises it offline; `container/` holds the
+Apptainer image and the SLURM submission scripts (`container/README.md`). The root itself holds
+only entry points — `run_optimizer.R`, `run_workers.sh`, `settings.R` — and the two runbooks.
+
+**Everything runs from the optimizer root**, `tools/` and `dev/` scripts included:
+`Rscript tools/check_backup.R`, not `cd tools`. That is because `.Renviron` carries the T3
+credentials and R reads it from the working directory only.
 
 ## What it does, in one paragraph
 
@@ -86,7 +105,7 @@ nohup Rscript run_optimizer.R > logs/run.out 2>&1 &
 In real mode the optimizer first runs a **startup self-check** (the "canary"
 check) and prints the result near the top of `logs/run.out`. If you see
 **`CANARY ALARM`** there, the build is failing to read data it should be able to
-read -- **do not trust that run**; see `EVALUATION.md` ("Validation & debugging tooling")
+read -- **do not trust that run**; see `docs/EVALUATION.md` ("Validation & debugging tooling")
 before continuing. `canaries OK` means it is reading data correctly.
 
 **3. Monitor:**
@@ -127,7 +146,7 @@ diagnostics sanity-check.)
 - **⚠ Suspected bugs** -- failures whose data funnel looks like a *bug* (real data
   not visible) rather than genuine infeasibility. A non-zero count here, or a
   `CANARY ALARM` in the log, means the build needs a developer's attention
-  (`EVALUATION.md`).
+  (`docs/EVALUATION.md`).
 - **Running best** -- the learning curve over evaluation order.
 
 ## Running several workers
@@ -219,7 +238,7 @@ Let it work through a few evaluations — you are watching for
 `cache/dosage` to stop growing quickly. Then stop it and go to step 5:
 
 ```bash
-source ./optimizer_paths.sh
+source ./tools/optimizer_paths.sh
 touch "$STOP_FILE"      # it exits after the current evaluation
 ```
 
@@ -227,7 +246,7 @@ Nothing is lost by skipping this: the results go to the same store either way, a
 per-project lock means two workers never download the same VCF. The reason to do it is
 that the first evaluations on a cold cache are the worst moment to have eight
 processes running — eight first-time VCF downloads at once is both a lot of load on
-the T3 server (see LESSONS.md #10) and the peak memory moment, since parsing a large
+the T3 server (see docs/LESSONS.md #10) and the peak memory moment, since parsing a large
 panel is itself memory-heavy. Paying that once, serially, is cheaper than tuning for
 it.
 
@@ -236,21 +255,21 @@ it.
 ```bash
 nohup ./run_workers.sh 8 > logs/workers.out 2>&1 &    # 8 workers, 2 BLAS threads each
 nohup ./run_workers.sh 4 4 > logs/workers.out 2>&1 &  # 4 workers, 4 threads each
-nohup ./monitor_memory.sh > /dev/null 2>&1 &          # watch what it actually costs
+nohup ./tools/watch_memory.sh > /dev/null 2>&1 &          # watch what it actually costs
 ```
 
 Launch both with `nohup ... &`. The workers are each `nohup`'d individually, so they
 survive a hangup regardless — but `run_workers.sh` ends in `wait` (needed under SLURM, so
 the batch job does not exit and tear down the allocation), which in an interactive shell
-blocks the terminal for the whole run. `monitor_memory.sh` loops until stopped.
+blocks the terminal for the whole run. `tools/watch_memory.sh` loops until stopped.
 
 **6. Stop them** — all at once, with the stop file. Get the path from
-`optimizer_paths.sh` rather than building it yourself: `OPTIMIZER_HOME` is set in
+`tools/optimizer_paths.sh` rather than building it yourself: `OPTIMIZER_HOME` is set in
 `.Renviron`, which **only R reads**, so in a shell `"$OPTIMIZER_HOME/state/STOP"` expands to
 `"/state/STOP"` — `touch` fails and you believe you stopped a run that is still going.
 
 ```bash
-source ./optimizer_paths.sh
+source ./tools/optimizer_paths.sh
 touch "$STOP_FILE"
 ```
 
@@ -286,8 +305,8 @@ Memory, not cores, is the binding constraint: R's heap is per-process, so N work
 cost N times the memory of one. Get the number from measurement, not arithmetic:
 
 ```bash
-nohup ./monitor_memory.sh > /dev/null 2>&1 &   # attaches to a RUNNING job; no restart needed
-Rscript report_memory.R                        # per-evaluation peaks + "how many workers fit"
+nohup ./tools/watch_memory.sh > /dev/null 2>&1 &   # attaches to a RUNNING job; no restart needed
+Rscript tools/report_memory.R                        # per-evaluation peaks + "how many workers fit"
 ```
 
 The setting that bounds a worker's peak is **`dosage_total_budget_bytes`**, not
@@ -307,7 +326,7 @@ the cap is what bounds a worker, not the per-project budget.
 | 512 GB | 4 | 16e9 | 35e9 |
 | 512 GB | 8 | 8e9 | 18e9 |
 
-`report_memory.R` sizes from **`peak_rss_mb`** — the evaluation's true peak RSS. Do not size
+`tools/report_memory.R` sizes from **`peak_rss_mb`** — the evaluation's true peak RSS. Do not size
 from `peak_r_mb`: that is R's own heap peak, and `gc()` cannot see BLAS, `sommer` or `dist`
 allocations, so it understated the real requirement by **2.7x** on the run measured above (33.6
 GB of heap against 89.4 GB of RSS). `peak_rss_mb` needs Linux (it resets the kernel's `VmHWM`
@@ -318,7 +337,7 @@ A large `peak_rss_mb / peak_r_mb` ratio means the cost is in compiled code — t
 `em_combine`, the RKHS distance matrices, a `sommer` fit — and **`dosage_total_budget_bytes`
 does not bound any of that**; it caps dosage bytes only.
 
-**Start at half the worker count you want**, confirm with `report_memory.R`, then scale up:
+**Start at half the worker count you want**, confirm with `tools/report_memory.R`, then scale up:
 the 2.3x multiplier comes from a single node-hour and is more likely too low than too high.
 Keep `workers x threads` at or under the core count; `run_workers.sh` sets the thread
 count for every BLAS R might be linked against.
@@ -367,134 +386,66 @@ use.
 Note that changing `dosage_budget_bytes` changes marker density and therefore scores,
 and density is not a configuration parameter — so rows made under different budgets
 are not comparable. Every row records the budget it ran under (`dosage_budget`), and
-`report_memory.R` warns when a store mixes them.
+`tools/report_memory.R` warns when a store mixes them.
 
 ## Monitoring and diagnostics
 
 Two different questions, and it is worth keeping them apart:
 
 - **Monitoring** — *is it healthy right now, and has anything broken since I launched it?*
-  Worker liveness, throughput, OOM kills, backup freshness. The commands are environment-specific
-  and live in your runbook: **`RUNBOOK_INTERACTIVE.md` §5** or **`RUNBOOK_SLURM.md` §6**. Start
-  with `peek_workers.R` in both.
-- **Diagnostics** — *why did that happen?* The standalone scripts below.
+  Worker liveness, throughput, OOM kills, backup freshness.
+- **Diagnostics** — *why did that happen?*
 
 The distinction that trips people up on a cluster: **a dead worker is not a dead job.** SLURM
 kills the job only on the cgroup limit, so one OOM-killed worker leaves `squeue` saying
-`RUNNING` while you quietly run with fewer. `peek_workers.R` is what sees that.
+`RUNNING` while you quietly run with fewer. `tools/watch_workers.R` is what sees that, and it is
+where you start in both environments.
 
-What each script tells you is the same everywhere; **how you invoke it differs**, so the
-commands live in your runbook rather than here.
+**The inventory is `tools/README.md`** — one row per script, saying when you reach for it, what
+question it answers, what it costs, and whether it is safe to run while workers are evaluating.
+It also covers the two things that are easy to get wrong: **which store** a script reads (the
+live one when it has rows, otherwise the durable backup — and `tools/watch_workers.R` must be on the
+node the workers are on), and that an extra process on a cluster **joins the job's cgroup**, so
+its memory counts against the same `--mem` the workers are using.
 
-| script | question it answers | invocation |
-|---|---|---|
-| `peek_workers.R` | which workers are alive, what is each evaluating, and has anything died? | interactive §5 · SLURM §6 |
-| `peek_backup.R` | what would a run start from — what is in the durable backup? | SLURM §6 |
-| `profile_evaluation.R` | where does an evaluation's time actually go? | interactive §7 · SLURM §6 |
-| `surrogate_bakeoff.R` | which surrogate design predicts held-out configurations best, and does it improve as evaluations accumulate? | interactive §7 · SLURM §6 |
-| `peek_failures.R` | why did the non-`ok` evaluations fail? | interactive §7 · SLURM §6 |
-| `peek_config.R` | what configuration did a given eval run? | interactive §7 · SLURM §6 |
-| `prewarm_indices.R` | fill the local wizards so the pipeline needs no BrAPI call | interactive §7 · SLURM §6 |
-| `blas_check.R` | is R's linear algebra actually threaded? | interactive §1 |
-| `report_memory.R` | how much memory did evaluations really use, and how many workers fit? | interactive §5 · SLURM §2 |
-| `report_timing.R` | where does the wall time go, by kernel and geno_select? | interactive §7 · SLURM §6 |
+`dev/README.md` covers the two developer tools that answer related questions —
+`dev/profile_evaluation.R` (where an evaluation's time goes) and `dev/surrogate_bakeoff.R`
+(which surrogate design predicts held-out configurations best).
 
 **On a cluster these run inside the container**, which is where the packages are:
 
 ``` bash
-./container/run_in_container.sh exec peek_failures.R     # any script, plus its arguments
-./container/run_in_container.sh shell                    # interactive R inside the image
+./container/run_in_container.sh exec tools/inspect_failures.R   # any script, plus its arguments
+./container/run_in_container.sh shell                           # interactive R inside the image
 ```
 
 A bare `Rscript` uses the cluster module's R, which has **no packages installed** — the symptom
 is `there is no package called 'here'`. Either go through the container as above, or populate a
-personal library once with `Rscript setup_fallback_libs.R` (see
+personal library once with `Rscript container/setup_fallback_libs.R` (see
 `container/FALLBACK_modules.md`); the container is the better answer unless you need RStudio.
 
-**Which store they read.** `resolve_read_store()` picks it: the live `db_path` when it holds
-rows, otherwise `db_backup_path`. On a cluster the second is the usual case — `db_path` is
-node-local scratch belonging to the job that wrote it, so a diagnostic run from any other
-allocation cannot see it. The script prints which file it opened and how stale it is; anything
-evaluated since that backup is not in it. Override with `--store=<path>`. On a login node they
-all refuse, with the `salloc` recipe.
-
-`peek_workers.R` is the exception, and has to be: in-flight work is recorded only in the **live**
-store, so it must run on the node the workers are on — a backup's copy of that table is whatever
-happened to be running when the last `VACUUM INTO` fired. Under SLURM that means attaching to the
-running job (`srun --overlap --jobid=<jid> --pty bash`), not a fresh `salloc`. It says so when the
-live store is absent.
-
-- **`peek_failures.R` and `surrogate_bakeoff.R` need a store that already has rows.** On a
-  fresh install they stop with `no store at <db_path>`, which is correct behaviour rather than
-  a fault.
-
-### Which of these can run while workers are evaluating
-
-The store is the *easy* half of this question, and the half that used to be documented: the
-read-only scripts copy the database **and** its `-wal`/`-shm` sidecars before reading, so none
-of them can corrupt a live store. That says nothing about the resources they take, and on a
-cluster those are what bind.
-
-| script | store | memory / CPU | network | cache locks | beside a live run |
-|---|---|---|---|---|---|
-| `peek_workers.R` | read-only handle | trivial | — | — | **yes** |
-| `peek_failures.R` | sidecar copy | trivial | — | — | **yes** |
-| `peek_config.R` | sidecar copy | trivial | — | — | **yes** |
-| `report_timing.R` | live, read | trivial | — | — | **yes** |
-| `report_memory.R` | live, read | trivial | — | — | **yes** |
-| `peek_backup.R` | temp copy | one `lmer` + one surrogate fit | — | — | yes, not free |
-| `surrogate_bakeoff.R` | sidecar copy | **one core, saturated, for a long time** | — | — | yes, see below |
-| `blas_check.R` | — | **pins every core, briefly** | — | — | cap threads first |
-| `prewarm_indices.R` | none | trivial | **~7,700 BrAPI calls** | writes cache | `--only=projects` only |
-| `profile_evaluation.R` | live, read | **~12 GB, hours** | full pipeline | **takes dosage locks** | **no** |
-| `diagnose_failures.R` | sidecar copy | **~10 GB per project, hours** | full pipeline | **takes dosage locks** | **no** |
-| `setup_fallback_libs.R` | — | `detectCores()` compiles, 30–60 min | CRAN | — | **no** |
-| `run_optimizer.R` | live, **writes** | a full evaluation | yes | yes | only as a worker |
-
-**`surrogate_bakeoff.R` is the common case and the answer is yes.** No network, no cache, no
-locks — but it is ~780 surrogate fits at `ntree=200` (12 reps × 5 folds × 3 arms, plus a 600-fit
-learning curve), single-threaded. `--no-curve` removes about three-quarters of that.
-
-**On a cluster, memory is the real constraint, and an extra process is not free.** A step started
-with `srun --overlap --jobid=<jid>` **joins the job's cgroup**, so its memory counts against the
-same `--mem` the workers are using — and that is sized tight (`container/t3opt_ceres.sh` asks
-`--mem=1800G` for 22 workers whose measured worst case is 82 GB each, i.e. 1804 GB). SLURM
-**kills rather than throttles**. Typical headroom is large, because 22 × the *median* 19 GB is
-~418 GB — so this is a judgement about free memory right now, not a blanket yes. Check before
-you start anything big:
-
-``` bash
-sstat -j <jid>.batch --format=JobID,MaxRSS,AveRSS
-tail -3 "$OPTIMIZER_HOME/logs/memory_"*.tsv     # rss_total_mb and mem_avail_mb columns
-```
-
-**Cap threads on anything you launch by hand.** Only `run_workers.sh` exports
-`OMP_NUM_THREADS`/`OPENBLAS_NUM_THREADS`/…, and `run_in_container.sh` deliberately avoids
-`--cleanenv` so your shell's environment passes straight through. A script started from an
-`srun` shell therefore inherits *no* cap while the workers sit at one thread each:
-
-``` bash
-OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 ./container/run_in_container.sh exec surrogate_bakeoff.R --no-curve
-```
-
-**Why the two red pipeline scripts are red.** Both run a real `run_pipeline`, so beyond the hours
-and the tens of GB they take the per-project dosage locks — and `.acquire_lock` breaks any lock
-older than `lock_stale_minutes` (90) on the assumption its holder died. A worker legitimately
-90+ minutes into a large VCF download can have its lock stolen, and `.fetch_and_cache_dosage`
-deletes the raw file before re-downloading, so both sides then fight over the same file. That is
-LESSONS #24 — the exact hazard the lock exists to prevent. `diagnose_failures.R` additionally has
-**replay on by default** (`--no-replay` opts out); `peek_failures.R` answers the same question in
-seconds from the stored funnel, with no network and no re-running.
+The invocations themselves are environment-specific: **`RUNBOOK_INTERACTIVE.md` §5 and §7**, or
+**`RUNBOOK_SLURM.md` §6**.
 
 ## Where to go next
 
-- **`EVALUATION.md`** -- the evaluation runbook: step through each module one at a
+- **`docs/EVALUATION.md`** -- the evaluation runbook: step through each module one at a
   time (`arm_evaluation`), run/extend the tests, trace one evaluation, and use the
   validation tooling (the canary oracle, `diagnose_trial`).
-- **`DESIGN.md`** -- the architecture: every function, and where outputs go.
-- **`BACKGROUND.md`** -- the statistical and data-management challenges and how
+- **`docs/DESIGN.md`** -- the architecture: every function, and where outputs go.
+- **`docs/BACKGROUND.md`** -- the statistical and data-management challenges and how
   each is addressed.
 - **`RUNBOOK_INTERACTIVE.md`** / **`RUNBOOK_SLURM.md`** -- the do-lists for actually launching
   a run, one per environment.
-- **`EVALUATION_CHECKLIST.md`** -- whether the pipeline is *correct*. A slower question than
+- **`docs/EVALUATION_CHECKLIST.md`** -- whether the pipeline is *correct*. A slower question than
   whether it launches; do this before trusting a run's results.
+- **`docs/LESSONS.md`** -- every failure that cost real time, numbered, with the diagnosis and
+  the fix. Code comments cite it by number.
+- **`tools/README.md`** -- the operator's inventory: which script to reach for, when, and what
+  it costs.
+- **`dev/README.md`** -- orientation for changing the code, the rule for where a new script
+  goes, and the ranked open threads.
+- **`container/README.md`** -- building the image and submitting jobs that use it.
+
+`docs/README.md` is a one-line-per-document index of the first four, if you would rather pick
+from a list.

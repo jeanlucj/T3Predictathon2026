@@ -463,7 +463,7 @@ record_run <- function(con, run_id, settings, build, universe_ids = character(),
   ids <- paste(as.integer(dead), collapse = ",")
   # COPY BEFORE DELETE. A dead claim is the only record that a worker was killed
   # mid-evaluation, and this purge runs on every choose_trial -- so the evidence is gone within
-  # seconds of the death unless it is kept. `claims_reaped` is that history: what peek_workers.R
+  # seconds of the death unless it is kept. `claims_reaped` is that history: what tools/watch_workers.R
   # reports as "workers that died", and the answer to "has anything broken since I launched it".
   .with_busy_retry(function() DBI::dbExecute(con, sprintf(
     "INSERT INTO claims_reaped (config_hash, trial_id, scheme, worker, host, pid, ts, reaped_ts)

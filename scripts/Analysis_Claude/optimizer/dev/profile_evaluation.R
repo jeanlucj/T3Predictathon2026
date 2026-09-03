@@ -1,11 +1,11 @@
-# profile_evaluation.R
+# dev/profile_evaluation.R
 #
 # Where does a 29-minute evaluation actually go? Runs ONE real evaluation with per-subtask
 # timing and reports the split, plus the single number that decides whether BLAS threading
 # could ever help: CPU time against wall time.
 #
 #   cd <repo>/scripts/Analysis_Claude/optimizer
-#   Rscript profile_evaluation.R --trial=11033
+#   Rscript dev/profile_evaluation.R --trial=11033
 #
 # Options:
 #   --trial=<id>     which focal trial. Default: the most-evaluated trial in the store,
@@ -16,7 +16,7 @@
 # READING THE RESULT
 #
 #   CPU / wall ~= 1.0   The process is compute-bound on ONE core. BLAS threading is either
-#                       unavailable or unused -- run blas_check.R next.
+#                       unavailable or unused -- run dev/check_blas.R next.
 #   CPU / wall  < 1.0   The process spends that fraction of its life WAITING -- network,
 #                       disk. No BLAS setting will change this; more workers or fewer
 #                       downloads would.
@@ -28,14 +28,19 @@
 # This does NOT modify the pipeline -- it shadows the subtask functions with timing wrappers
 # in the global environment for the duration of the run.
 
-if (!file.exists("profile_evaluation.R"))
-  stop("run this FROM the optimizer directory:\n",
+# The optimizer ROOT, not this script's directory: `.Renviron` -- and so the T3
+# credentials -- is read from the WORKING DIRECTORY only, with no parent walk. `settings.R`
+# is the marker for that root. here::i_am() below also halts from the wrong place, but only
+# when it cannot find the project at all, and a cwd inside the project is not one of those
+# cases: here() still resolves while .Renviron silently does not.
+if (!file.exists("settings.R"))
+  stop("run this from the optimizer ROOT, so R reads ./.Renviron:\n",
        "  cd <repo>/scripts/Analysis_Claude/optimizer\n",
-       "  Rscript profile_evaluation.R\n",
+       "  Rscript dev/profile_evaluation.R\n",
        "  (working directory was: ", getwd(), ")")
 
 suppressMessages(library(tidyverse))
-here::i_am("profile_evaluation.R")
+here::i_am("dev/profile_evaluation.R")
 source(here::here("settings.R"))
 for (f in list.files(here::here("R"), pattern = "[.]R$", full.names = TRUE)) source(f)
 
@@ -53,7 +58,7 @@ s <- optimizer_settings()
 if (is.null(o_trial)) {
   # Only needed to pick a default: with --trial=<id> the store is never opened, so this runs
   # fine on a machine that has none.
-  con <- DBI::dbConnect(RSQLite::SQLite(), resolve_read_store(what = "profile_evaluation.R"))
+  con <- DBI::dbConnect(RSQLite::SQLite(), resolve_read_store(what = "dev/profile_evaluation.R"))
   e <- tryCatch(DBI::dbReadTable(con, "evals"), error = function(err) NULL)
   DBI::dbDisconnect(con)
   if (!is.null(e) && nrow(e)) {
@@ -135,7 +140,7 @@ cat(sprintf("\nCPU %.1fs / wall %.1fs = %.2f\n", cpu, wall, cpu / max(wall, 1e-9
 verdict <- if (cpu / wall < 0.7) {
   "  I/O-BOUND -- most of the time is spent WAITING (network, disk). BLAS threading cannot help."
 } else if (cpu / wall < 1.4) {
-  "  COMPUTE-BOUND ON ONE CORE -- threads are not being used. Run blas_check.R next."
+  "  COMPUTE-BOUND ON ONE CORE -- threads are not being used. Run dev/check_blas.R next."
 } else {
   sprintf("  THREADED, roughly %.0f-way.", cpu / wall)
 }

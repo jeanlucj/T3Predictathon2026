@@ -104,7 +104,7 @@ if (!(inc_q > seed_q)) {
 # is still no better than random, so the binding constraint is TRIAL HETEROGENEITY -- the
 # objective is a mean over a heterogeneous population estimated one draw at a time -- not
 # measurement noise. Practically, replicating each config across more trials is what would
-# help; making individual evaluations more precise would not. See BACKGROUND.md sec. 4.
+# help; making individual evaluations more precise would not. See docs/BACKGROUND.md sec. 4.
 # ---------------------------------------------------------------------------------------
 
 close_store(con)

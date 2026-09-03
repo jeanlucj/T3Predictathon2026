@@ -1,8 +1,8 @@
-# peek_failures.R
+# tools/inspect_failures.R
 #
 # Read-only look at every non-`ok` eval in the store, with the stored funnel unpacked into
 # columns and a verdict per row. Answers -- in seconds, with no network and no re-running --
-# the question diagnose_failures.R would spend hours on:
+# the question tools/diagnose_failures.R would spend hours on:
 #
 #   is `insufficient_geno_overlap` caused by .best_panel passing over a focal-covering
 #   panel, or by a name/synonym mismatch hiding genotypes?
@@ -25,20 +25,25 @@
 #
 # Run from THIS directory (R reads .Renviron and here() from the working directory):
 #   cd <repo>/scripts/Analysis_Claude/optimizer
-#   Rscript peek_failures.R
+#   Rscript tools/inspect_failures.R
 
-if (!file.exists("peek_failures.R"))
-  stop("run this FROM the optimizer directory:\n",
+# The optimizer ROOT, not this script's directory: `.Renviron` -- and so the T3
+# credentials -- is read from the WORKING DIRECTORY only, with no parent walk. `settings.R`
+# is the marker for that root. here::i_am() below also halts from the wrong place, but only
+# when it cannot find the project at all, and a cwd inside the project is not one of those
+# cases: here() still resolves while .Renviron silently does not.
+if (!file.exists("settings.R"))
+  stop("run this from the optimizer ROOT, so R reads ./.Renviron:\n",
        "  cd <repo>/scripts/Analysis_Claude/optimizer\n",
-       "  Rscript peek_failures.R\n",
+       "  Rscript tools/inspect_failures.R\n",
        "  (working directory was: ", getwd(), ")")
 
 suppressMessages(library(tidyverse))
-here::i_am("peek_failures.R")
+here::i_am("tools/inspect_failures.R")
 source(here::here("settings.R"))
 for (f in list.files(here::here("R"), pattern = "[.]R$", full.names = TRUE)) source(f)
 
-store_path <- resolve_read_store(what = "peek_failures.R")
+store_path <- resolve_read_store(what = "tools/inspect_failures.R")
 
 tmp <- .copy_store_with_sidecars(store_path, file.path(tempdir(), "peek.sqlite"))
 con <- DBI::dbConnect(RSQLite::SQLite(), tmp)
