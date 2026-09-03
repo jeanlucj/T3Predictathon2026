@@ -1,7 +1,7 @@
 # `container/` — the Apptainer image, and submitting jobs that use it
 
-Eleven files that group into five jobs. Nothing here is optional scaffolding: every file is
-referenced from somewhere else in the tree.
+The files here group into six jobs, below. Nothing is optional scaffolding: every one of them
+is referenced from somewhere else in the tree.
 
 **Build the image.**
 
@@ -29,6 +29,18 @@ image does not.
 | `submit.local.sh.example` | copy to `submit.local.sh` (untracked) and fill in **your** account, `/project` paths and node sizing. Values only; the logic stays in the tracked files, so `git pull` never conflicts. |
 | `settings.local.R.scinet` | copy to `../settings.local.R`. The Ceres values for the store and cache paths, and the guards that keep the store off network storage. |
 
+**Prepare the indices** — run once before a long optimization.
+
+| file | what it is |
+|---|---|
+| `prepare_ceres.sh` | the `sbatch` script for `tools/prepare_indices.R`. Light: it fetches accession name lists, never a dosage matrix, so it is network-bound and the wall clock is the only real constraint. |
+| `submit_prepare.sh` | queues it. Arguments after `--` reach the R script (`-- --only=projects` is the one-minute version). |
+
+Filling the `project -> accessions` and `trial -> accessions` maps removes the BrAPI
+relationship wizard from every evaluation — one such call measured 440 s of a 795 s
+evaluation. The job is safe to lose: every fetch is cached as it completes and synced to the
+durable backup every 100 keys, so resubmitting after a wall-clock kill skips what is done.
+
 **Submit the diagnostic.**
 
 | file | what it is |
@@ -36,9 +48,16 @@ image does not.
 | `diagnose_ceres.sh` | the `sbatch` script for `tools/diagnose_failures.R`. |
 | `submit_diagnose.sh` | queues it. |
 
-**The coupling worth stating:** `submit_diagnose.sh` reads `ACCOUNT` out of `submit.local.sh`.
-So `submit.local.sh` is a prerequisite for submitting the *diagnostic* too, not just the
-optimizer — a fresh clone that has only ever run the diagnostic still has to create it.
+**The coupling worth stating:** `submit_diagnose.sh` and `submit_prepare.sh` both read
+`ACCOUNT` out of `submit.local.sh`. So `submit.local.sh` is a prerequisite for every submission
+here, not just the optimizer's — a fresh clone that has only ever run the diagnostic still has
+to create it.
+
+**The three job names are deliberately distinct** — `t3opt`, `t3diag`, `t3prep` — because each
+wrapper passes `--dependency=singleton`. That serialises repeat submissions of the *same* kind
+(two diagnostics would contend for one node-local cache; two prewarms would fetch the same keys
+twice and flush the durable tree against each other) without letting any of them block a
+different kind.
 
 **No container at all.**
 

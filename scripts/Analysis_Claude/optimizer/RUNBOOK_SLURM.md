@@ -62,6 +62,13 @@ your life easier editting these in RStudio with Ceres ondemand
 - [ ] `container/run_in_container.sh exec tools/prepare_indices.R --only=projects --limit=5`
   — credentials and outbound HTTPS together
 
+- [ ] `container/submit_prepare.sh` — fill the wizard indices, ONCE, before a long
+  run. Not a smoke test like the line above: it is the full ~7,700 fetches, and it
+  removes the BrAPI relationship wizard from every subsequent evaluation (one such
+  call measured 440 s of a 795 s evaluation). Queue it and carry on; it is
+  resumable, and the coverage block at the end must read `covers universe: TRUE`
+  on both lines. See §6.
+
 - [ ] `container/run_in_container.sh exec tools/check_backup.R` — the pre-flight
   report. Read three things off it before submitting:
   - **backup**: rows, and when it was written. `MISSING` means this run
@@ -588,6 +595,30 @@ fault. `tools/check_backup.R` is the one to use beforehand: comparing the two
 `dev/surrogate_bakeoff.R` prints, in its footer, **the smallest difference
 the current store can resolve**. A gap smaller than that is not evidence
 of no effect; it is too little data.
+
+### Filling the wizard indices
+
+`tools/prepare_indices.R` is the one script here that is worth a batch job of
+its own rather than an interactive allocation — the trials pass is ~7,600 BrAPI
+calls, and inside `salloc` it dies with your shell.
+
+``` bash
+cd <repo>/scripts/Analysis_Claude/optimizer/container
+./submit_prepare.sh                        # both maps
+./submit_prepare.sh -- --only=projects     # ~110 calls, about a minute
+./submit_prepare.sh --time=12:00:00 -- --sleep=0.1     # gentler on T3
+```
+
+Do it **before** launching the optimizer, not beside it: the header of
+`tools/prepare_indices.R` explains why `--only=projects` is the only pass that
+belongs next to working workers, and the closing flush passes
+`min_age_minutes = 0`, which resets the stamp the workers' own cache sync
+schedules from.
+
+It is safe to lose. Every fetch is cached as it completes and synced to the
+durable backup every 100 keys, so a job killed at the wall clock loses only that
+tail and resubmitting skips the rest. `t3prep` is its own job name, so it neither
+queues behind nor blocks `t3opt` and `t3diag`.
 
 ------------------------------------------------------------------------
 
