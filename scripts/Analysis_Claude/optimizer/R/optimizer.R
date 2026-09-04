@@ -56,7 +56,15 @@ BUILD_CHANGES <- list(
        affects = function(cfg) identical(cfg$pheno_prep.ge_weighting, "env_gaussian")),
   list(build = "0.8.7",
        what  = "best_single_project requires focal coverage, as .best_panel does",
-       affects = function(cfg) identical(cfg$geno_select.method, "best_single_project"))
+       affects = function(cfg) identical(cfg$geno_select.method, "best_single_project")),
+  # Panel choice, so it reaches every config that picks ONE panel out of several: the
+  # single-panel kernels, plus best_single_project, which applies the same rule to projects.
+  list(build = "0.8.8",
+       what  = paste("panel selection maximises the harmonic mean of focal and training",
+                     "coverage, not their sum"),
+       affects = function(cfg)
+         isTRUE(cfg$kernel.method %in% c("vanRaden_single", "rkhs_gaussian")) ||
+         identical(cfg$geno_select.method, "best_single_project"))
 )
 
 # Drop rows a later build invalidated. A row goes when it was produced BEFORE a change's

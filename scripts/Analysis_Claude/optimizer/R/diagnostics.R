@@ -478,12 +478,15 @@ diagnose_trial <- function(study_id, settings, conn,
       # The two floors .best_panel selects against, printed per panel so its choice is legible:
       # a panel is `ok` only if it clears BOTH, and only among those is union coverage maximised.
       mt <- .min_test(settings); mn <- .min_train(settings)
+      # `hmean` is the quantity .best_panel_index maximises among panels clearing both floors;
+      # `union` is what the pre-0.8.8 rule maximised, kept alongside so the two are comparable.
+      hm <- ifelse(fo >= mt & to >= mn, 2 * fo * to / pmax(fo + to, 1L), NA_real_)
       for (i in seq_along(pl))
-        cat(sprintf("    panel %-20s %6d rows   focal %5d %-6s train %6d %-6s union %6d\n",
+        cat(sprintf("    panel %-20s %6d rows   focal %5d %-6s train %6d %-6s union %6d   hmean %s\n",
                     names(pl)[i] %||% i, nrow(pl[[i]]),
                     fo[i], if (fo[i] >= mt) sprintf(">=%d", mt) else sprintf("<%d!", mt),
                     to[i], if (to[i] >= mn) sprintf(">=%d", mn) else sprintf("<%d!", mn),
-                    cov[i]))
+                    cov[i], if (is.na(hm[i])) "  --" else sprintf("%6.1f", hm[i])))
       # Ask the real function rather than recomputing its rule -- the recomputation here was
       # the pre-0.7.1 max-union criterion and misreported a healthy trial as broken.
       picked <- .best_panel_index(pl, need, f_acc, mt, mn)

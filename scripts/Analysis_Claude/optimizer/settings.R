@@ -5,7 +5,7 @@
 # Stamped into the log, the report and every stored eval. Last digit for a minor change, middle
 # for a major one. If a bump changes what a configuration COMPUTES, add a BUILD_CHANGES entry
 # (R/optimizer.R) so the invalidated rows can be retired.
-OPTIMIZER_BUILD <- "0.8.7"
+OPTIMIZER_BUILD <- "0.8.8"
 
 # TRUE puts state, logs and the cache backup on durable storage instead of the work directory.
 # OPTIMIZER_REMOTE decides if set; otherwise TRUE whenever OPTIMIZER_HOME is set.

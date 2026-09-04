@@ -738,14 +738,27 @@ build_kernel <- function(cfg, dosage_list, need, settings = NULL, focal = NULL) 
 # implementation: the two drifted apart once, and a project selection that ignored focal
 # coverage silently starved the kernel of test rows.
 #
-# Maximising coverage of `need` alone is wrong: `need` is union(train, focal), so a panel thick
-# with TRAINING lines can outscore one that covers the focal trial, and the run then fails the
-# test_in guard. CV00 sharpens this -- masking leaves train and focal disjoint, so the two
-# coverages compete directly.
+# Two floors, then the HARMONIC MEAN of focal and training coverage.
 #
-# So prefer panels clearing BOTH downstream guards; among those maximise coverage of `need`.
-# If none qualifies, fall back to best focal coverage -- without focal lines there is nothing
-# to predict. `focal` NULL gives pure max-coverage, for callers with no focal set.
+# Since train = setdiff(need, focal), f_cov + t_cov = |panel n need| exactly -- so this is not a
+# new pair of quantities, it is the SUM criterion replaced by a harmonic mean of the same two.
+# The sum is wrong because the two coverages do different jobs and are not interchangeable:
+# training lines buy prediction ACCURACY, focal lines buy the PRECISION with which that accuracy
+# is measured (SE of a correlation goes as 1/sqrt(n_test - 3)). Summing lets a panel thick with
+# training lines outscore one that actually covers the trial -- on canary 10676, panel 14511
+# (focal 11, train 525) beat panel 11049 (focal 186, train 94) on the sum, and an 11-point
+# correlation carries noise several times the config effect the search is trying to resolve.
+#
+# The harmonic mean is the effective sample size when precision is limited by both groups
+# (1/n_eff = (1/n_f + 1/n_t)/2), and it saturates in the larger argument the way prediction
+# accuracy saturates in training size: with t >> f it tends to 2f, i.e. "maximise focal, ignore
+# training past the floor". The exactly-right criterion is mean GBLUP reliability over the test
+# lines (c' P^-1 c, which captures relatedness rather than mere counts), but that needs a GRM
+# built and inverted PER CANDIDATE PANEL -- 46 of them on trial 10253 -- which is the cost this
+# function exists to avoid.
+#
+# If nothing clears both floors, fall back to best focal coverage: without focal lines there is
+# nothing to predict. `focal` NULL gives pure max-coverage, for callers with no focal set.
 .best_panel_index <- function(dosage_list, need, focal = NULL,
                               min_test = 5L, min_train = 20L) {
   if (length(dosage_list) == 1) return(1L)
@@ -755,7 +768,9 @@ build_kernel <- function(cfg, dosage_list, need, settings = NULL, focal = NULL) 
   f_cov  <- vapply(dosage_list, function(d) length(intersect(rownames(d), focal)), integer(1))
   t_cov  <- vapply(dosage_list, function(d) length(intersect(rownames(d), train)), integer(1))
   ok     <- f_cov >= min_test & t_cov >= min_train
-  if (any(ok)) return(which.max(ifelse(ok, cover, -1L)))
+  # Guarded against 0/0: `ok` already implies both are positive, and non-ok entries are -1.
+  hmean  <- ifelse(ok, 2 * f_cov * t_cov / pmax(f_cov + t_cov, 1L), -1)
+  if (any(ok)) return(which.max(hmean))
   which.max(f_cov)
 }
 

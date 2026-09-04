@@ -894,11 +894,28 @@ check(identical(.best_panel(pl, need_bp, focal10, min_test = 5, min_train = 20),
                 pl$focal_covering),
       ".best_panel prefers the focal-covering panel over a bigger training-only panel")
 
-# No behaviour change when both panels clear the guards: max union still wins.
+# The canary 10676 case, the one where sum and harmonic mean disagree. Panel A covers 11 focal
+# and 525 training lines (union 536); panel B covers 186 focal and 94 training (union 280).
+# Both clear the floors, so the old max-union rule took A -- and scored the trial on an
+# 11-point correlation, whose SE is several times the config effect the search must resolve.
+# Oracle: HM(11,525) = 21.5 < HM(186,94) = 124.9, so B wins.
+wide_train <- mkpanel(c(paste0("t", 1:525), paste0("f", 1:11)),  paste0("mW", 1:200))
+wide_focal <- mkpanel(c(paste0("t", 1:94),  paste0("f", 1:186)), paste0("mX", 1:200))
+focal186   <- paste0("f", 1:186)
+need_hm    <- union(paste0("t", 1:525), focal186)
+check(identical(.best_panel(list(a = wide_train, b = wide_focal), need_hm, focal186, 5, 20),
+                wide_focal),
+      ".best_panel takes the harmonic mean, not the sum (canary 10676: 186/94 over 11/525)")
+# The test only discriminates if the panel passed over really is the old rule's answer.
+check(length(intersect(rownames(wide_train), need_hm)) >
+        length(intersect(rownames(wide_focal), need_hm)),
+      "the passed-over panel does have the larger union coverage (what the sum would pick)")
+
+# No behaviour change when both panels clear the guards and the harmonic mean agrees.
 both_a <- mkpanel(c(paste0("t", 1:50), paste0("f", 1:10)), paste0("mA", 1:200))
 both_b <- mkpanel(c(paste0("t", 1:25), paste0("f", 1:10)), paste0("mB", 1:200))
 check(identical(.best_panel(list(a = both_a, b = both_b), need_bp, focal10, 5, 20), both_a),
-      ".best_panel still takes max union coverage when both panels are feasible")
+      ".best_panel prefers more training lines when focal coverage is equal (HM 16.7 > 14.3)")
 
 # Nothing qualifies -> fall back to the best focal coverage (without focal lines there is
 # nothing to predict, so that is the failure worth avoiding).
