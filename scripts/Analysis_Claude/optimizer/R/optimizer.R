@@ -87,6 +87,28 @@ filter_evals_to_build <- function(evals, build, changes = BUILD_CHANGES) {
   evals[!drop, , drop = FALSE]
 }
 
+# The Fisher-z transform and the inverse-variance weights every score-level estimate uses,
+# attached as .n_test / .usable / .z / .w.
+#
+# A score is a CORRELATION, so its precision depends on how many ACCESSIONS it was computed
+# over -- n_test ranges from 5 (SD(r) ~ 0.7, pure noise) to several hundred. A plain mean gave
+# those equal weight, so one lucky small trial could carry a configuration into get_elites.
+# Weight the textbook way instead: Fisher z, weight n - 3.
+#
+# Factored out because write_report() has to describe the fit -- "the noise of one evaluation at
+# a typical accession count" is sd_resid rescaled by these weights -- and restating the rule
+# there would let the description drift from the fit it describes.
+.fisher_weights <- function(evals, min_n_test = 10L) {
+  nt <- suppressWarnings(as.numeric(evals$n_test %||% NA_real_))
+  dplyr::mutate(evals,
+    .n_test = ifelse(is.na(nt), 0, nt),
+    # Drop scores too small to inform anything; NA n_test predates the column, so keep it
+    # (its score is real, we just cannot weight it) with the minimum weight.
+    .usable = is.finite(score) & (is.na(nt) | .n_test >= min_n_test),
+    .z      = atanh(pmin(pmax(score, -0.999), 0.999)),
+    .w      = pmax(ifelse(is.na(nt), 1, .n_test - 3), 1))
+}
+
 # Mean score per distinct configuration (over the trials it was run on, within the
 # already domain/scheme-filtered slice), with the parsed config attached. Failed
 # evaluations (NA score) count toward n but not the mean; a config that only ever
@@ -97,20 +119,8 @@ aggregate_scores <- function(evals, min_n_test = 10L, adjust_trial = TRUE) {
                           pooled = numeric(), unweighted = numeric(), se = numeric(),
                           n = integer(), n_ok = integer(), config_json = character()))
   }
-  # A score is a CORRELATION, so its precision depends on how many accessions it was computed
-  # over -- and n_test ranges from 5 (SD(r) ~ 0.7, pure noise) to several hundred. A plain
-  # mean gave those equal weight, so one lucky small trial could carry a configuration into
-  # get_elites. Pool the textbook way instead: Fisher z, weight n - 3, back-transform.
-  # `unweighted` is kept alongside so the two can be compared on a real run.
-  nt <- suppressWarnings(as.numeric(evals$n_test %||% NA_real_))
-  evals <- evals |>
-    dplyr::mutate(
-      .n_test = ifelse(is.na(nt), 0, nt),
-      # Drop scores too small to inform anything; NA n_test predates the column, so keep it
-      # (its score is real, we just cannot weight it) with the minimum weight.
-      .usable = is.finite(score) & (is.na(nt) | .n_test >= min_n_test),
-      .z      = atanh(pmin(pmax(score, -0.999), 0.999)),
-      .w      = pmax(ifelse(is.na(nt), 1, .n_test - 3), 1))
+  # `unweighted` is kept alongside `pooled` so the two can be compared on a real run.
+  evals <- .fisher_weights(evals, min_n_test)
   out <- evals |>
     dplyr::group_by(config_hash) |>
     dplyr::summarise(

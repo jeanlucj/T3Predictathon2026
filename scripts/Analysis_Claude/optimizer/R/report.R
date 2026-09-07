@@ -23,6 +23,9 @@ format_config <- function(cfg) {
   paste(parts, collapse = "\n")
 }
 
+# NA prints as "--" rather than "NA": a blank-looking cell in a precision table reads as zero.
+fmt_num <- function(x, digits) if (!is.finite(x)) "--" else formatC(x, format = "f", digits = digits)
+
 # Marginal effect of each subtask METHOD: mean score of the configs using it, minus the overall
 # mean. Positive = the method tends to help.
 method_importance <- function(evals) {
@@ -166,9 +169,9 @@ write_report <- function(con, settings) {
              if (isTRUE(is.finite(mins) && mins > 120)) "  ** NOTHING STORED **" else "")
     }),
     # Which estimator ranked the configs and, when the random-effects fit ran, the variance
-    # components. sd_resid is reported BOTH ways: the fit uses n_test - 3 as inverse-variance
-    # weights, so lmer's figure is the sd at unit weight (n_test = 4) and is not comparable with
-    # the other two until divided by sqrt(median weight).
+    # components. sd_resid stays where lmer puts it -- at unit weight, i.e. n_test = 4, since
+    # the fit uses n_test - 3 as inverse-variance weights. Rescaling it to a typical evaluation
+    # is the Score precision block's job, which does it for two populations rather than one.
     #
     # A missing decomposition is stated, never left blank: no fit also means no `se`, and
     # .contenders() drops every config without one -- so a silent "pooled" here is the visible
@@ -177,16 +180,10 @@ write_report <- function(con, settings) {
       est  <- attr(agg, "estimator") %||% "pooled"
       vc   <- attr(agg, "var_comps")
       note <- attr(agg, "estimator_note")
-      # The median of the weights the FIT used, from aggregate_scores -- not the median n_test
-      # over every row, which counts failed evaluations and rows below min_n_test that the fit
-      # excluded, and so rescales by a weight that was never applied.
-      w   <- attr(agg, "median_weight") %||% NA_real_
-      if (!is.finite(w)) w <- 1
       paste0("- config score estimator: ", est,
              if (!is.null(vc) && all(is.finite(vc)))
-               paste0(sprintf("  (sd_trial %.3f, sd_config %.3f, sd_resid %.3f per eval at median n_test; %.3f at unit weight)",
-                              vc[["sd_trial"]], vc[["sd_config"]],
-                              vc[["sd_resid"]] / sqrt(max(1, w)), vc[["sd_resid"]]),
+               paste0(sprintf("  (sd_trial %.3f, sd_config %.3f, sd_resid %.3f at unit weight)",
+                              vc[["sd_trial"]], vc[["sd_config"]], vc[["sd_resid"]]),
                       if (!is.null(note)) paste0("  _fit warned: ", note, "_") else "")
              else paste0("  ** no variance components, and no `se` so contender replication is",
                          " idle: ", note %||% "reason not recorded", " **"))
@@ -194,14 +191,18 @@ write_report <- function(con, settings) {
     # How much is still undecided. 1 means the field is settled at this contender_z; every
     # contender being domain-covered means no further evidence about the leaders is obtainable.
     local({
-      cand <- .contenders(agg, settings$contender_z %||% 1, k = 8L)
+      z    <- settings$contender_z %||% 1
+      cand <- .contenders(agg, z, k = 8L)
       if (!length(cand)) return(NULL)
+      # The listed set is capped at 8; the COUNT must not be, or a field of 280 reads as 8.
+      n_all <- length(.contenders(agg, z, k = .Machine$integer.max))
       seen <- evals |> dplyr::filter(config_hash %in% cand) |>
         dplyr::group_by(config_hash) |>
         dplyr::summarise(n_trial = dplyr::n_distinct(trial_id), .groups = "drop")
       nu <- length(settings$trial_universe %||% character())
-      paste0("- contenders: ", length(cand),
-             if (length(cand) == 1L) "  ** the field is settled at contender_z; raise it to continue **"
+      paste0("- contenders: ", n_all, " within z = ", z,
+             if (n_all > length(cand)) sprintf("  (listing the top %d)", length(cand)) else "",
+             if (n_all == 1L) "  ** the field is settled at contender_z; raise it to continue **"
              else if (nu > 0 && all(seen$n_trial >= nu))
                sprintf("  ** all have covered the %d-trial domain; only new configurations can improve the answer **", nu)
              else "")
@@ -234,6 +235,41 @@ write_report <- function(con, settings) {
     paste0("- best seed (submission) mean score: ",
            ifelse(is.finite(best_seed), signif(best_seed, 3), "NA")),
     "",
+    # How much evidence the leaders rest on, against the field. Four columns that read
+    # left-to-right as a chain: how many trials, how many accessions each, what that buys per
+    # evaluation, and the configuration's own SE. The contender row should beat the all-configs
+    # row on every one; if it does not, the leaders are lucky rather than well measured, and a
+    # contender tier no better replicated than the base means contender replication has stalled.
+    #
+    # `se` here is on the Fisher-z scale, as .blup_scores() produces it, while mean_score is
+    # back-transformed to the correlation scale. At the scores this project sees (r ~ 0.15) the
+    # two differ by ~2%, which is why the report does not convert.
+    local({
+      vc <- attr(agg, "var_comps")
+      if (is.null(vc) || !all(is.finite(vc)) || !nrow(agg)) return(NULL)
+      cand <- .contenders(agg, settings$contender_z %||% 1, k = 8L)
+      # The same weighting the fit applied, from the same function -- see .fisher_weights().
+      w <- .fisher_weights(evals)
+      row <- function(label, hashes) {
+        a  <- if (is.null(hashes)) agg else dplyr::filter(agg, config_hash %in% hashes)
+        wi <- if (is.null(hashes)) w else dplyr::filter(w, config_hash %in% hashes)
+        wi <- dplyr::filter(wi, .usable)
+        mw <- suppressWarnings(stats::median(wi$.w, na.rm = TRUE))
+        if (!is.finite(mw) || mw < 1) mw <- 1
+        sprintf("  %-22s %19s %25s %22s %20s", label,
+                fmt_num(stats::median(a$n_ok, na.rm = TRUE), 0),
+                fmt_num(stats::median(wi$.n_test, na.rm = TRUE), 0),
+                fmt_num(vc[["sd_resid"]] / sqrt(mw), 3),
+                fmt_num(stats::median(a$se, na.rm = TRUE), 3))
+      }
+      c("## Score precision", "```",
+        sprintf("  %-22s %19s %25s %22s %20s", "",
+                "median evals/config", "median accessions/trial",
+                "noise per evaluation", "config SE (median)"),
+        row("all configurations", NULL),
+        if (length(cand)) row(sprintf("top %d contenders", length(cand)), cand),
+        "```", "")
+    }),
     "## Incumbent (best mean over its trials)",
     if (is.null(inc)) "_none yet_" else
       c(paste0("mean score ", signif(inc$mean_score, 3),
@@ -252,6 +288,41 @@ write_report <- function(con, settings) {
                                    subtask, method, n, mean_score, delta)) |>
       dplyr::pull(line)
     lines <- c(lines, "```", imp_tbl, "```")
+
+    # The same rows, one column per contender, so the two tables read as one grid: which of
+    # these methods do the leaders actually use? Built from `imp` itself rather than from
+    # SUBTASKS, so the rows and their order cannot drift from the table above.
+    z    <- settings$contender_z %||% 1
+    cand <- .contenders(agg, z, k = 8L)
+    if (length(cand)) {
+      cc <- agg[match(cand, agg$config_hash), , drop = FALSE]
+      # One column per contender: its method for each subtask, looked up per row of `imp`.
+      # Every contender's methods are present in `imp` -- method_importance keeps finite-score
+      # rows and a contender has at least one -- but mark rather than assume, since that
+      # invariant lives in another function.
+      cols <- lapply(seq_len(nrow(cc)), function(i) {
+        cfg <- tryCatch(config_from_json(cc$config_json[i]), error = function(e) list())
+        vapply(seq_len(nrow(imp)), function(r)
+          if (identical(as.character(cfg[[paste0(imp$subtask[r], ".method")]] %||% ""),
+                        imp$method[r])) "X" else ".", character(1))
+      })
+      # trimws on the right: %-3s pads the final column, and trailing spaces in a fenced
+      # block are invisible noise in a diff of two reports.
+      pad <- function(x) trimws(paste(sprintf("%-3s", x), collapse = " "), which = "right")
+      hdr <- sprintf("  %-13s %-20s %s", "subtask", "method",
+                     pad(paste0("C", seq_along(cand))))
+      body <- vapply(seq_len(nrow(imp)), function(r)
+        sprintf("  %-13s %-20s %s", imp$subtask[r], imp$method[r],
+                pad(vapply(cols, `[`, character(1), r))),
+        character(1))
+      # Hash prefixes, not full hashes: eight 32-character ids cannot share a readable line.
+      leg <- sprintf("  C%-2d %s  mean %+.3f  se %.3f  n %d", seq_len(nrow(cc)),
+                     substr(cc$config_hash, 1, 8), cc$mean_score, cc$se, cc$n_ok)
+      lines <- c(lines, "",
+                 sprintf("## Contender methods (top %d by UCB at contender_z = %g)",
+                         length(cand), z),
+                 "```", hdr, body, "", leg, "```")
+    }
   }
 
   fs <- failure_summary(evals)
