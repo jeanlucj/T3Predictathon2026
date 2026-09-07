@@ -43,6 +43,22 @@ method_importance <- function(evals) {
     dplyr::arrange(subtask, dplyr::desc(mean_score))
 }
 
+# Pull one key out of the funnel string evaluate.R stores in `evals$detail`, which
+# funnel_string() (R/conditions.R) writes as "k=v; k=v". Vectorised over a column; NA for a row
+# with no funnel (scoring statuses carry a reason instead) or a key the funnel does not hold.
+#
+# Shared so the funnel is parsed in ONE place: tools/inspect_failures.R and
+# dev/analyze_failures.R both read the same six fields, and two parsers of one format drift.
+.funnel_get <- function(detail, key) {
+  unname(vapply(detail, function(x) {
+    if (is.na(x)) return(NA_real_)
+    p <- strsplit(trimws(strsplit(x, ";", fixed = TRUE)[[1]]), "=", fixed = TRUE)
+    v <- stats::setNames(vapply(p, function(z) z[2] %||% NA_character_, character(1)),
+                         vapply(p, `[`, character(1), 1))
+    suppressWarnings(as.numeric(v[key]))
+  }, numeric(1)))
+}
+
 # Failure-log analysis over the eval rows: the breakdown by status, the dominant infeasibility
 # reasons, and each subtask METHOD's failure rate. Returns a list of tibbles; write_report()
 # renders them.

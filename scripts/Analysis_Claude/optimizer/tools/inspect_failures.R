@@ -61,13 +61,9 @@ bad <- dplyr::filter(e, status != "ok")
 if (!nrow(bad)) {
   cat("\nno non-ok rows -- nothing to explain.\n")
 } else {
-  # Pull one key out of the "k=v; k=v" funnel string.
-  fget <- function(d, k) unname(vapply(d, function(x) {
-    if (is.na(x)) return(NA_real_)
-    p <- strsplit(trimws(strsplit(x, ";", fixed = TRUE)[[1]]), "=", fixed = TRUE)
-    v <- stats::setNames(sapply(p, `[`, 2), sapply(p, `[`, 1))
-    suppressWarnings(as.numeric(v[k]))
-  }, numeric(1)))
+  # .funnel_get (R/report.R) parses the "k=v; k=v" funnel; shared with dev/analyze_failures.R
+  # so one format has one parser.
+  fget <- .funnel_get
   kern <- unname(vapply(bad$config_json, function(j)
     tryCatch(as.character(jsonlite::fromJSON(j)[["kernel.method"]]),
              error = function(err) NA_character_), character(1)))
