@@ -454,7 +454,7 @@ Worker-level, which `sacct` cannot see:
 - Fewer processes than workers you asked for.
 - A `run_w<i>.out` that stops mid-evaluation with no `optimizer stop` line.
 - What it was using when it went: find the pid in the `pids_rss` column
-  of `$OPTIMIZER_HOME/logs/memory_<node>.tsv`, sampled every 60 s by
+  of `$OPTIMIZER_HOME/logs/memory_<node>_<jobid>.tsv`, sampled every 60 s by
   `tools/watch_memory.sh`, which the job script starts on the node.
 
 ``` bash

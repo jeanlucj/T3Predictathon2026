@@ -117,7 +117,10 @@ apptainer inspect "$SIF" 2>/dev/null | grep -iE "r.version|sha" || true
 # STOP_FILE and LOG_DIR are passed in because out here the module's Rscript has no packages,
 # so tools/watch_memory.sh cannot ask settings.R for them. Both are the values settings.R computes
 # for a cluster run; if you change db_path/log_dir in settings.local.R, change them here too.
-MEM_TSV="$OPTIMIZER_HOME/logs/memory_$(hostname -s).tsv"
+# Job id as well as host: the same node is often reallocated across a chained run, and
+# without it each job overwrites the last one's trace. The memory_ prefix is load-bearing --
+# every reader globs logs/memory_*.tsv -- so the id goes on the end.
+MEM_TSV="$OPTIMIZER_HOME/logs/memory_$(hostname -s)_${SLURM_JOB_ID}.tsv"
 STOP_FILE="$OPTIMIZER_HOME/state/STOP" LOG_DIR="$OPTIMIZER_HOME/logs" \
   "$REPO/tools/watch_memory.sh" 60 "$MEM_TSV" > /dev/null 2>&1 &
 MEM_PID=$!
