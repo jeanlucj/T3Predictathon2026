@@ -55,8 +55,7 @@ separate file is what let the last one go stale unnoticed.*
 
 These are ahead of the ranked list rather than in it: they are not throughput or quality levers,
 they are the difference between a failure you see and one you find hours later. They came out of
-launches that died and looked, from outside, like nothing at all. **A is fixed (2026-09-08); B
-and C remain.**
+launches that died and looked, from outside, like nothing at all. **A is fixed (2026-09-08); B, C and D remain.**
 
 **B. The message the surviving workers print points away from the cause.** Worker 1 fatals
 immediately with the real reason; workers 2..N wait 600 s and then report `no run row after
@@ -84,6 +83,28 @@ Two things that made this harder to see than it needed to be, both worth fixing 
   reasons with three different fixes — no focal-trait data, name not found, dropped by an
   earlier domain filter. `dev/check_domain_coverage.R` separates them after the fact; the
   fatal itself could do it at the point of failure.
+
+**D. A stopping rule, and the resolution ceiling behind it.** The search has no termination
+criterion but `max_iters`. The natural proposal — stop when the top-k contenders stop changing —
+is the right family but too brittle as stated: membership moves as `se` shrinks even when nothing
+is learned; 8 configurations at z = 1 against 280 at z = 2 means the boundary flips on noise; and
+counting "new configurations tried" degenerates toward a wall clock, since with continuous
+parameters nearly every mutation is a new configuration. Two conditions together are steadier:
+nothing entering the top-k over the last N **scored** configurations, **and** the incumbent's mean
+improving by less than epsilon.
+
+**Do the cheap prerequisite first.** `choose_config()` already computes
+`expected_improvement()` and returns `ei` with its pick, and it goes only to a log line
+(`run_optimizer.R:97`) — not to a column on `evals`. A collapsing max-EI is the textbook stop for
+this kind of search, and persisting that one number would let any plateau rule be tested against
+history instead of argued about.
+
+**The deeper point may be that no rule is needed.** With `sd_config` 0.015 and `sd_resid` 0.068
+per evaluation, the fixed-effect SE of a configuration's mean is `0.068/sqrt(n)`: 0.0139 at the
+24 evaluations a full domain sweep allows, and reaching 0.0075 would take 82. So configurations
+closer than about one `sd_config` apart cannot be separated however long the search runs. The
+ceiling is the domain size, not the budget — which argues for widening the domain over running
+longer, and is `docs/LESSONS.md` #19 arriving from a third direction.
 
 ------------------------------------------------------------------------
 

@@ -1,6 +1,6 @@
 # report.R
 #
-# The Markdown snapshot of a run: learning curve, current best pipeline, and which subtask
+# The Markdown snapshot of a run: score precision, current best pipeline, and which subtask
 # METHODS most raise the score. Rewritten at every checkpoint, so a background run can be
 # watched from the file.
 
@@ -119,10 +119,6 @@ write_report <- function(con, settings) {
   inc   <- incumbent_config(agg, settings$incumbent_min_reps)
 
   ok <- evals |> dplyr::filter(is.finite(score))
-  # Best-so-far learning curve over evaluation order.
-  curve <- ok |>
-    dplyr::arrange(id) |>
-    dplyr::mutate(running_best = cummax(score))
 
   seed_hashes <- vapply(seed_configs(settings$optimize_scheme), config_hash, character(1))
   seed_scores <- agg |>
@@ -204,7 +200,9 @@ write_report <- function(con, settings) {
              if (n_all > length(cand)) sprintf("  (listing the top %d)", length(cand)) else "",
              if (n_all == 1L) "  ** the field is settled at contender_z; raise it to continue **"
              else if (nu > 0 && all(seen$n_trial >= nu))
-               sprintf("  ** all have covered the %d-trial domain; only new configurations can improve the answer **", nu)
+               sprintf(paste0("  ** each has been RUN ON every trial in the %d-trial domain",
+                              " (some runs may have failed); only new configurations can",
+                              " improve the answer **"), nu)
              else "")
     }),
     # What replication still owes, and whether workers are colliding. `base` is the unrationed
@@ -230,8 +228,6 @@ write_report <- function(con, settings) {
            sum(!is.finite(evals$score)), " failed)",
            if (n_other > 0) paste0("; ", n_other, " more in the store are out of this scheme/domain") else ""),
     paste0("- distinct configurations: ", nrow(agg)),
-    paste0("- best single-trial score: ",
-           ifelse(nrow(ok), signif(max(ok$score), 3), "NA")),
     paste0("- best seed (submission) mean score: ",
            ifelse(is.finite(best_seed), signif(best_seed, 3), "NA")),
     "",
@@ -256,16 +252,20 @@ write_report <- function(con, settings) {
         wi <- dplyr::filter(wi, .usable)
         mw <- suppressWarnings(stats::median(wi$.w, na.rm = TRUE))
         if (!is.finite(mw) || mw < 1) mw <- 1
-        sprintf("  %-22s %19s %25s %22s %20s", label,
-                fmt_num(stats::median(a$n_ok, na.rm = TRUE), 0),
+        nev  <- stats::median(a$n_ok, na.rm = TRUE)
+        nois <- vc[["sd_resid"]] / sqrt(mw)          # per-evaluation residual sd
+        sprintf("  %-22s %19s %25s %22s %16s %30s", label,
+                fmt_num(nev, 0),
                 fmt_num(stats::median(wi$.n_test, na.rm = TRUE), 0),
-                fmt_num(vc[["sd_resid"]] / sqrt(mw), 3),
+                fmt_num(nois, 3),
+                fmt_num(nois / sqrt(max(1, nev)), 3),
                 fmt_num(stats::median(a$se, na.rm = TRUE), 3))
       }
       c("## Score precision", "```",
-        sprintf("  %-22s %19s %25s %22s %20s", "",
+        sprintf("  %-22s %19s %25s %22s %16s %30s", "",
                 "median evals/config", "median accessions/trial",
-                "noise per evaluation", "config SE (median)"),
+                "noise per evaluation", "SE of the mean",
+                "shrunk SE (selects contenders)"),
         row("all configurations", NULL),
         if (length(cand)) row(sprintf("top %d contenders", length(cand)), cand),
         "```", "")
@@ -316,12 +316,63 @@ write_report <- function(con, settings) {
                 pad(vapply(cols, `[`, character(1), r))),
         character(1))
       # Hash prefixes, not full hashes: eight 32-character ids cannot share a readable line.
-      leg <- sprintf("  C%-2d %s  mean %+.3f  se %.3f  n %d", seq_len(nrow(cc)),
-                     substr(cc$config_hash, 1, 8), cc$mean_score, cc$se, cc$n_ok)
+      # `n a/b` is usable evaluations over trials ATTEMPTED: the domain bullet above counts
+      # attempts (a trial run that failed is still a trial used up), while n_ok counts the rows
+      # the estimate rests on. They differ whenever a configuration failed on some trial, and
+      # printing only one of them made the two look contradictory.
+      att <- evals |> dplyr::filter(config_hash %in% cand) |>
+        dplyr::group_by(config_hash) |>
+        dplyr::summarise(n_try = dplyr::n_distinct(trial_id), .groups = "drop")
+      ntry <- att$n_try[match(cc$config_hash, att$config_hash)]
+      vc_l <- attr(agg, "var_comps")
+      # se_fixed = sd_resid / sqrt(n): the standard error of the mean, which is what "how well
+      # do we know this" means. The shrunk se beside it is the ranking device .contenders() uses.
+      wl   <- attr(agg, "median_weight") %||% NA_real_
+      if (!is.finite(wl)) wl <- 1
+      se_fix <- if (!is.null(vc_l) && all(is.finite(vc_l)))
+        vc_l[["sd_resid"]] / sqrt(wl) / sqrt(pmax(1, cc$n_ok)) else rep(NA_real_, nrow(cc))
+      leg <- sprintf("  C%-2d %s  mean %+.3f  se %s (shrunk %.3f)  n %d/%s",
+                     seq_len(nrow(cc)), substr(cc$config_hash, 1, 8), cc$mean_score,
+                     vapply(se_fix, fmt_num, character(1), 3), cc$se,
+                     cc$n_ok, ifelse(is.na(ntry), "?", ntry))
       lines <- c(lines, "",
                  sprintf("## Contender methods (top %d by UCB at contender_z = %g)",
                          length(cand), z),
-                 "```", hdr, body, "", leg, "```")
+                 "```", hdr, body, "",
+                 "  n = usable evaluations / trials attempted",
+                 leg, "```")
+
+      # --- within-configuration spread, non-pooled -------------------------
+      # What the pooled variance components cannot say: is one contender more trial-sensitive
+      # than another? Only for contenders with enough evaluations for an sd to mean anything.
+      wcfg <- attr(agg, "within_config")
+      if (!is.null(wcfg)) {
+        wr <- wcfg[match(cc$config_hash, wcfg$config_hash), , drop = FALSE]
+        wr$label <- paste0("C", seq_len(nrow(cc)))
+        keep <- !is.na(wr$n_eval) & wr$n_eval >= 6L
+        if (any(keep)) {
+          wk <- wr[keep, , drop = FALSE]
+          wtbl <- sprintf("  %-6s %6s %18s %24s %16s", wk$label, wk$n_eval,
+                          vapply(wk$sd_raw, fmt_num, character(1), 3),
+                          vapply(wk$sd_adj, fmt_num, character(1), 3),
+                          vapply(wk$sd_adj / sqrt(wk$n_eval), fmt_num, character(1), 3))
+          lines <- c(lines, "",
+                     "## Within-configuration spread among evaluations",
+                     "```",
+                     sprintf("  %-6s %6s %18s %24s %16s", "", "evals", "sd across trials",
+                             "sd net of trial effect", "SE of the mean"),
+                     wtbl,
+                     if (sum(!keep)) sprintf("  (%d contender(s) with fewer than 6 evaluations omitted)",
+                                             sum(!keep)) else NULL,
+                     "```")
+        } else {
+          lines <- c(lines, "",
+                     "## Within-configuration spread among evaluations",
+                     "```",
+                     "  no contender has 6 or more evaluations yet",
+                     "```")
+        }
+      }
     }
   }
 
@@ -361,16 +412,6 @@ write_report <- function(con, settings) {
                    "_Investigate with_ `diagnose_trial(<trial_id>, settings)`.")
       }
     }
-  }
-
-  if (nrow(curve) > 1) {
-    # A coarse text sparkline of the running best.
-    rb <- curve$running_best
-    idx <- unique(round(seq(1, length(rb), length.out = min(20, length(rb)))))
-    lines <- c(lines, "", "## Running best (over evaluation order)",
-               "```",
-               paste(sprintf("%.3f", rb[idx]), collapse = "  "),
-               "```")
   }
 
   # ATOMIC, because every worker writes this file: concurrent writeLines() to one path would

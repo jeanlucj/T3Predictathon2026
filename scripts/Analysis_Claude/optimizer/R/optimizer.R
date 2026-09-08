@@ -172,6 +172,7 @@ aggregate_scores <- function(evals, min_n_test = 10L, adjust_trial = TRUE) {
       out$se[ok] <- adj$se[i][ok]
       attr(out, "estimator")  <- "blup"
       attr(out, "var_comps")  <- attr(adj, "var_comps")
+      attr(out, "within_config") <- attr(adj, "within_config")
       attr(out, "estimator_note") <- note        # NULL when the fit ran clean
     } else {
       attr(out, "estimator_note") <-
@@ -207,15 +208,55 @@ aggregate_scores <- function(evals, min_n_test = 10L, adjust_trial = TRUE) {
   # condVar = TRUE attaches each level's posterior variance, which is what the contender rule
   # needs; it is on the z scale, as `blup` is before the tanh below.
   re <- lme4::ranef(m, condVar = TRUE)$config_hash
+  # `se` is the POSTERIOR SD of the configuration's random effect, not the standard error of a
+  # mean. Its shape, APPROXIMATELY -- exact only for a balanced design with the crossed trial
+  # term and the fixed effect ignored, so read it as the mechanism, not as a formula to check
+  # digits against (it agrees closely when sd_config is small against sd_resid/sqrt(n), and runs
+  # a few percent low otherwise):
+  #
+  #   se_blup(n) ~ sqrt( 1 / ( 1/sd_config^2 + n/sd_resid^2 ) )
+  #
+  # -- prior precision plus data precision. The fixed-effect quantity, which is what a reader
+  # means by "how well do we know this configuration's accuracy", is the different
+  #
+  #   se_fixed(n) = sd_resid / sqrt(n)                (trial variance is already blocked out)
+  #
+  # They diverge sharply at this project's replication, because the prior dominates until n is
+  # large against (sd_resid/sd_config)^2. With sd_config 0.015 and sd_resid 0.068 per
+  # evaluation, the weight the BLUP puts on the DATA is 0.09 at n = 2 and only 0.54 at n = 24 --
+  # so at the median configuration the reported se is ~90% prior. Shrinkage is right for
+  # RANKING (it is what stops one lucky evaluation topping the list -- LESSONS #19) and
+  # .contenders() should keep using it; write_report() shows both and labels which is which.
+  #
+  # Note also that the model has no config:trial term, so sd_resid confounds config x trial
+  # interaction with measurement noise. The two are not separately identifiable without
+  # replicating a (config, trial) cell, which the design avoids -- duplicate_cells counts those
+  # as a defect. `within_config` below is the closest available window on that interaction.
   se <- sqrt(as.numeric(attr(re, "postVar")))
   v  <- as.data.frame(lme4::VarCorr(m))
   sd_of <- function(g) { x <- v$sdcor[v$grp == g]; if (length(x)) x[1] else NA_real_ }
+
+  # Per-configuration spread across the trials it ran on, NOT pooled. `sd_adj` removes the
+  # fitted trial effect: z_ij = mu + c_i + t_j + e_ij, so z - t_j leaves the configuration's own
+  # scatter, which is what makes two configurations comparable when they cover different trial
+  # subsets. Back-transformed so both columns are on the correlation scale.
+  tre   <- lme4::ranef(m)$trial_id
+  t_eff <- stats::setNames(tre[, 1], rownames(tre))
+  tj    <- unname(t_eff[as.character(d$trial_id)]); tj[is.na(tj)] <- 0
+  wc <- tibble::tibble(config_hash = d$config_hash, score = d$score,
+                       adj = tanh(d$.z - tj)) |>
+    dplyr::group_by(config_hash) |>
+    dplyr::summarise(n_eval = dplyr::n(),
+                     sd_raw = stats::sd(score),
+                     sd_adj = stats::sd(adj), .groups = "drop")
+
   structure(
     tibble::tibble(config_hash = rownames(re),
                    blup = tanh(as.numeric(lme4::fixef(m)[1]) + re[, 1]),
                    se   = se),
     var_comps = c(sd_trial = sd_of("trial_id"), sd_config = sd_of("config_hash"),
-                  sd_resid = sd_of("Residual")))
+                  sd_resid = sd_of("Residual")),
+    within_config = wc)
 }
 
 # Top-k configurations by mean score (only those with at least one success).
