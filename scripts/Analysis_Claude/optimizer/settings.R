@@ -241,15 +241,16 @@ optimizer_settings <- function(local_overrides = TRUE) {
       programs  = NULL,          # programName values, or NULL
       years     = NULL,          # years, or NULL
       locations = NULL,          # locationName values, or NULL
-      trials    = c("23_Big6_MAS", "23_Big6_SVREC", "24_Big6_FHB_FHB",
-                    "24_Big6_MASMI", "24_Big6_SVREC", "24_Jhon_FHB_CRD_FHB",
-                    "25_Big6_Core_FHB_FHB", "25_Big6_MASON_MASMI",
-                    "25_MSU_AYT_MI_ALLMI", "25_MSU_AYT_MI_CENMI", "25_MSU_AYT_MI_FHB",
-                    "25_MSU_AYT_MI_HURMI", "25_MSU_AYT_MI_MONMI", "25_MSU_AYT_MI_SANMI",
-                    "25_MSU_PYT_FHB", "25_MSU_PYT_MASMI", "25_MSU_PYT_SVREC",
-                    "Big6_Fra_23", "Big6_Fre_23", "Big6_Laf_23", "Big6_Mas_23",
-                    "Big6_Prn_23", "Big6_Scb_23", "Big6_Urb_23", "Big6_Woo_23",
-                    "IL_Scb_23", "SI_Urb_22", "YT_Addie_23", "YT_Neo_23", "YT_Stp_23",
+      trials    = c("25_MSU_AYT_MI_ALLMI", "25_MSU_AYT_MI_CENMI",
+                    "25_MSU_AYT_MI_HURMI", "25_MSU_AYT_MI_MONMI",
+                    "25_MSU_AYT_MI_SANMI", "25_MSU_PYT_MASMI", "25_MSU_PYT_SVREC",
+                    "Big6_2023_FRA", "Big6_2023_FRE",
+                    "Big6_2023_LAF", "Big6_2023_MAS",
+                    "Big6_2023_PRN", "Big6_2023_SVREC", "Big6_2023_URB",
+                    "Big6_2023_WOO", "Big6_2024_SVREC",
+                    "Big6_2025_MAS", "Big6_2026_NEO",
+                    "Big6_2026_URB", "YT_Addie_23",
+                    "YT_Neo_23", "YT_Stp_23",
                     "YT_Urb_23", "YT_Urb_25")
     ),
 
