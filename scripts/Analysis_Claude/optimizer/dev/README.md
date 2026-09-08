@@ -54,26 +54,9 @@ separate file is what let the last one go stale unnoticed.*
 ### Immediate — robustness, found launching the run of 2026-09-04
 
 These are ahead of the ranked list rather than in it: they are not throughput or quality levers,
-they are the difference between a failure you see and one you find hours later. All three came
-out of a single launch that died and looked, from outside, like nothing at all.
-
-**A. A dead run reports success to SLURM.** `run_workers.sh` ends in a bare `wait`, which in
-bash returns **0** whatever the children did. So every worker can fatal in the first ten
-minutes, `wait` returns 0, `apptainer exec` returns 0, `t3opt_ceres.sh` exits 0, and `sacct`
-records the job `COMPLETED`. `--mail-type=FAIL` cannot fire, because by SLURM's account nothing
-failed. The only signal is `t3opt` quietly leaving `squeue`, which is an *absence* — you have to
-already suspect something to look. Options, cheapest first:
-
-- Collect the worker pids and `wait` on each, exiting non-zero if any exited non-zero. That
-  alone makes `--mail-type=FAIL,END` work and makes `sacct` honest. Decide deliberately what an
-  OOM-killed worker mid-run should mean: the run legitimately continues with fewer, so "any
-  non-zero" may be too strict, and "all workers gone within N minutes of launch" is the signature
-  that actually distinguishes a failed launch from attrition.
-- A preflight in `t3opt_ceres.sh` that resolves the trial universe *before* starting workers, so
-  a `domain_not_covered` fails at job start with the error in `diag-<jid>.out`, not 10 minutes in
-  and buried in `run_w1.out`.
-- A push notification from the job script on non-zero exit. There is already an ntfy channel in
-  use for other alerting; one `curl` in an `EXIT` trap would reach a phone.
+they are the difference between a failure you see and one you find hours later. They came out of
+launches that died and looked, from outside, like nothing at all. **A is fixed (2026-09-08); B
+and C remain.**
 
 **B. The message the surviving workers print points away from the cause.** Worker 1 fatals
 immediately with the real reason; workers 2..N wait 600 s and then report `no run row after
@@ -249,6 +232,22 @@ asked. The remaining `EM_COMBINE` items (glmnet imputation, panel-size floor) ar
   which needs a GRM per candidate panel; and whether the harmonic mean or the geometric mean is
   right turns on whether accuracy has saturated in training size, which `n_test` in the store
   can settle empirically once the new run has rows.
+- **A dead run reporting success to SLURM** — fixed 2026-09-08, after a second multi-day loss.
+  `run_workers.sh` ended in a bare `wait`, which returns 0 whatever the children did, so every
+  worker could die in the first minutes and `sacct` would still say `COMPLETED` —
+  `--mail-type=FAIL` could not fire and the only signal was `t3opt` leaving `squeue`. It now
+  waits on each pid and separates the two cases that matter: workers gone within the launch
+  window with no STOP file is a failed *launch* and exits non-zero; a worker lost later is
+  attrition, which the run survives by design, and exits 0 with a warning. Verified that the
+  status propagates through `t3opt_ceres.sh`'s `set -e` and its `EXIT` trap.
+- **The startup connect having no retry** — fixed 2026-09-08, the cause of that second loss.
+  `t3_connect()` was the one BrAPI call outside `.brapi_try()`, so a 10 s connect timeout at
+  relaunch killed all 22 workers, which the 20 s launch stagger put inside one outage window.
+  It now retries on `brapi_connect_tries` (8, ~5 minutes) — deliberately longer than
+  `brapi_tries`, since a worker that cannot connect has nothing else to do while a call inside
+  the loop is holding a claim. Credential errors still fail fast: `.brapi_try()` documented
+  that intent but only honoured it in its re-login branch, and now honours it when the thunk
+  raises those classes too.
 - **The replicate livelock** — fixed 2026-09-02. A mid-run trial rename moved rows out of the
   domain slice, so replication could never complete. The universe is pinned to trial **ids** at
   run start, there is a `runs` table recording it, and `max_consec_skip` bounds the retry.

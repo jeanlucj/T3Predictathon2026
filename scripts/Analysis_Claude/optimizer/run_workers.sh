@@ -115,24 +115,79 @@ for i in $(seq "$FIRST" "$LAST"); do
   fi
 done
 
+# Seconds between worker launches. Also the unit the "failed launch" window below is built
+# from, so the two cannot drift apart.
+STAGGER=20
+
 echo "run_workers.sh: starting $N_WORKERS worker(s) (ids $FIRST-$LAST), $N_THREADS BLAS thread(s) each"
+WPIDS=(); WIDS=(); T0=$SECONDS
 for i in $(seq "$FIRST" "$LAST"); do
   # </dev/null so an archived-VCF download can never block on an interactive prompt.
   OPTIMIZER_WORKER="$i" nohup Rscript run_optimizer.R </dev/null > "$LOG_DIR/run_w${i}.out" 2>&1 &
+  WPIDS+=("$!"); WIDS+=("$i")
   echo "  worker $i -> pid $! -> $LOG_DIR/run_w${i}.out$([ "$i" = 1 ] && echo '  (leader: restores the cache at startup)')"
   # Stagger the starts. The workers would otherwise hit the trial catalogue and the same
   # uncached genotyping projects simultaneously; the download lock makes that correct but
   # waiting is still wasted time, and a thundering herd on the T3 server is worth avoiding.
-  sleep 20
+  sleep "$STAGGER"
 done
 
 echo
 echo "all workers launched. stop them with:  touch $STOP_FILE"
 echo "(the next fresh launch clears that file itself -- no rm needed)"
 
-# Block until every worker exits. This is for SLURM: a batch script that returns immediately
-# would end the job and tear the allocation down under the workers. The workers are each
-# nohup'd above, so they do NOT depend on this process staying alive -- which is why an
-# interactive launch should be `nohup ./run_workers.sh N > logs/workers.out 2>&1 &`, or the
-# wait below simply occupies your terminal for the length of the run.
-wait
+# Block until every worker exits, COLLECTING their exit statuses. This is for SLURM: a batch
+# script that returns immediately would end the job and tear the allocation down under the
+# workers. The workers are each nohup'd above, so they do NOT depend on this process staying
+# alive -- which is why an interactive launch should be
+# `nohup ./run_workers.sh N > logs/workers.out 2>&1 &`, or the wait below simply occupies your
+# terminal for the length of the run.
+#
+# `wait` WITH NO ARGUMENTS RETURNS 0 whatever the children did. That is how two multi-day
+# launches were lost: every worker died within minutes, this script exited 0, apptainer exited
+# 0, and sacct recorded the job COMPLETED -- so --mail-type=FAIL could not fire and the only
+# signal was t3opt quietly leaving squeue. Waiting on each pid is what makes SLURM's own
+# failure reporting work. See dev/README.md, "A dead run reports success to SLURM".
+n_ok=0; n_fail=0; failed_ids=""
+for k in "${!WPIDS[@]}"; do
+  if wait "${WPIDS[$k]}"; then
+    n_ok=$((n_ok + 1))
+  else
+    n_fail=$((n_fail + 1)); failed_ids="$failed_ids ${WIDS[$k]}"
+  fi
+done
+ELAPSED=$((SECONDS - T0))
+
+if [ "$n_fail" -eq 0 ]; then
+  echo "run_workers.sh: all $n_ok worker(s) exited cleanly after ${ELAPSED}s."
+  exit 0
+fi
+
+echo "run_workers.sh: $n_fail of $((n_ok + n_fail)) worker(s) exited NON-ZERO (ids:$failed_ids)" >&2
+for i in $failed_ids; do
+  echo "  --- last 5 lines of $LOG_DIR/run_w${i}.out ---" >&2
+  tail -n 5 "$LOG_DIR/run_w${i}.out" >&2 2>/dev/null || true
+done
+
+# Nothing survived: whatever else is true, this run produced no work.
+if [ "$n_ok" -eq 0 ]; then
+  echo "run_workers.sh: NO worker survived -- this run produced nothing." >&2
+  exit 1
+fi
+
+# A FAILED LAUNCH, not attrition. Distinguishing the two is the point: a worker OOM-killed at
+# hour 30 is tolerated by design (the run continues with fewer), while workers gone within
+# minutes of starting means none of them ever got going. The window is the stagger -- the
+# launch itself takes STAGGER * (N-1) seconds -- plus a grace period. A STOP file means the
+# operator asked for this, so a quick exit is intentional rather than a fault.
+EARLY_GRACE="${OPTIMIZER_EARLY_EXIT_S:-300}"
+EARLY_LIMIT=$(( STAGGER * (N_WORKERS - 1) + EARLY_GRACE ))
+if [ "$ELAPSED" -lt "$EARLY_LIMIT" ] && [ ! -f "$STOP_FILE" ]; then
+  echo "run_workers.sh: workers were gone ${ELAPSED}s after launch (< ${EARLY_LIMIT}s) with no" >&2
+  echo "  STOP file -- this is a failed LAUNCH, not attrition. Read the tails above." >&2
+  exit 1
+fi
+
+echo "run_workers.sh: $n_ok worker(s) ran to completion; treating the $n_fail loss(es) as" >&2
+echo "  attrition rather than a failed run. Check report_memory.R if they were OOM kills." >&2
+exit 0

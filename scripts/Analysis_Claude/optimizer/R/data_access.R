@@ -145,10 +145,24 @@ t3_login <- function(conn, settings = NULL) {
 }
 
 # Construct a connection AND log it in -- the single place a connection is made.
-t3_connect <- function(settings) {
-  conn <- BrAPI::createBrAPIConnection(settings$brapi_host, is_breedbase = TRUE)
-  t3_login(conn, settings)
-  conn
+# Open a connection and log in, RETRYING -- this is the one call whose failure costs the whole
+# job, so it gets the longest budget rather than none.
+#
+# It used to be a bare call while every other BrAPI request went through .brapi_try(). A
+# 10-second connect timeout during a relaunch therefore killed all 22 workers outright, and
+# because run_workers.sh staggers starts by only 20 s they all fell inside the same outage.
+# brapi_connect_tries is separate from brapi_tries because the trade-off differs: a worker at
+# startup has nothing to lose by waiting minutes, while a call inside the loop is holding a
+# claim and should give up sooner.
+#
+# Credential errors still fail fast -- .brapi_try() stops on their classes rather than retrying.
+t3_connect <- function(settings, tries = NULL) {
+  if (is.null(tries)) tries <- as.integer(settings$brapi_connect_tries %||% 8L)
+  .brapi_try(function() {
+    conn <- BrAPI::createBrAPIConnection(settings$brapi_host, is_breedbase = TRUE)
+    t3_login(conn, settings)
+    conn
+  }, settings = settings, tries = tries, what = "T3 connect + login")
 }
 
 # T3 surfaces an unauthenticated call as a WARNING plus an empty response, never an error, so
@@ -188,6 +202,13 @@ t3_connect <- function(settings) {
     is_err   <- inherits(r, "error")
     auth_fail <- auth_fail || (!is_err && .response_auth_failed(r))
     if (!is_err && !auth_fail) return(r)                      # success
+
+    # A setup error is not transient: no number of retries fixes a missing or rejected
+    # password, and burning the budget on one buries the message that says how to fix it.
+    # t3_login() gives those their own classes for exactly this; the re-login branch below
+    # already fails fast on them, and this makes it true when the THUNK raises them too --
+    # which is what t3_connect() does.
+    if (is_err && inherits(r, c("t3_missing_credentials", "t3_bad_credentials"))) stop(r)
 
     # 401 -> re-login and retry the same thunk with the refreshed token. Bounded by
     # max_relogin so a token that stays unauthorized after login cannot loop forever.

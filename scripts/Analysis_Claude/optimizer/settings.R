@@ -193,6 +193,12 @@ optimizer_settings <- function(local_overrides = TRUE) {
     dosage_redensify = TRUE,
 
     brapi_tries               = 4,   # attempts per BrAPI call; 1 disables retry
+    # The startup connect + login, which every worker must clear before it can do anything.
+    # Longer than brapi_tries because the trade-off is different: a worker that cannot connect
+    # has nothing else to do, while a call inside the loop is holding a claim. 8 attempts at
+    # 2 * 2^(n-1) s backoff rides out roughly 5 minutes of network trouble -- run_workers.sh
+    # staggers starts by 20 s, so a shorter blip than that takes every worker at once.
+    brapi_connect_tries       = 8,
     vcf_max_download_attempts = 3,   # per-session failed VCF downloads before skipping -- LESSONS #10
 
     min_trial_acc      = 30,     # skip trials with fewer genotyped accessions

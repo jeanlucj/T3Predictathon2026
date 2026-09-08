@@ -49,6 +49,52 @@ n3 <- 0L; th3 <- function() { n3 <<- n3 + 1L; stop("x") }
 suppressMessages(try(.brapi_try(th3, tries = 1, base_delay = 0), silent = TRUE))
 check(n3 == 1L, "tries=1 disables retry (single attempt)")
 
+# A SETUP error is not transient. Oracle: no number of retries fixes a rejected password, and
+# burning the budget on one buries the message that says how to fix it -- so the two credential
+# classes must raise on the FIRST attempt even with a budget of 5.
+.mk_cred_err <- function(cls) structure(class = c(cls, "error", "condition"),
+                                        list(message = "nope", call = NULL))
+for (cls in c("t3_missing_credentials", "t3_bad_credentials")) {
+  n4 <- 0L; th4 <- function() { n4 <<- n4 + 1L; stop(.mk_cred_err(cls)) }
+  e <- suppressMessages(tryCatch(.brapi_try(th4, tries = 5, base_delay = 0),
+                                 error = function(e) e))
+  check(n4 == 1L && inherits(e, cls),
+        paste0(".brapi_try fails fast on ", cls, " instead of retrying"))
+}
+
+# ===========================================================================
+cat("t3_connect (the startup call that used to have no retry)\n")
+# Oracle: t3_connect is the one call whose failure costs the whole job -- a 10 s connect
+# timeout at relaunch once killed all 22 workers, because it was a bare call while every other
+# BrAPI request went through .brapi_try(). It must now survive a transient failure and still
+# fail fast on a rejected password.
+#
+# Offline: BrAPI::createBrAPIConnection only constructs an object (no request), and t3_login is
+# this project's own function, so shadowing it in the global env -- where t3_connect resolves
+# it -- exercises the real retry path. One failure, so the suite pays one ~2 s backoff.
+.real_login <- t3_login
+local({
+  n <- 0L
+  t3_login <<- function(conn, settings = NULL) {
+    n <<- n + 1L
+    if (n < 2L) stop("Timeout was reached: failed to connect to port 443 after 10002 ms")
+    invisible(conn)
+  }
+  cn <- suppressMessages(t3_connect(list(brapi_host = "https://wheat.triticeaetoolbox.org",
+                                         brapi_connect_tries = 4)))
+  check(n == 2L && !is.null(cn), "t3_connect retries a connect timeout, then returns the connection")
+
+  n <- 0L                       # plain <- : `n <<- 0L` here would write to the PARENT env
+  t3_login <<- function(conn, settings = NULL) {
+    n <<- n + 1L; stop(.mk_cred_err("t3_bad_credentials")) }
+  e <- suppressMessages(tryCatch(
+    t3_connect(list(brapi_host = "https://wheat.triticeaetoolbox.org",
+                    brapi_connect_tries = 8)), error = function(e) e))
+  check(n == 1L && inherits(e, "t3_bad_credentials"),
+        "t3_connect does NOT retry a rejected password (setup errors fail fast)")
+})
+t3_login <- .real_login
+
 # ===========================================================================
 cat(".brapi_tries accessor + auth detection + re-login\n")
 # Oracle: the tries default is single-sourced; NULL/absent settings falls back to 4.
