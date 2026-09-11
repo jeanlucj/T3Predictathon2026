@@ -59,7 +59,7 @@ separate file is what let the last one go stale unnoticed.*
 
 These are ahead of the ranked list rather than in it: they are not throughput or quality levers,
 they are the difference between a failure you see and one you find hours later. They came out of
-launches that died and looked, from outside, like nothing at all. **A is fixed (2026-09-08); B, C, D and E remain.**
+launches that died and looked, from outside, like nothing at all. **A is fixed (2026-09-08); B, C, D, E and F remain.**
 
 **B. The message the surviving workers print points away from the cause.** Worker 1 fatals
 immediately with the real reason; workers 2..N wait 600 s and then report `no run row after
@@ -166,6 +166,33 @@ Four pieces, cheapest first:
 "did the new operators raise achievable EI, or confirm the plateau?" is answerable from the store
 rather than by argument — which makes it the shared prerequisite for D and E both, and worth
 doing before either.
+
+**F. The catalogue and the observations use different trait filters.** `trial_catalog()` searches
+`observationVariableDbIds = "84527"`; `get_observations()` keeps rows by substring-matching
+`settings$focal_trait` (`"Grain yield - kg/ha|CO_321:0001218"`) against each observation's variable
+**name**. A trial can satisfy one and not the other, and the pipeline then reads it as "no
+phenotypes" — the same family as `docs/LESSONS.md` #1. Unifying them is a data-access change with
+a wide blast radius and wants its own decision; `dev/check_domain_coverage.R`'s `n_obs` column
+makes it visible meanwhile.
+
+*Worked example, 2026-09-11.* Trial 10154 (`23Ros_AY1-3Yield`) sat in a 15-trial domain, passed
+`pin_trial_universe()`, was counted in the domain size, and had **zero rows after 2,471
+evaluations**. It records grain yield, but every value is 0. `sample_real_trial()` rejected it on
+every draw with a bare `next`, and `.trial_backlog()` could not reach it either (`n_cfg >= 1L`
+excludes a trial with no evaluations), so the random sampler was the only route in and it was the
+thing rejecting it. Fixed on both sides: the rejection now says so once per trial, and
+`pin_trial_universe()` excludes unsamplable trials from the universe rather than pinning them.
+
+*Rejected, with the evidence, so it is not re-proposed.* `.best_panel_index()`'s fallback is
+`which.max(f_cov)` — maximum focal coverage, training coverage ignored — which looks exactly like
+the cause of an `insufficient_geno_overlap` epidemic and is not. `logs/diag_10713.txt` shows only
+**two** projects hold any of that trial's 196 focal accessions, one holding 192 with ≤1 training
+line; the best alternative panel has focal 2, which fails `min_test` 5. Applying the harmonic mean
+to the fallback would change the failure's reason, not prevent it. Under CV00 `mask_cv()` makes
+the training set disjoint from the focal accessions **by construction**, so where a trial's
+germplasm sits in one genotyping project, no single-panel kernel can predict it. That is a domain
+property, not a selection bug — screen for it with `dev/check_domain_coverage.R`'s `bridged`
+column.
 
 ------------------------------------------------------------------------
 

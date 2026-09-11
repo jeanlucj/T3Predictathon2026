@@ -470,10 +470,16 @@ diagnose_trial <- function(study_id, settings, conn,
 
     if (!is.null(panels) && length(panels$p)) {
       pl <- panels$p; f_acc <- panels$focal_acc; t_acc <- panels$train_acc
-      cat(sprintf("  panels from subtask C (%d), focal / train overlap:\n", length(pl)))
-      fo <- vapply(pl, function(d) length(intersect(rownames(d), f_acc)), integer(1))
-      to <- vapply(pl, function(d) length(intersect(rownames(d), t_acc)), integer(1))
+      cat(sprintf("  panels from subtask C (%d), focal / train overlap [scheme %s; train = need minus focal]:\n",
+                  length(pl), scheme))
       need <- union(t_acc, f_acc)
+      # `train` must be need MINUS focal, which is what .best_panel_index() thresholds on -- NOT
+      # t_acc. Under CV00 masking already makes the two disjoint and they agree; under CV0 the
+      # focal accessions remain in training, so counting t_acc credits a panel with lines the
+      # selector excludes. The canary runs the OTHER scheme from the trial sections
+      # (settings$schemes[1]), so the table and its own `.best_panel picks` line disagreed there.
+      fo <- vapply(pl, function(d) length(intersect(rownames(d), f_acc)), integer(1))
+      to <- vapply(pl, function(d) length(intersect(rownames(d), setdiff(need, f_acc))), integer(1))
       cov  <- vapply(pl, function(d) length(intersect(rownames(d), need)), integer(1))
       # The two floors .best_panel selects against, printed per panel so its choice is legible:
       # a panel is `ok` only if it clears BOTH, and only among those is union coverage maximised.

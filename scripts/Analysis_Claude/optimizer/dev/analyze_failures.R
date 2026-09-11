@@ -25,6 +25,7 @@
 #   --archive=<path>  the PREVIOUS store, for the before/after and domain diff
 #                     (default: newest $OPTIMIZER_HOME/state/evals_archive_*.sqlite)
 #   --no-archive      skip sections 4 and 5
+#   --all             analyse the WHOLE store, not just this run's domain/scheme/build slice
 #   --z=1,2           contender_z values to count at (section 6)
 #   --top=20          rows to print in the longer tables
 #
@@ -97,9 +98,36 @@ if (!o_noa && !is.null(arch_path) && file.exists(arch_path)) {
   cat("archive : none found -- sections 4 and 5 skipped (--archive=<path> to name one)\n")
 }
 
-e <- cur$evals
+# --- restrict to THIS run's slice -------------------------------------------
+# The store is a shared archive: after a target-domain switch it holds both domains, and reading
+# failures across both blends two different questions. Sections 1-3 and 6 use the slice; sections
+# 4-5 deliberately do not, because diffing the current store against an archive is cross-domain
+# by construction.
+o_all <- "--all" %in% args
+rid   <- run_id_for(s, s$build %||% OPTIMIZER_BUILD)
+uni   <- NULL
+if (!is.null(cur$runs) && rid %in% cur$runs$run_id) {
+  uj  <- cur$runs$universe_json[match(rid, cur$runs$run_id)]
+  uni <- tryCatch(as.character(jsonlite::fromJSON(uj)$id), error = function(e) NULL)
+}
+e_all <- cur$evals
+if (o_all) {
+  e <- e_all
+  cat("--all: analysing every row in the store, both domains\n")
+} else {
+  e <- e_all |> filter_evals_to_scheme(s$optimize_scheme) |>
+                filter_evals_to_build(s$build %||% OPTIMIZER_BUILD)
+  if (length(uni)) e <- filter_evals_to_universe(e, uni)
+  cat(sprintf("analysing %d row(s) in this run's domain/scheme/build; %d more set aside (--all to include)\n",
+              nrow(e), nrow(e_all) - nrow(e)))
+  # A missing run row leaves `uni` NULL and the universe filter a silent no-op -- exactly the
+  # failure this block exists to prevent, so say it rather than appear to have filtered.
+  if (!length(uni))
+    cat("  ** no run row for ", rid, ": could NOT restrict to the pinned universe,\n",
+        "     only to scheme and build. Trials from another domain may still be below. **\n", sep = "")
+}
 e$failed <- e$status != "ok"
-if (!nrow(e)) stop("the store has no rows.")
+if (!nrow(e)) stop("no rows in this run's slice (try --all).")
 
 # ---- 1. failures by trial --------------------------------------------------
 hr("1. Failures by trial")
@@ -166,10 +194,11 @@ hr("4. Domain diff: which trials changed?")
 if (is.null(arch)) cat("  no archive -- skipped.\n") else {
   # trial_id, NEVER study_name: a renamed trial keeps its id, and `study_name` on a row is the
   # name AS OF that evaluation -- which is what makes the two stores together a rename log.
+  # e_all, not e: the domain diff is cross-domain by definition.
   nm <- function(ev) ev |> distinct(trial_id, study_name) |>
     group_by(trial_id) |> summarise(name = paste(unique(study_name), collapse = " | "),
                                     .groups = "drop")
-  a <- nm(arch$evals); b <- nm(e)
+  a <- nm(arch$evals); b <- nm(e_all)
   added   <- anti_join(b, a, by = "trial_id")
   removed <- anti_join(a, b, by = "trial_id")
   common  <- inner_join(a, b, by = "trial_id", suffix = c("_old", "_new"))
@@ -204,15 +233,16 @@ if (is.null(arch)) cat("  no archive -- skipped.\n") else {
 hr("5. Failure rate: before vs after")
 if (is.null(arch)) cat("  no archive -- skipped.\n") else {
   ae <- arch$evals; ae$failed <- ae$status != "ok"
+  be <- e_all; be$failed <- be$status != "ok"   # cross-domain, like the diff above
   ae$train_select <- method_of(ae, "train_select.method")
   rate <- function(d) sprintf("%d/%d = %.3f", sum(d$failed), nrow(d), mean(d$failed))
-  cat("  ALL trials      old ", rate(ae), "   new ", rate(e), "\n", sep = "")
-  shared <- intersect(unique(ae$trial_id), unique(e$trial_id))
-  ac <- filter(ae, trial_id %in% shared); bc <- filter(e, trial_id %in% shared)
+  cat("  ALL trials      old ", rate(ae), "   new ", rate(be), "\n", sep = "")
+  shared <- intersect(unique(ae$trial_id), unique(be$trial_id))
+  ac <- filter(ae, trial_id %in% shared); bc <- filter(be, trial_id %in% shared)
   cat("  COMMON trials   old ", rate(ac), "   new ", rate(bc), "\n", sep = "")
   cat("\n  This is the decisive line. If the COMMON-trial rate is flat while the ALL-trial rate\n")
   cat("  rose, the increase is entirely the newly admitted trials and the code is exonerated.\n")
-  newonly <- filter(e, !trial_id %in% shared)
+  newonly <- filter(be, !trial_id %in% shared)
   if (nrow(newonly)) cat("  NEW-only trials new ", rate(newonly), "\n", sep = "")
   cat("\nby train_select, common trials only:\n")
   print(bind_rows(mutate(ac, era = "old"), mutate(bc, era = "new")) |>
@@ -226,18 +256,10 @@ hr("6. Contenders (the report caps its list at k = 8)")
 # The same filters write_report() applies, so the counts are comparable to the report's.
 # write_report() reads the universe off settings$trial_universe, which run_optimizer sets after
 # pinning; a standalone script has to read the run row instead, as tools/check_backup.R does.
-rid <- run_id_for(s, s$build %||% OPTIMIZER_BUILD)
-uni <- NULL
-if (!is.null(cur$runs) && rid %in% cur$runs$run_id) {
-  uj  <- cur$runs$universe_json[match(rid, cur$runs$run_id)]
-  uni <- tryCatch(as.character(jsonlite::fromJSON(uj)$id), error = function(e) NULL)
-}
 cat("  run ", rid, ": ", if (length(uni)) paste0(length(uni), "-trial universe")
-    else "no run row -- not filtering to a universe", "\n", sep = "")
-ev <- e |> filter_evals_to_scheme(s$optimize_scheme) |>
-  filter_evals_to_build(s$build %||% OPTIMIZER_BUILD)
-if (length(uni)) ev <- filter_evals_to_universe(ev, uni)
-agg <- aggregate_scores(ev)
+    else "no run row -- not filtered to a universe", "\n", sep = "")
+# `e` is already the slice (or everything, under --all).
+agg <- aggregate_scores(e)
 cat(sprintf("  %d distinct config(s) in the slice; %d with an se (>= 2 evals)\n",
             nrow(agg), sum(is.finite(agg$se))))
 # aggregate_scores shrinks the config BLUPs in proportion to replication, so a slice with

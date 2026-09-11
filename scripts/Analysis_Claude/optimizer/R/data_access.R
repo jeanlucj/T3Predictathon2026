@@ -476,6 +476,37 @@ pin_trial_universe <- function(con, conn, settings, leader = TRUE, wait_s = 600)
                    "the resolved universe: ", paste(missing, collapse = ", ")),
             "domain_not_covered")
   }
+  # The universe must contain only trials the SAMPLER can actually draw. .eligible_trials() does
+  # not apply min_trial_acc, but sample_real_trial() does -- so without this a trial is pinned,
+  # counted in the domain size, and never evaluated (trial 10154, 2,471 evaluations). It also
+  # makes "covered the domain" reachable: .replication_backlog() requires every universe trial,
+  # so one unsamplable member makes that message structurally impossible.
+  #
+  # Exclude rather than fatal: a small trial is a data fact, and domain_not_covered above already
+  # catches the genuine configuration errors. One cached get_trial_accessions() per trial.
+  # NA on error, never 0: a transient wizard failure must not permanently exclude a trial from a
+  # universe that is then recorded in `runs` for the life of the run. Only a trial we positively
+  # counted and found short is dropped; an unknown one is kept, and says so.
+  n_acc <- vapply(ids, function(i)
+    tryCatch(length(get_trial_accessions(i, conn, settings)), error = function(e) NA_integer_),
+    integer(1))
+  if (anyNA(n_acc))
+    message(sprintf("  could not count accessions for %d trial(s) (%s) -- KEEPING them; a transient",
+                    sum(is.na(n_acc)), paste(ids[is.na(n_acc)], collapse = ", ")),
+            " lookup failure must not silently shrink the universe")
+  drop <- !is.na(n_acc) & n_acc < settings$min_trial_acc
+  if (any(drop)) {
+    nm <- cand$study_name[match(ids, as.character(cand$study_db_id))]
+    for (i in which(drop))
+      message(sprintf("  %s %s -- %d accessions < min_trial_acc %d; EXCLUDED (never samplable)",
+                      ids[i], nm[i] %||% "?", n_acc[i], settings$min_trial_acc))
+    ids <- ids[!drop]
+    if (!length(ids))
+      fatal("every trial in the target domain is below min_trial_acc", "no_trials_in_domain")
+  }
+  message(sprintf("universe: %d named, %d samplable%s", length(n_acc), length(ids),
+                  if (anyNA(n_acc)) sprintf(" (%d unchecked)", sum(is.na(n_acc))) else ""))
+
   record_run(con, run_id, settings, build, ids,
              cand$study_name[match(ids, as.character(cand$study_db_id))],
              catalog_ts = .trial_catalog_ts(settings))
@@ -493,10 +524,25 @@ sample_real_trial <- function(settings, conn, max_tries = 12) {
     row <- cand[sample.int(nrow(cand), 1), ]
     id  <- as.character(row$study_db_id)
     acc <- tryCatch(get_trial_accessions(id, conn, settings), error = function(e) character())
-    if (length(acc) < settings$min_trial_acc) next
-    # Confirm the trial actually measured the focal trait (cached download).
+    # SAY SO. A bare `next` here is how a trial pinned into the universe disappears without
+    # trace: it is rejected on every draw, for ever, and nothing is stored, logged or counted.
+    # Trial 10154 did exactly that for 2,471 evaluations. Once per trial per session is enough.
+    if (length(acc) < settings$min_trial_acc) {
+      .note_geno_once(paste0("trial_small_", id), sprintf(
+        "trial %s: %d accessions < min_trial_acc %d -- SKIPPED, and it will be skipped every time",
+        id, length(acc), settings$min_trial_acc))
+      next
+    }
+    # Confirm the trial actually measured the focal trait (cached download). Note this filters on
+    # the trait NAME while trial_catalog() searched on observationVariableDbId, so a trial can
+    # satisfy one and not the other -- dev/README.md thread F.
     obs <- tryCatch(get_observations(id, conn, settings), error = function(e) NULL)
-    if (is.null(obs) || !nrow(obs)) next
+    if (is.null(obs) || !nrow(obs)) {
+      .note_geno_once(paste0("trial_noobs_", id), sprintf(
+        "trial %s: no focal-trait observations after the trait-NAME filter -- SKIPPED, every time",
+        id))
+      next
+    }
     return(.trial_descriptor(row, acc))
   }
   sample_failed(paste0("none of ", max_tries, " sampled trials had >= ",

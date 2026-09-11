@@ -254,7 +254,7 @@ write_report <- function(con, settings) {
         if (!is.finite(mw) || mw < 1) mw <- 1
         nev  <- stats::median(a$n_ok, na.rm = TRUE)
         nois <- vc[["sd_resid"]] / sqrt(mw)          # per-evaluation residual sd
-        sprintf("  %-22s %19s %25s %22s %16s %30s", label,
+        sprintf("  %-22s %18s %17s %17s %14s %14s", label,
                 fmt_num(nev, 0),
                 fmt_num(stats::median(wi$.n_test, na.rm = TRUE), 0),
                 fmt_num(nois, 3),
