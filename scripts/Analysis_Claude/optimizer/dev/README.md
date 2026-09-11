@@ -14,9 +14,13 @@ Operating a run is `../tools/README.md`. Understanding the system is `../docs/`.
 | `check_blas.R` | R is slower than it should be on a new machine. Says whether the linear algebra is actually threaded. Pins every core, briefly, so cap threads before running it beside anything. |
 | `check_oom.sh` | Something in a SLURM allocation died and you suspect memory. Reads the job's cgroup counters and the `sacct` record. Must run **inside** the allocation being asked about: the cgroup high-water mark survives the process but disappears with the allocation. |
 | `analyze_failures.R` | The failure rate moved and you want to know whether it is the code or the domain. Answers from the store alone — failures by trial, `train_select` crossed with trial (the report's per-method table charges a failure to all six subtasks, so five of its six columns are the base rate), the `constant` bucket, an old/new domain diff keyed on `trial_id`, before/after rates restricted to the trials both stores share, and the true contender count the report caps at 8. Read-only, seconds, safe beside a live run — reach for `tools/diagnose_failures.R` only if one trial is still unexplained after this. |
+| `holdout_test.R` | You want to know whether optimization actually helped. Runs the top-k optimized configurations **and** all five submissions on trials the optimizer never saw, then compares the two distributions — a mixed model with configuration nested in group as the primary test, plus Wilcoxon/t on the per-configuration means. Refuses any trial that is in the run's pinned universe, and writes to a store of its own so a held-out evaluation can never become training data. `--report` analyses what is already stored; `dev/run_holdout.sh` runs N copies. **`dev/HOLDOUT.md` is the walkthrough** — what calls what, worker sizing, running it beside the optimizer, and how to read the four report sections. This is open thread 1, and the manuscript's headline claim. |
 | `check_domain_coverage.R` | A run aborted with `domain_not_covered`. Walks every name in `target_domain$trials` down the same ladder `.eligible_trials()` applies and names the step that dropped it: no focal-trait data, name not found in T3, or dropped by `programs`/`years`/`locations`. The distinction matters because the fixes differ — the first is a property of the data, the last is a self-inconsistent domain, since `trials` **intersects** with the other filters rather than overriding them. |
 | `check_trial_renames.R` | The store and the catalogue disagree about a trial. Asks whether a trial's `study_name` changed between the two. This was the livelock of August 2026 (`docs/LESSONS.md`), and the reason the run universe is pinned to trial **ids** now — so this script should find nothing, and a hit means something upstream moved. |
 | `EM_COMBINE_COMPARISON.md` | You are working on `em_combine`. What the sibling pipeline's combiner does differently, item by item, and which of those differences were deliberately declined. |
+
+`run_holdout.sh` is the only launcher in here; it is `dev/` rather than the root because it
+drives `holdout_test.R`, not the optimizer.
 
 Everything here runs **from the optimizer root**, like `tools/`:
 
@@ -55,7 +59,7 @@ separate file is what let the last one go stale unnoticed.*
 
 These are ahead of the ranked list rather than in it: they are not throughput or quality levers,
 they are the difference between a failure you see and one you find hours later. They came out of
-launches that died and looked, from outside, like nothing at all. **A is fixed (2026-09-08); B, C and D remain.**
+launches that died and looked, from outside, like nothing at all. **A is fixed (2026-09-08); B, C, D and E remain.**
 
 **B. The message the surviving workers print points away from the cause.** Worker 1 fatals
 immediately with the real reason; workers 2..N wait 600 s and then report `no run row after
@@ -105,6 +109,63 @@ per evaluation, the fixed-effect SE of a configuration's mean is `0.068/sqrt(n)`
 closer than about one `sd_config` apart cannot be separated however long the search runs. The
 ceiling is the domain size, not the budget — which argues for widening the domain over running
 longer, and is `docs/LESSONS.md` #19 arriving from a third direction.
+
+**But do not trust a plateau until E is done.** A stalled top-8 is not evidence of convergence
+while the proposal operators structurally cannot refine a good configuration — see E. Try
+refinement first; a stall that survives it means something.
+
+**E. The proposal operators cannot refine a good configuration.** The search space is **648
+categorical method combinations** (3 x 4 x 3 x 3 x 3 x 2 over the six subtasks) wrapped around
+**14 continuous/integer parameters**, plus a few categorical sub-parameters. Of the three
+operators in `R/config_space.R`, none can move within that interior at a fixed skeleton:
+
+- `crossover(a, b)` copies a whole subtask block — method *and* its parameters — from one
+  parent or the other. It moves between skeletons but **never creates a parameter value**: every
+  number in the child already existed in a parent.
+- `mutate_config(cfg, n_subtasks = 1:2)` deletes the chosen subtask's block entirely and calls
+  `sample_block()` — a **fresh random draw of method and parameters together**. There is no
+  parameter-only mutation.
+- `sample_config()` draws everything at random.
+
+So a new parameter value can only arrive by a random draw that simultaneously re-rolls the
+method. Once the skeleton is right, the search has no way to walk downhill in 14 dimensions — it
+can only re-roll and hope. The generation side compounds it: `n_elites = 8`, and
+`propose_candidates()` draws all 60 crossovers and all 60 mutations from those 8, so **120 of 180
+candidates come from 8 configurations** and a frozen leaderboard freezes two thirds of every
+round.
+
+Four pieces, cheapest first:
+
+1. **A refinement operator.** Hold a contender's method skeleton fixed and perturb only its
+   continuous/integer parameters — a local jitter scaled to each parameter's declared range,
+   shrinking as the field matures. This is what converts "we found a good method combination"
+   into "we found its best settings", and it is simply absent. `sample_block()` already reads
+   each parameter's type and range from `SUBTASKS`, so a `jitter_params()` beside it reuses that
+   metadata rather than restating it.
+
+2. **The per-subtask argmax skeleton.** Take the best method in each subtask by the surrogate and
+   combine them: one candidate, essentially free, and *no contender currently uses it*. Marginal
+   bests need not combine well — interactions are exactly what a forest can represent and a
+   marginal table cannot — which is the argument for evaluating it rather than assuming it.
+
+3. **Coordinate ascent on the surrogate.** From each elite, sweep one subtask at a time to the
+   value maximising predicted mean, iterating to a local optimum. A random forest has no
+   gradient, but each coordinate is small enough to enumerate. `choose_config()` picks
+   `which.max(ei)` — pure Expected Improvement, which rewards uncertainty — so nothing ever
+   *constructs* the configuration the surrogate thinks is best; it is found only if it happens to
+   be sampled, which across 648 skeletons is unlikely. Keep EI as the selector: these add
+   candidates, they do not replace the acquisition, and picking on predicted mean alone would
+   collapse the search.
+
+4. **Make the 60/60/60 split adaptive.** Heavy random and crossover while the field is unformed,
+   shifting toward refinement and exploitation once the leaders are stable. The stall is the
+   natural trigger — the same signal D would use to stop, redirected to change the proposal mix
+   first.
+
+**How to tell whether any of it worked**: persist `ei`, which D also needs. With it on `evals`,
+"did the new operators raise achievable EI, or confirm the plateau?" is answerable from the store
+rather than by argument — which makes it the shared prerequisite for D and E both, and worth
+doing before either.
 
 ------------------------------------------------------------------------
 
@@ -212,6 +273,12 @@ while it is still running, and a lock whose holder actually died is held for the
 — both failure modes, from the same missing check. `R/store.R::.pid_alive()` is the check it
 wants; the claims table already uses it. Small, and it is the mechanism behind
 `docs/LESSONS.md` #24.
+
+The same mtime-for-liveness defect was found and **fixed in `run_workers.sh` on 2026-09-08**: it
+refused a relaunch because a cancelled job's `run_w5.out` was still warm, and `$LOG_DIR` is
+durable, so the refusal followed the user to a different node. It now asks the OS instead. That
+leaves `.acquire_lock` as the remaining instance, and it is the one where the consequence is
+worse — a stolen lock corrupts a download rather than declining to start.
 
 ### 8. Method modularization
 

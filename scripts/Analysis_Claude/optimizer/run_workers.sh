@@ -101,19 +101,56 @@ if [ "$already" -gt 0 ]; then
   echo "run_workers.sh: note -- $already run_optimizer.R process(es) are already running"
 fi
 
-# Refuse to truncate a log that a live worker is writing to: a log touched in the last two
-# minutes almost certainly belongs to a running worker with this id.
-for i in $(seq "$FIRST" "$LAST"); do
-  if [ -n "$(find "$LOG_DIR/run_w${i}.out" -mmin -2 2>/dev/null)" ]; then
+# Refuse to TRUNCATE a log a live worker is writing to -- but decide "live" by asking the OS,
+# not by the log's mtime.
+#
+# mtime alone cannot tell a worker writing now from one killed thirty seconds ago, and the
+# killed case is the common one: cancel and resubmit is how a code change gets picked up.
+# $LOG_DIR is on DURABLE storage and shared across nodes, so those warm logs survive the node
+# change too. It is erratic as well as wrong -- workers touch their logs only when they emit a
+# message, so which id looks "active" is whichever happened to log last before the kill. That
+# is how a relaunch was refused on worker 5 while workers 1-4 passed. Same defect as
+# docs/LESSONS.md #24: liveness judged by a timestamp. See dev/README.md thread 7.
+#
+# CAVEAT: liveness is per NODE while $LOG_DIR is shared, so a worker on another node is
+# invisible here. --dependency=singleton makes two concurrent t3opt jobs impossible, and the
+# documented add-workers route (srun --overlap --jobid=<jid>) puts you on the job's own node.
+worker_alive() {                       # $1 = worker id; identified by its OPTIMIZER_WORKER
+  local p
+  for p in $(pgrep -u "$(id -u)" -f 'run_optimizer\.R' 2>/dev/null); do
+    [ -r "/proc/$p/environ" ] || continue
+    tr '\0' '\n' < "/proc/$p/environ" 2>/dev/null | grep -qx "OPTIMIZER_WORKER=$1" && return 0
+  done
+  return 1
+}
+
+if [ -n "${OPTIMIZER_FORCE_LAUNCH:-}" ]; then
+  echo "run_workers.sh: OPTIMIZER_FORCE_LAUNCH set -- skipping the running-worker check"
+elif [ "$already" -eq 0 ]; then
+  # Nothing of ours is running on this node, so no log here can belong to a live worker,
+  # whatever its mtime says. This is the cancel-and-resubmit case.
+  warm=$(find "$LOG_DIR" -maxdepth 1 -name 'run_w*.out' -mmin -2 2>/dev/null | wc -l | tr -d ' ')
+  [ "$warm" -gt 0 ] && echo "run_workers.sh: $warm recently-written log(s) belong to workers that" \
+                            "are gone; truncating them"
+else
+  for i in $(seq "$FIRST" "$LAST"); do
+    if [ -d /proc ]; then
+      worker_alive "$i" || continue                       # exact: this id is not running
+    else
+      # No /proc (a macOS interactive run): fall back to the mtime heuristic, which is all
+      # that is available. Only reached when some run_optimizer.R IS running.
+      [ -n "$(find "$LOG_DIR/run_w${i}.out" -mmin -2 2>/dev/null)" ] || continue
+    fi
     # Suggest the next FREE id, taken from the highest run_w<id>.out on disk -- not from the
     # process count, which says nothing about which ids are in use.
     max_id=$(ls "$LOG_DIR"/run_w*.out 2>/dev/null | sed 's/.*run_w\([0-9]*\)\.out/\1/' | sort -n | tail -1)
-    echo "run_workers.sh: $LOG_DIR/run_w${i}.out was written to seconds ago -- worker $i looks" >&2
-    echo "  like it is already running. To ADD workers, start above the running ids:" >&2
+    echo "run_workers.sh: worker $i is already running (its log is $LOG_DIR/run_w${i}.out)." >&2
+    echo "  To ADD workers to it, start above the running ids:" >&2
     echo "    OPTIMIZER_FIRST_WORKER=$(( ${max_id:-0} + 1 )) $0 $N_WORKERS $N_THREADS" >&2
+    echo "  If you believe it is NOT running, re-run with OPTIMIZER_FORCE_LAUNCH=1." >&2
     exit 1
-  fi
-done
+  done
+fi
 
 # Seconds between worker launches. Also the unit the "failed launch" window below is built
 # from, so the two cannot drift apart.

@@ -596,6 +596,24 @@ fault. `tools/check_backup.R` is the one to use beforehand: comparing the two
 the current store can resolve**. A gap smaller than that is not evidence
 of no effect; it is too little data.
 
+### The held-out test
+
+After an optimization: run every optimized configuration and every submission on trials the
+optimizer never saw, which is the only unbiased measure of whether optimization helped.
+
+``` bash
+cd <repo>/scripts/Analysis_Claude/optimizer/container
+./submit_holdout.sh -- --trials=<held-out ids or names>
+```
+
+`t3hold` is its own job name, so it neither blocks nor is blocked by `t3opt` and can run on
+another node while the optimizer is going — with the caveat that the contender set is still
+moving until the optimizer stops. Read the result any time with
+`Rscript dev/holdout_test.R --report`.
+
+**`dev/HOLDOUT.md` is the full walkthrough**: what calls what, how to size the worker count,
+how many trials to use and why, and how to read the output.
+
 ### Filling the wizard indices
 
 `tools/prepare_indices.R` is the one script here that is worth a batch job of

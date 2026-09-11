@@ -1,6 +1,6 @@
 # `container/` — the Apptainer image, and submitting jobs that use it
 
-The files here group into six jobs, below. Nothing is optional scaffolding: every one of them
+The files here group into seven jobs, below. Nothing is optional scaffolding: every one of them
 is referenced from somewhere else in the tree.
 
 **Build the image.**
@@ -41,6 +41,13 @@ relationship wizard from every evaluation — one such call measured 440 s of a 
 evaluation. The job is safe to lose: every fetch is cached as it completes and synced to the
 durable backup every 100 keys, so resubmitting after a wall-clock kill skips what is done.
 
+**Submit the held-out test** — after an optimization, to find out whether it helped.
+
+| file | what it is |
+|---|---|
+| `holdout_ceres.sh` | the `sbatch` script for `dev/run_holdout.sh`. Sized like the optimizer's job, not the diagnostic's: every cell of the (configuration x trial) grid is a real evaluation. |
+| `submit_holdout.sh` | queues it. Arguments after `--` reach the R script — `-- --trials=<ids>` is required. |
+
 **Submit the diagnostic.**
 
 | file | what it is |
@@ -48,12 +55,12 @@ durable backup every 100 keys, so resubmitting after a wall-clock kill skips wha
 | `diagnose_ceres.sh` | the `sbatch` script for `tools/diagnose_failures.R`. |
 | `submit_diagnose.sh` | queues it. |
 
-**The coupling worth stating:** `submit_diagnose.sh` and `submit_prepare.sh` both read
+**The coupling worth stating:** `submit_diagnose.sh`, `submit_prepare.sh` and `submit_holdout.sh` all read
 `ACCOUNT` out of `submit.local.sh`. So `submit.local.sh` is a prerequisite for every submission
 here, not just the optimizer's — a fresh clone that has only ever run the diagnostic still has
 to create it.
 
-**The three job names are deliberately distinct** — `t3opt`, `t3diag`, `t3prep` — because each
+**The job names are deliberately distinct** — `t3opt`, `t3diag`, `t3prep`, `t3hold` — because each
 wrapper passes `--dependency=singleton`. That serialises repeat submissions of the *same* kind
 (two diagnostics would contend for one node-local cache; two prewarms would fetch the same keys
 twice and flush the durable tree against each other) without letting any of them block a

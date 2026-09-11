@@ -200,9 +200,9 @@ write_report <- function(con, settings) {
              if (n_all > length(cand)) sprintf("  (listing the top %d)", length(cand)) else "",
              if (n_all == 1L) "  ** the field is settled at contender_z; raise it to continue **"
              else if (nu > 0 && all(seen$n_trial >= nu))
-               sprintf(paste0("  ** each has been RUN ON every trial in the %d-trial domain",
-                              " (some runs may have failed); only new configurations can",
-                              " improve the answer **"), nu)
+               sprintf(paste0("  ** each has been run on all %d trials in the domain",
+                              " (some runs may fail); new configurations can",
+                              " change the answer **"), nu)
              else "")
     }),
     # What replication still owes, and whether workers are colliding. `base` is the unrationed
@@ -262,10 +262,10 @@ write_report <- function(con, settings) {
                 fmt_num(stats::median(a$se, na.rm = TRUE), 3))
       }
       c("## Score precision", "```",
-        sprintf("  %-22s %19s %25s %22s %16s %30s", "",
-                "median evals/config", "median accessions/trial",
-                "noise per evaluation", "SE of the mean",
-                "shrunk SE (selects contenders)"),
+        sprintf("  %-22s %18s %17s %17s %14s %14s", "",
+                "med. evals/conf.", "med. acc./trial",
+                "noise per eval.", "SE of the mean",
+                "posterior SD"),
         row("all configurations", NULL),
         if (length(cand)) row(sprintf("top %d contenders", length(cand)), cand),
         "```", "")

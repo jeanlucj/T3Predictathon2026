@@ -91,6 +91,18 @@ mkdir -p "$OPTIMIZER_HOME/state" "$OPTIMIZER_HOME/logs"
 BACKUP="$OPTIMIZER_HOME/state/evals_backup.sqlite"
 STORE="$TMPDIR/t3opt_$(id -un)/evals.sqlite"
 mkdir -p "$(dirname "$STORE")"
+
+# $TMPDIR on Ceres is /tmp -- node-local but NOT per-job -- so a node this user has run on
+# before still holds that job's store. Start from a clean one: the leader restores the durable
+# backup anyway, and backup_store() runs after EVERY evaluation, so the node-local copy holds
+# nothing the backup lacks. All three files, because WAL keeps committed rows in the sidecar
+# until a checkpoint and deleting only the main file leaves a store that is not as empty as it
+# looks. The CACHE beside it is deliberately kept: it is additive and content-keyed, and
+# re-restoring ~11,000 files per job is the cost worth avoiding.
+if [ -e "$STORE" ]; then
+  echo "store     : removing a previous job's store on this node ($STORE)"
+  rm -f "$STORE" "$STORE-wal" "$STORE-shm"
+fi
 echo "store     : $STORE"
 if [ -f "$BACKUP" ]; then
   echo "backup    : $BACKUP ($(sqlite3 "$BACKUP" 'SELECT COUNT(*) FROM evals;' 2>/dev/null || echo '?') rows, merged by the leader)"
