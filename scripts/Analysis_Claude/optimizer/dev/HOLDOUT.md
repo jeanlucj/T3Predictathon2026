@@ -76,7 +76,7 @@ and `--dependency=singleton` therefore neither blocks nor is blocked by `t3opt`.
   self-throttled rsync.
 
 **The caveat is not technical.** While the optimizer runs, the contender set is a moving target:
-a holdout started now tests *"the top 8 as of this moment"*, which may not be the top 8 when the
+a holdout started now tests *the pool as of this moment*, which may not be the pool when the
 optimizer stops. For the manuscript claim, run it after the optimizer finishes. If you run it
 early anyway, record the timestamp — `--report` prints the configurations it used.
 
@@ -140,7 +140,28 @@ The closing **"best optimized vs best seed"** line is descriptive and is *not* t
 maximum over configurations is biased upward, which is the bias this whole exercise exists to
 remove. Section 3 is the result.
 
-Selection defaults to the top-k by **`mean_score`**, not by UCB. `.contenders()`'s UCB rule is an
-*elimination* criterion — "which configurations can I not yet rule out?" — which is right for
-deciding where to spend more evaluations but would admit a merely-uncertain configuration here.
-`--select=ucb` reproduces the report's set.
+## Which configurations get tested — a random sample, never the top k
+
+**Ranking cannot break a tie, and on a small domain almost everything ties.** The BLUP shrinks
+every configuration onto the grand mean, so hundreds can share one `mean_score`. `head(k)` after
+`arrange()` is a *stable* sort and `agg` arrives ordered by `config_hash`, so "the top 8" is
+literally the eight alphabetically-first hashes of the tied set — a sample of the hash function,
+not of the optimized configurations. Testing those would invalidate the comparison.
+
+So the script builds an **eligible pool** and samples it:
+
+| | |
+|---|---|
+| `--select=mean` (default) | configurations tied with the best `mean_score`, within `--tie-tol` |
+| `--select=ucb` | everything not ruled out at `contender_z` — the set the report counts |
+| pool ≤ `--max-equal` (default 20) | **every one of them is tested** |
+| pool > `--max-equal` | a **random** `--max-equal` of them, reproducible via `--seed` |
+
+The pool size is printed either way, and it is diagnostic in its own right: above 50 the script
+says so, because a pool that large means the optimizer has not separated configurations at all —
+evidence about the domain, not a field of good candidates.
+
+`mean` is the default rather than `ucb` because `.contenders()`'s UCB rule is an *elimination*
+criterion — "which configurations can I not yet rule out?" — right for deciding where to spend
+more evaluations, but it would admit a merely-uncertain configuration here. `--select=ucb`
+reproduces the report's set.

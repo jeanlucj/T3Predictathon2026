@@ -15,8 +15,13 @@
 #
 # Options:
 #   --trials=<ids or names>  the HELD-OUT trials. Names are resolved to ids (T3 renames them).
-#   --select=mean|ucb        how the tested configurations are chosen; default `mean`.
-#   --k=8                    how many of them.
+#   --select=mean|ucb        how the eligible pool is defined; default `mean` (tied at the top).
+#                            `ucb` uses everything not ruled out at contender_z.
+#   --max-equal=20           cap on how many INDISTINGUISHABLE configurations to test. At or
+#                            below it every one is tested; above it, a RANDOM sample of this
+#                            many -- the top-k of a tied set is just the hash order.
+#   --seed=1                 the draw's seed, so the sample is reproducible.
+#   --tie-tol=1e-8           how close two mean scores must be to count as tied.
 #   --store=<path>           the optimizer store to read configurations from.
 #   --out=<path>             where results go; default $OPTIMIZER_HOME/state/holdout.sqlite.
 #   --dry-run                resolve and print the grid, evaluate nothing.
@@ -54,7 +59,12 @@ args <- commandArgs(trailingOnly = TRUE)
 opt  <- function(n, d = NULL) { h <- grep(paste0("^--", n, "="), args, value = TRUE)
   if (!length(h)) d else sub(paste0("^--", n, "="), "", h[1]) }
 o_trials <- opt("trials"); o_sel <- opt("select", "mean")
-o_k      <- suppressWarnings(as.integer(opt("k", "8")))
+# The cap on how many indistinguishable configurations to test (the user-facing
+# "test_n_equal_contenders"). Below it, every tied configuration is tested; above it, a random
+# sample -- because an arbitrary slice of a tied set is not a sample of anything.
+o_max    <- suppressWarnings(as.integer(opt("max-equal", opt("k", "20"))))
+o_seed   <- suppressWarnings(as.integer(opt("seed", "1")))
+o_tol    <- suppressWarnings(as.numeric(opt("tie-tol", "1e-8")))
 o_dry    <- "--dry-run" %in% args
 o_report <- "--report"  %in% args
 if (!o_sel %in% c("mean", "ucb")) stop("--select must be `mean` or `ucb`")
@@ -106,12 +116,35 @@ if (length(universe)) slice <- filter_evals_to_universe(slice, universe)
 agg <- aggregate_scores(slice)
 if (!nrow(agg)) stop("no configurations in the optimizer store's own domain/scheme/build slice")
 
-picked <- if (identical(o_sel, "ucb")) {
-  .contenders(agg, s$contender_z %||% 1, k = o_k)
+# THE ELIGIBLE POOL, then a RANDOM sample of it -- never the top-k.
+#
+# Ranking cannot break a tie, and on a small domain almost everything ties: the BLUP shrinks
+# every configuration onto the grand mean, so hundreds share one mean_score. `head(k)` after
+# arrange() is a STABLE sort, and `agg` arrives ordered by config_hash, so "the top 8" is
+# literally the eight alphabetically-first hashes of the tied set. Testing those would not be a
+# sample of the optimized configurations; it would be a sample of the hash function.
+pool <- if (identical(o_sel, "ucb")) {
+  # Everything not ruled out at contender_z -- the same set the report counts, uncapped.
+  .contenders(agg, s$contender_z %||% 1, k = .Machine$integer.max)
 } else {
-  agg |> dplyr::filter(is.finite(mean_score)) |>
-    dplyr::arrange(dplyr::desc(mean_score)) |> head(o_k) |> dplyr::pull(config_hash)
+  okc  <- dplyr::filter(agg, is.finite(mean_score))
+  best <- max(okc$mean_score)
+  okc$config_hash[okc$mean_score >= best - o_tol]
 }
+n_pool <- length(pool)
+if (n_pool > o_max) {
+  set.seed(o_seed)
+  picked <- sort(sample(pool, o_max))    # sorted only for a stable printout; the DRAW is random
+  message(sprintf("pool: %d configuration(s) indistinguishable at the top; testing a RANDOM %d (--seed=%d)",
+                  n_pool, o_max, o_seed))
+} else {
+  picked <- pool
+  message(sprintf("pool: %d configuration(s) indistinguishable at the top; testing all of them",
+                  n_pool))
+}
+if (n_pool > 50)
+  message("  ** a pool this large means the optimizer has not separated configurations at all.\n",
+          "     Read it as evidence about the domain, not as a field of good candidates. **")
 tested <- lapply(picked, function(h) config_from_json(agg$config_json[match(h, agg$config_hash)]))
 names(tested) <- paste0("opt", seq_along(tested))
 seeds <- seed_configs(scheme)
@@ -167,7 +200,11 @@ if (!o_report) {
       length(universe %||% character()), "-trial universe\n", sep = "")
   cat("  grid: ", length(grid_cfg), " configurations x ", length(new_ids), " trials = ",
       length(grid_cfg) * length(new_ids), " evaluations\n", sep = "")
-  cat("  selected by ", o_sel, ": ", length(tested), " optimized + ", length(seeds), " seeds\n", sep = "")
+  cat("  selected by ", o_sel, ": ", length(tested), " optimized (from a pool of ", n_pool,
+      ") + ", length(seeds), " seeds\n", sep = "")
+  if (n_pool > o_max)
+    cat("  the ", length(tested), " are a RANDOM draw from the pool (--seed=", o_seed,
+        "); re-running with the same seed reproduces them\n", sep = "")
   if (o_dry) {
     hr("configurations (dry run -- nothing evaluated)")
     for (i in seq_along(grid_cfg))

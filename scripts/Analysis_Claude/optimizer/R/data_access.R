@@ -340,7 +340,7 @@ trial_catalog <- function(conn, settings) {
         commonCropNames        = settings$crop_name,
         observationVariableDbIds = list(as.character(id)))),
         conn = conn, settings = settings, what = "studies search")
-      janitor::clean_names(dplyr::bind_rows(lapply(search$combined_data, make_row)))
+      janitor::clean_names(dplyr::bind_rows(lapply(.brapi_records(search) %||% list(), make_row)))
     } else {
       .brapi_try(function() T3BrapiHelpers::get_all_trial_meta_data(conn, settings$crop_name),
                  conn = conn, settings = settings, what = "trial metadata")
@@ -599,11 +599,19 @@ get_observations <- function(study_ids, conn, settings) {
         "/observationunits", body = list(studyDbIds = list(sid), pageSize = 100000L)),
         conn = conn, settings = settings, what = "observationunits search"), error = function(e) NULL)
       tb <- dplyr::left_join(.obs_tibble(o_resp, sid), .obsunits_tibble(u_resp), by = "unit_id")
-      # Keep it only when BOTH fetches SUCCEEDED. A transient error returns NULL, which the
-      # tibble builders turn into an empty table -- storing that means "this trial has no
-      # phenotypes" for 30 days (LESSONS #7). A successful but genuinely empty response is a
-      # real answer and is kept.
-      if (is.null(o_resp) || is.null(u_resp)) no_cache(tb) else tb
+      # Keep it only when BOTH fetches came back READABLE. A transient error returns NULL and an
+      # unusual one can return an atomic value; either way the tibble builders yield an empty
+      # table, and storing that means "this trial has no phenotypes" for 30 days (LESSONS #7).
+      # `is.null` alone missed the atomic case -- which is not NULL, so it was being cached.
+      # A readable but genuinely empty response is a real answer and is kept.
+      if (!.brapi_usable(o_resp) || !.brapi_usable(u_resp)) {
+        bad <- c(if (!.brapi_usable(o_resp)) sprintf("/observations (%s)", class(o_resp)[1]),
+                 if (!.brapi_usable(u_resp)) sprintf("/observationunits (%s)", class(u_resp)[1]))
+        .note_geno_once(paste0("obs_unreadable_", sid), sprintf(
+          "trial %s: unreadable response from %s -- NOT cached, will retry",
+          sid, paste(bad, collapse = " and ")))
+        no_cache(tb)
+      } else tb
     })
     all_obs |>
       dplyr::filter(.matches_trait(trait, parts)) |>
@@ -612,14 +620,30 @@ get_observations <- function(study_ids, conn, settings) {
   .progress = "Observations from study ids")
 }
 
+# The records inside a BrAPI search result, or NULL when there are none to read.
+#
+# conn$search() normally returns a LIST whose records sit under $combined_data (LESSONS #5). It
+# can also hand back an ATOMIC value -- a string, NA, a length-1 logical -- and `resp$combined_data`
+# on an atomic vector throws "$ operator is invalid for atomic vectors". That was reaching the
+# caller as an `error` eval, one per affected trial, through get_observations()'s purrr map.
+.brapi_records <- function(resp) {
+  if (!.brapi_usable(resp)) return(NULL)
+  resp$combined_data %||% resp$data
+}
+
+# Can this response be READ at all? Distinct from "is it empty": a genuinely empty result is a
+# real answer worth caching, an unreadable one is a failure that must be retried. is.null() alone
+# does not separate them -- an atomic response is not NULL -- and caching an unreadable answer
+# stores "this trial has no phenotypes" for 30 days, which is LESSONS #7 by another route.
+.brapi_usable <- function(resp) !is.null(resp) && is.list(resp)
+
 # Normalise a /observations response, keeping ALL numeric traits; get_observations() selects
 # the focal one. Records are the nested list under $combined_data, not $data -- LESSONS #5.
 # observationUnitDbId is kept so get_observations() can join rep/block/coordinates.
 .obs_tibble <- function(resp, sid) {
   empty <- tibble::tibble(study_id = character(), germplasm_name = character(),
                           trait = character(), value = numeric(), unit_id = character())
-  if (is.null(resp)) return(empty)
-  recs <- resp$combined_data %||% resp$data
+  recs <- .brapi_records(resp)
   if (is.null(recs) || !length(recs)) return(empty)
   g1 <- function(o, ...) { for (k in c(...)) if (!is.null(o[[k]])) return((o[[k]])[1]); NULL }
   ch <- function(x) as.character(x %||% NA_character_)
@@ -638,8 +662,7 @@ get_observations <- function(study_ids, conn, settings) {
 .obsunits_tibble <- function(resp) {
   empty <- tibble::tibble(unit_id = character(), col = character(), row = character(),
                           rep = character(), block = character())
-  if (is.null(resp)) return(empty)
-  recs <- resp$combined_data %||% resp$data
+  recs <- .brapi_records(resp)
   if (is.null(recs) || !length(recs)) return(empty)
   ch  <- function(x) if (is.null(x) || !length(x)) NA_character_ else as.character(x[[1]])
   lvl <- function(rels, name) {          # levelCode where levelName == name

@@ -63,6 +63,37 @@ for (cls in c("t3_missing_credentials", "t3_bad_credentials")) {
 }
 
 # ===========================================================================
+cat(".brapi_records / .brapi_usable (an ATOMIC response must not throw)\n")
+# Oracle: conn$search() normally returns a list with $combined_data, but an unusual call can
+# return an atomic value -- and `resp$combined_data` on an atomic vector throws
+# "$ operator is invalid for atomic vectors". That reached the store as `error` evals, one per
+# affected trial. Every reader must treat an unreadable response exactly as it treats NULL.
+for (bad in list("some error text", NA, TRUE, 1L, c("a", "b"))) {
+  check(is.null(.brapi_records(bad)),
+        paste0(".brapi_records returns NULL for an atomic response (", class(bad)[1], ")"))
+  check(!.brapi_usable(bad),
+        paste0(".brapi_usable is FALSE for an atomic response (", class(bad)[1], ")"))
+}
+check(is.null(.brapi_records(NULL)) && !.brapi_usable(NULL), "and for NULL")
+check(identical(.brapi_records(list(combined_data = list(1, 2))), list(1, 2)),
+      ".brapi_records reads $combined_data when the response is a list")
+check(identical(.brapi_records(list(data = list(3))), list(3)),
+      "and falls back to $data")
+# A readable but EMPTY response is a real answer, not a failure -- the distinction the caching
+# decision turns on.
+check(.brapi_usable(list(combined_data = list())) && is.null(.brapi_records(list())),
+      "a readable-but-empty response is usable, though it carries no records")
+# The readers must produce an empty tibble rather than raise.
+for (bad in list("boom", NA, NULL)) {
+  o <- tryCatch(.obs_tibble(bad, "t1"), error = function(e) e)
+  check(tibble::is_tibble(o) && nrow(o) == 0,
+        paste0(".obs_tibble returns an empty tibble for ", class(bad)[1], ", never an error"))
+  u <- tryCatch(.obsunits_tibble(bad), error = function(e) e)
+  check(tibble::is_tibble(u) && nrow(u) == 0,
+        paste0(".obsunits_tibble returns an empty tibble for ", class(bad)[1], ", never an error"))
+}
+
+# ===========================================================================
 cat("t3_connect (the startup call that used to have no retry)\n")
 # Oracle: t3_connect is the one call whose failure costs the whole job -- a 10 s connect
 # timeout at relaunch once killed all 22 workers, because it was a bare call while every other
