@@ -27,6 +27,7 @@ Every row is a file in this directory, and every file in this directory has a ro
 | during | `watch_workers.R` | which workers are alive, what is each one evaluating, and has anything died? | trivial; read-only handle on the **live** store | **yes** |
 | during | `watch_memory.sh` | what is the machine as a whole doing right now, per worker pid? | trivial; `ps` plus the OS counters, appends a TSV | **yes** |
 | after | `report_memory.R` | how much memory did evaluations really use, and how many workers fit? Scoped to the current target domain — `--all` for the whole store | trivial; live store, read | **yes** |
+| during | `report_replication.R` | how much work is left before every configuration reaches `config_replication`, and how long at N workers? The answer to "contenders are holding steady but not gaining trials" — the contender tier is served only while this backlog is empty | trivial; copies the store | **yes** |
 | after | `report_timing.R` | where does the wall time go, by kernel and `geno_select`? | trivial; live store, read | **yes** |
 | wrong | `inspect_failures.R` | why did the non-`ok` evaluations fail, according to the stored funnel? | trivial; sidecar copy of the store | **yes** |
 | wrong | `inspect_config.R` | what configuration did a given eval run? | trivial; sidecar copy of the store | **yes** |
