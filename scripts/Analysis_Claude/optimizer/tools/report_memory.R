@@ -15,8 +15,14 @@
 #
 # READ-ONLY: safe to run while the optimizer is going (and in WAL mode a reader never blocks
 # the writers). Run from the optimizer directory:
-#   Rscript tools/report_memory.R                 # the live store
-#   Rscript tools/report_memory.R state/old.sqlite   # an archived one
+#   Rscript tools/report_memory.R                  # the live store, THIS run's domain
+#   Rscript tools/report_memory.R --all            # every row, both domains
+#   Rscript tools/report_memory.R state/old.sqlite # an archived store (positional or --store=)
+#
+# SCOPED TO THE CURRENT TARGET DOMAIN by default. The store outlives a domain, and memory is
+# domain-specific: different trials mean different genotyping projects and different dosage
+# matrices. The workers-that-fit table is driven by the MAXIMUM observed peak, so without this a
+# single heavy evaluation from a retired domain would set the number you size --mem from.
 #
 # For the machine as a whole in real time -- all workers plus everything else on the node --
 # use tools/watch_memory.sh, which needs no restart to attach to a running job.
@@ -29,9 +35,13 @@ options(width = 200)
 # node's $TMPDIR), and guessing would silently report on a stale copy no worker is writing to.
 # On a cluster it falls back to the durable backup, saying so, because the live store is
 # node-local to the job that wrote it.
+# All of R/, not just store.R: the domain/scheme/build filters live in R/optimizer.R and
+# config_from_json() in R/config_space.R. Every file's only source-time dependency is tidyverse,
+# already loaded above, so this costs nothing beyond the parse.
 source(here::here("settings.R"))
-source(here::here("R", "store.R"))
-store_path <- resolve_read_store(commandArgs(trailingOnly = TRUE)[1], "tools/report_memory.R")
+for (f in list.files(here::here("R"), pattern = "[.]R$", full.names = TRUE)) source(f)
+args <- commandArgs(trailingOnly = TRUE)
+store_path <- resolve_read_store(args[1], "tools/report_memory.R")
 
 con <- DBI::dbConnect(RSQLite::SQLite(), store_path)
 have <- DBI::dbListFields(con, "evals")
@@ -43,13 +53,50 @@ if (!("peak_r_mb" %in% have)) {
 }
 # peak_rss_mb postdates peak_r_mb, so a store may have one and not the other.
 has_rss_peak <- "peak_rss_mb" %in% have
+has_build <- "build" %in% have
 e <- DBI::dbGetQuery(con, sprintf("SELECT id, config_json, trial_id, scheme, status, score,
-                                          seconds, peak_r_mb, rss_mb, worker, dosage_budget, ts%s
+                                          seconds, peak_r_mb, rss_mb, worker, dosage_budget, ts%s%s
                                    FROM evals ORDER BY id",
-                                  if (has_rss_peak) ", peak_rss_mb" else ""))
+                                  if (has_rss_peak) ", peak_rss_mb" else "",
+                                  if (has_build) ", build" else ""))
 if (!has_rss_peak) e$peak_rss_mb <- NA_real_
+if (!has_build)   e$build <- NA_character_
+
+# The run's pinned universe, read straight from `runs` -- this script holds a raw DBI handle
+# rather than an open_store() one, so the lookup is done here.
+uni <- NULL
+rid <- run_id_for(settings <- optimizer_settings(), settings$build %||% OPTIMIZER_BUILD)
+if ("runs" %in% DBI::dbListTables(con)) {
+  r <- tryCatch(DBI::dbGetQuery(con, "SELECT universe_json FROM runs WHERE run_id = ?",
+                                params = list(rid)), error = function(err) NULL)
+  if (!is.null(r) && nrow(r))
+    uni <- tryCatch(as.character(jsonlite::fromJSON(r$universe_json[1])$id),
+                    error = function(err) NULL)
+}
 DBI::dbDisconnect(con)
 if (!nrow(e)) stop("the store is empty: ", store_path)
+
+# SIZE FROM THIS DOMAIN. The store is a shared archive and outlives a target domain, so after a
+# switch it holds both. Memory is genuinely domain-specific -- different trials mean different
+# genotyping projects and different dosage matrices -- and the workers-that-fit table below is
+# driven by the MAXIMUM observed peak, so one heavy evaluation from a retired domain would set
+# the number a --mem request is sized from.
+e_all <- e
+if ("--all" %in% args) {
+  cat("--all: every row in the store, both domains\n")
+} else {
+  e <- e_all |> filter_evals_to_scheme(settings$optimize_scheme) |>
+                filter_evals_to_build(settings$build %||% OPTIMIZER_BUILD)
+  if (length(uni)) e <- filter_evals_to_universe(e, uni)
+  cat(sprintf("sizing from %d row(s) in this run's domain/scheme/build; %d more set aside (--all to include)\n",
+              nrow(e), nrow(e_all) - nrow(e)))
+  if (!length(uni))
+    cat("  ** no run row for ", rid, ": could NOT restrict to the pinned universe, only to\n",
+        "     scheme and build. Rows from another domain may still be included. **\n", sep = "")
+  if (!nrow(e))
+    stop("no rows in this run's slice. Use --all to size from the whole store, or check that\n",
+         "  settings.local.R names the domain you mean.")
+}
 
 # One field out of each stored configuration (config_to_json writes plain scalars).
 fld <- function(field) {
