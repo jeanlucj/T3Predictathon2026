@@ -82,7 +82,7 @@ exec sbatch \
   --error="$OPTIMIZER_HOME/logs/hold-%j.err" \
   --nodes=1 \
   --ntasks=12 \
-  --mem=800G \
+  --mem=2000G \
   --time=24:00:00 \
   --export=ALL \
   ${sbatch_args[@]+"${sbatch_args[@]}"} \

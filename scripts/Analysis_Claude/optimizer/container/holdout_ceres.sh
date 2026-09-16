@@ -3,7 +3,7 @@
 #SBATCH --partition=ceres
 #SBATCH --nodes=1
 #SBATCH --ntasks=12
-#SBATCH --mem=800G
+#SBATCH --mem=2000G
 #SBATCH --time=24:00:00
 #SBATCH --account=CHANGEME
 # Relative, a fallback only: submit_holdout.sh passes absolute paths under $OPTIMIZER_HOME/logs.
