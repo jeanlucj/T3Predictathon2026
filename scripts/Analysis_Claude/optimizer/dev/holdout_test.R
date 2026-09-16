@@ -12,8 +12,15 @@
 #   Rscript dev/holdout_test.R --trials=10673,10675,Big6_2026_URB       # evaluate the grid
 #   Rscript dev/holdout_test.R --trials=... --dry-run                   # what it WOULD run
 #   Rscript dev/holdout_test.R --report                                 # analyse what is stored
+#   Rscript dev/holdout_test.R --settings=settings.local.big6.R --trials=...  # one domain of many
 #
 # Options:
+#   --settings=<file>        a domain file (settings.local.XYZ.R) naming the optimizer run whose
+#                            contenders are tested: `settings_override <- list(...)` holding only
+#                            run-defining keys (target_domain, optimize_scheme, build, ...),
+#                            layered over settings.local.R. It must match a run in the store
+#                            exactly, or the script stops and lists the runs that are there.
+#                            Results then go to holdout_XYZ.sqlite, one store per domain.
 #   --trials=<ids or names>  the HELD-OUT trials. Names are resolved to ids (T3 renames them).
 #   --select=mean|ucb        how the eligible pool is defined; default `mean` (tied at the top).
 #                            `ucb` uses everything not ruled out at contender_z.
@@ -23,7 +30,7 @@
 #   --seed=1                 the draw's seed, so the sample is reproducible.
 #   --tie-tol=1e-8           how close two mean scores must be to count as tied.
 #   --store=<path>           the optimizer store to read configurations from.
-#   --out=<path>             where results go; default $OPTIMIZER_HOME/state/holdout.sqlite.
+#   --out=<path>             where results go; default $OPTIMIZER_HOME/state/holdout[_XYZ].sqlite.
 #   --dry-run                resolve and print the grid, evaluate nothing.
 #   --report                 analysis only, no evaluation.
 #
@@ -67,9 +74,13 @@ o_seed   <- suppressWarnings(as.integer(opt("seed", "1")))
 o_tol    <- suppressWarnings(as.numeric(opt("tie-tol", "1e-8")))
 o_dry    <- "--dry-run" %in% args
 o_report <- "--report"  %in% args
+o_settings <- opt("settings")
 if (!o_sel %in% c("mean", "ucb")) stop("--select must be `mean` or `ucb`")
 
-s      <- optimizer_settings()
+s      <- optimizer_settings(extra = if (!is.null(o_settings)) read_domain_settings(o_settings))
+# settings.local.XYZ.R -> "_XYZ": one holdout store per domain, so --report never pools domains.
+dom_tag <- if (is.null(o_settings)) "" else
+  paste0("_", sub("^settings[.]local[.]", "", tools::file_path_sans_ext(basename(o_settings))))
 scheme <- s$optimize_scheme
 hr <- function(t) cat("\n\n", t, "\n", strrep("=", nchar(t)), "\n", sep = "")
 
@@ -85,10 +96,11 @@ o_out <- opt("out")
 if (!is.null(o_out)) {                      # explicit path: single file, caller's problem
   work_db <- o_out; back_db <- NULL
 } else if (!is.null(s$db_backup_path) && nzchar(s$db_backup_path %||% "")) {
-  work_db <- file.path(dirname(s$db_path), "holdout.sqlite")          # node-local, per cluster_scratch_paths
-  back_db <- file.path(dirname(s$db_backup_path), "holdout_backup.sqlite")
+  work_db <- file.path(dirname(s$db_path), paste0("holdout", dom_tag, ".sqlite"))   # node-local, per cluster_scratch_paths
+  back_db <- file.path(dirname(s$db_backup_path), paste0("holdout", dom_tag, "_backup.sqlite"))
 } else {                                    # laptop: one disk, no NFS problem
-  work_db <- file.path(dirname(s$db_path %||% "state/x"), "holdout.sqlite"); back_db <- NULL
+  work_db <- file.path(dirname(s$db_path %||% "state/x"), paste0("holdout", dom_tag, ".sqlite"))
+  back_db <- NULL
 }
 hs <- modifyList(s, list(db_path = work_db, db_backup_path = back_db))
 out_db <- work_db
@@ -107,7 +119,20 @@ src_evals <- read_evals(con_src)
 rid  <- run_id_for(s, s$build %||% OPTIMIZER_BUILD)
 rrow <- tryCatch(read_run(con_src, rid), error = function(e) NULL)
 universe <- run_universe(rrow)
+# No matching run means no universe, and then the slice below would pool every domain in the
+# store and the held-out guard would check nothing -- so stop instead.
+if (is.null(rrow)) {
+  msg <- explain_run_mismatch(con_src, s, s$build %||% OPTIMIZER_BUILD)
+  close_store(con_src)
+  stop(msg, "\n  Pass --settings=settings.local.XYZ.R with the settings of the run you mean.",
+       call. = FALSE)
+}
 close_store(con_src)
+if (!length(universe) && !isTRUE(s$simulate))
+  stop("run ", rid, " has no pinned trial universe, so its domain cannot be isolated.",
+       call. = FALSE)
+if (!is.null(o_settings))
+  message("domain: ", basename(o_settings), " -> run ", rid, " (", length(universe), " trials)")
 
 slice <- src_evals |>
   filter_evals_to_scheme(scheme) |>

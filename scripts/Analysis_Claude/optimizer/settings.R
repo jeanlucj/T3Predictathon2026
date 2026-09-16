@@ -22,9 +22,9 @@ remote_server <- .detect_remote_server()
   if (!file.exists(path)) return(list())
   e <- new.env(parent = globalenv())
   tryCatch(sys.source(path, envir = e),
-           error = function(err) stop("settings.local.R failed to source: ", conditionMessage(err)))
+           error = function(err) stop(basename(path), " failed to source: ", conditionMessage(err)))
   ov <- get0("settings_override", envir = e, ifnotfound = list())
-  if (!is.list(ov)) stop("settings.local.R must define `settings_override` as a list()")
+  if (!is.list(ov)) stop(basename(path), " must define `settings_override` as a list()")
   ov
 }
 
@@ -122,7 +122,9 @@ cluster_scratch_paths <- function(subdir = paste0("t3opt_", Sys.info()[["user"]]
 }
 
 # local_overrides = FALSE returns the tracked defaults only; tests use it.
-optimizer_settings <- function(local_overrides = TRUE) {
+# `extra` (a list, e.g. from read_domain_settings()) is applied last, each key REPLACING the whole
+# value: modifyList would drop NULL fields inside target_domain and change the run_id hash.
+optimizer_settings <- function(local_overrides = TRUE, extra = NULL) {
   if (remote_server && !nzchar(Sys.getenv("OPTIMIZER_HOME")))
     stop("remote mode is on but OPTIMIZER_HOME is not set in the environment. Add it to ",
          ".Renviron and RESTART R (.Renviron is read only at startup), or set ",
@@ -289,6 +291,7 @@ optimizer_settings <- function(local_overrides = TRUE) {
     lock_stale_minutes = 90      # break a lock older than this (its holder died)
   )
   s <- .apply_overrides(defaults, if (isTRUE(local_overrides)) .local_overrides() else list())
+  if (length(extra)) s[names(extra)] <- extra
   # Validate the EFFECTIVE value, so a settings.local.R override is checked too.
   if (length(s$surrogate_method) != 1L ||
       !(s$surrogate_method %in% c("merf", "blocked", "pooled")))

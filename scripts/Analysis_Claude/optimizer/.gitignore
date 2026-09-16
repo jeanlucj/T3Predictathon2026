@@ -10,6 +10,8 @@ logs/*
 .Renviron
 .Rprofile
 settings.local.R
+# Domain files for dev/holdout_test.R --settings=
+settings.local.*.R
 # Working notes, not documentation: EM_COMBINE_COMPARISON.md compares this combiner against a
 # sibling pipeline's. dev/README.md is deliberately TRACKED even though its Open threads
 # section came from the untracked NEXT_STEPS.md -- a fresh clone with no orientation in dev/

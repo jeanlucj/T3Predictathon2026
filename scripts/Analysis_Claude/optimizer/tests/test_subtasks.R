@@ -510,6 +510,43 @@ if (!file.exists(lf)) {
 } else message("  (a real settings.local.R exists -- skipping the end-to-end override check)")
 
 # ===========================================================================
+cat("domain settings files (--settings=) and run matching\n")
+# Oracle: a domain file restating the tracked target_domain, NULL fields included, reproduces the
+# tracked run_id (whole-key replace, not modifyList); only run-defining keys are allowed; a
+# missing file errors; a store whose run differs names the differing key.
+base_s <- optimizer_settings(local_overrides = FALSE)
+df1 <- tempfile("settings.local.", fileext = ".R")
+dput_td <- paste(deparse(base_s$target_domain), collapse = "\n")
+writeLines(paste0("settings_override <- list(target_domain = ", dput_td, ")"), df1)
+dom <- read_domain_settings(df1)
+check(!is.null(names(dom$target_domain)) && "programs" %in% names(dom$target_domain),
+      "read_domain_settings keeps NULL fields of target_domain")
+s_dom <- optimizer_settings(local_overrides = FALSE, extra = dom)
+check(identical(run_id_for(s_dom, "0.0.1"), run_id_for(base_s, "0.0.1")),
+      "a domain file restating the defaults gives the same run_id")
+check(!identical(run_id_for(modifyList(base_s, list(target_domain = dom$target_domain)), "0.0.1"),
+                 run_id_for(base_s, "0.0.1")),
+      "(modifyList would have dropped the NULL fields and changed the run_id)")
+df2 <- tempfile("settings.local.", fileext = ".R")
+writeLines("settings_override <- list(contender_z = 2, db_path = '/tmp/x.sqlite')", df2)
+e2 <- try(read_domain_settings(df2), silent = TRUE)
+check(inherits(e2, "try-error") && grepl("db_path", e2), "a domain file may not set db_path")
+check(inherits(try(read_domain_settings(tempfile(fileext = ".R")), silent = TRUE), "try-error"),
+      "a missing domain file errors")
+rdb <- tempfile(fileext = ".sqlite"); rcon <- open_store(rdb)
+record_run(rcon, run_id_for(base_s, "0.0.1"), base_s, "0.0.1", universe_ids = c("1", "2"))
+s_z <- modifyList(base_s, list(contender_z = (base_s$contender_z %||% 1) + 1))
+check(is.null(read_run(rcon, run_id_for(s_z, "0.0.1"))), "a changed contender_z matches no run")
+msg <- explain_run_mismatch(rcon, s_z, "0.0.1")
+check(grepl("differs in: contender_z$", msg), "explain_run_mismatch names exactly contender_z")
+check(grepl("2 trials", msg), "explain_run_mismatch reports the run's universe size")
+check(grepl("differs in: build", explain_run_mismatch(rcon, base_s, "0.0.2")),
+      "explain_run_mismatch names a build difference")
+check(grepl("\\(none", explain_run_mismatch(rcon, base_s, "0.0.1")),
+      "identical settings show no differing key")
+close_store(rcon); unlink(c(df1, df2, rdb))
+
+# ===========================================================================
 cat("cached() / category-partitioned cache paths\n")
 # Oracle: a cache entry lives at cache/<category>/<category>_<identifier>.rds; reads fall
 # back to the pre-migration FLAT path so an un-migrated cache still hits; writes go nested;

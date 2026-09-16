@@ -5,6 +5,11 @@
 #   ./submit_holdout.sh -- --trials=15633,15636,...        # the held-out grid
 #   ./submit_holdout.sh --time=48:00:00 -- --trials=... --k=12
 #   ./submit_holdout.sh --test-only                        # sbatch's dry run; queues nothing
+#   ./submit_holdout.sh -- --settings=settings.local.big6.R --trials=...   # one domain of several
+#
+# --settings= names a domain file in the optimizer root that picks which run's contenders are
+# tested (see dev/holdout_test.R). It is gitignored like settings.local.R, so copy it to the
+# cluster checkout yourself.
 #
 # Everything before `--` goes to sbatch; everything after it goes to dev/holdout_test.R.
 #

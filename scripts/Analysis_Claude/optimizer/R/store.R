@@ -401,6 +401,48 @@ read_run <- function(con, run_id) {
   if (!nrow(r)) NULL else r[1, , drop = FALSE]
 }
 
+# A domain file (settings.local.XYZ.R) names ONE past run for a tool reading a multi-domain store.
+# It may set only run-defining keys, so it cannot also move the store or cache paths that
+# settings.local.R puts on node-local disk. Pass the result to optimizer_settings(extra = ).
+read_domain_settings <- function(path) {
+  if (!file.exists(path)) stop("no domain settings file at ", path, call. = FALSE)
+  ov <- .local_overrides(path)
+  if (!length(ov)) stop(basename(path), " defines no `settings_override`", call. = FALSE)
+  bad <- setdiff(names(ov), c(.RUN_SIGNATURE_KEYS, "build"))
+  if (length(bad))
+    stop(basename(path), " may set only run-defining keys (",
+         paste(c(.RUN_SIGNATURE_KEYS, "build"), collapse = ", "), "); it also sets: ",
+         paste(bad, collapse = ", "), call. = FALSE)
+  ov
+}
+
+# Why no row in `runs` matches `settings`: every stored run, and the run-defining keys whose
+# JSON differs from `settings`. Keys are serialised as record_run() stores them, wrapped in a
+# named list so a NULL value survives the round trip.
+explain_run_mismatch <- function(con, settings, build) {
+  runs <- tibble::as_tibble(DBI::dbGetQuery(con, "SELECT * FROM runs ORDER BY started_ts"))
+  head <- paste0("no run in the store matches these settings (run_id ",
+                 run_id_for(settings, build), ", build ", build, ").")
+  if (!nrow(runs)) return(paste(head, "The store has no runs at all."))
+  js <- function(x) as.character(jsonlite::toJSON(x, auto_unbox = TRUE, digits = NA,
+                                                  null = "null"))
+  lines <- vapply(seq_len(nrow(runs)), function(i) {
+    r <- runs[i, ]
+    stored <- tryCatch(jsonlite::fromJSON(r$settings_json, simplifyVector = FALSE),
+                       error = function(e) NULL)
+    diff <- if (is.null(stored)) "(settings_json unreadable)" else {
+      d <- .RUN_SIGNATURE_KEYS[vapply(.RUN_SIGNATURE_KEYS, function(k)
+        !(k %in% names(stored)) || !identical(js(settings[k]), js(stored[k])), logical(1))]
+      if (!identical(as.character(r$build), as.character(build))) d <- c(d, "build")
+      if (length(d)) paste(d, collapse = ", ") else "(none -- hash mismatch not explained)"
+    }
+    n_uni <- length(run_universe(r) %||% character())
+    sprintf("  %s  started %s  build %s  scheme %s  %d trials\n      differs in: %s",
+            r$run_id, r$started_ts, r$build, r$scheme, n_uni, diff)
+  }, character(1))
+  paste0(head, "\nRuns in the store:\n", paste(lines, collapse = "\n"))
+}
+
 # The trial ids a run is pinned to. NULL means unconstrained (simulate mode).
 run_universe <- function(row) {
   if (is.null(row) || !nrow(row) || is.na(row$universe_json)) return(NULL)
