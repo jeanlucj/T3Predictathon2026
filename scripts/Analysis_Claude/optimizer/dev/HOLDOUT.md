@@ -175,6 +175,35 @@ a holdout started now tests *the pool as of this moment*, which may not be the p
 optimizer stops. For the manuscript claim, run it after the optimizer finishes. If you run it
 early anyway, record the timestamp — `--report` prints the configurations it used.
 
+## Several domains at once
+
+Yes: submit one job per domain, each with its own `--settings=`, and they run side by side.
+
+```
+./submit_holdout.sh -- --settings=settings.local.24Crk.R --trials=...
+./submit_holdout.sh -- --settings=settings.local.big6.R  --trials=...
+```
+
+The domain tag (`XYZ` from `settings.local.XYZ.R`) is added to everything two jobs could
+otherwise share:
+
+| | without `--settings` | with `settings.local.XYZ.R` |
+|---|---|---|
+| job name | `t3hold` | `t3hold-XYZ` |
+| holdout store and backup | `holdout.sqlite`, `holdout_backup.sqlite` | `holdout_XYZ.sqlite`, `holdout_XYZ_backup.sqlite` |
+| per-copy logs | `holdout_w<N>.out` | `holdout_XYZ_w<N>.out` |
+| cache-ready flag | `state/.holdout_cache_ready` | `state/.holdout_XYZ_cache_ready` |
+
+- **The job name decides what queues.** `--dependency=singleton` holds a job back only while
+  another job with the **same name** runs. So two jobs for one domain run one after the other,
+  as they must since they share a store, and different domains don't wait for each other. A
+  `--job-name=` before `--` still overrides the default.
+- **Keep them on different nodes.** At 2000G each job normally gets a node to itself. Two jobs on
+  one node would share its node-local cache directory, which is the same-node hazard in
+  `docs/LESSONS.md` #24.
+- **Shared, and safe to share:** the optimizer's store (each job reads its own copy) and the
+  durable cache (additive rsync).
+
 ## Where things are written
 
 | | |
@@ -182,7 +211,7 @@ early anyway, record the timestamp — `--report` prints the configurations it u
 | working store | `<dirname of the optimizer's db_path>/holdout.sqlite` — node-local on a cluster |
 | durable backup | `<dirname of db_backup_path>/holdout_backup.sqlite`, written after every evaluation |
 | with `--settings=settings.local.XYZ.R` | `holdout_XYZ.sqlite` and `holdout_XYZ_backup.sqlite` instead |
-| logs | `$LOG_DIR/holdout_w<N>.out`, one per copy |
+| logs | `$LOG_DIR/holdout_w<N>.out` (or `holdout_XYZ_w<N>.out`), one per copy |
 
 **Never the optimizer's store.** Beyond keeping its slice counts clean, this makes it impossible
 for a held-out evaluation to become training data if the target domain is ever widened. The

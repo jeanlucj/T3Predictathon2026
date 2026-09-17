@@ -267,7 +267,8 @@ if (!o_report) {
   # OUR OWN -- settings$cache_ready_file belongs to the optimizer, and a holdout job unlinking it
   # while an optimizer job is starting would be a real cross-job fault.
   ready <- if (!is.null(s$cache_backup_dir) && nzchar(s$cache_backup_dir %||% ""))
-             file.path(dirname(s$db_backup_path %||% "state/x"), ".holdout_cache_ready") else NULL
+             file.path(dirname(s$db_backup_path %||% "state/x"),
+                       paste0(".holdout", dom_tag, "_cache_ready")) else NULL
   w <- suppressWarnings(as.integer(s$worker_id %||% "1")); if (!is.finite(w)) w <- 1L
   if (w == 1L) {
     if (!is.null(ready)) unlink(ready)

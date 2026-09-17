@@ -71,16 +71,26 @@ export SIF="${SIF:-$here/optimizer.sif}"
 # Read by holdout_ceres.sh inside the job; --export=ALL carries it there.
 export HOLD_ARGS="${hold_args[*]-}"
 
+# One job name per domain: --dependency=singleton then serializes jobs for the SAME domain only,
+# and different domains run side by side. A --job-name before `--` still wins (sbatch takes the
+# last one).
+tag=""
+for a in ${hold_args[@]+"${hold_args[@]}"}; do
+  case "$a" in
+    --settings=*) f="$(basename "${a#--settings=}")"; f="${f%.R}"; tag="-${f#settings.local.}" ;;
+  esac
+done
+
 # SLURM does not create the log directory, and a job whose output file cannot be opened dies at
 # launch with the error going nowhere.
 mkdir -p "$OPTIMIZER_HOME/logs"
 
-# --dependency=singleton on a name of its own. Two prewarm jobs would fetch the same keys twice
-# and flush the same durable cache tree against each other; and this must NOT queue behind, or
-# hold up, the t3opt and t3diag jobs, which is what a shared name would do.
+# --dependency=singleton on a name of its own. Two holdout jobs for one domain would share a
+# store and a cache-ready flag; and this must NOT queue behind, or hold up, the t3opt and t3diag
+# jobs, which is what a shared name would do.
 exec sbatch \
   --account="$ACCOUNT" \
-  --job-name=t3hold \
+  --job-name="t3hold${tag}" \
   --dependency=singleton \
   --chdir="$repo" \
   --output="$OPTIMIZER_HOME/logs/hold-%j.out" \

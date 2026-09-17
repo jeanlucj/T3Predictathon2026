@@ -22,6 +22,15 @@ export MKL_NUM_THREADS="$N_THREADS" VECLIB_MAXIMUM_THREADS="$N_THREADS"
 . "./tools/optimizer_paths.sh"
 LOG_DIR="${LOG_DIR:-logs}"; mkdir -p "$LOG_DIR"
 
+# --settings=settings.local.XYZ.R -> "_XYZ", the tag holdout_test.R puts on its store names, so
+# jobs for different domains never write the same log files.
+TAG=""
+for a in "$@"; do
+  case "$a" in
+    --settings=*) f="$(basename "${a#--settings=}")"; f="${f%.R}"; TAG="_${f#settings.local.}" ;;
+  esac
+done
+
 # Seconds between launches, matching run_workers.sh. Not cosmetic: four processes opening one
 # SQLite store within milliseconds contend on open_store()'s `PRAGMA synchronous`, and
 # .with_busy_retry's five attempts can all be exhausted -- which is what makes
@@ -34,17 +43,17 @@ echo "run_holdout.sh: starting $N_WORKERS copy(ies), $N_THREADS BLAS thread(s) e
 PIDS=(); IDS=()
 for i in $(seq 1 "$N_WORKERS"); do
   OPTIMIZER_WORKER="$i" nohup Rscript dev/holdout_test.R "$@" \
-    </dev/null > "$LOG_DIR/holdout_w${i}.out" 2>&1 &
+    </dev/null > "$LOG_DIR/holdout${TAG}_w${i}.out" 2>&1 &
   PIDS+=("$!"); IDS+=("$i")
-  echo "  copy $i -> pid $! -> $LOG_DIR/holdout_w${i}.out"
+  echo "  copy $i -> pid $! -> $LOG_DIR/holdout${TAG}_w${i}.out"
   sleep "$STAGGER"
 done
 
 n_ok=0; n_fail=0
 for k in "${!PIDS[@]}"; do
   if wait "${PIDS[$k]}"; then n_ok=$((n_ok+1)); else n_fail=$((n_fail+1))
-    echo "  --- tail of $LOG_DIR/holdout_w${IDS[$k]}.out ---" >&2
-    tail -n 5 "$LOG_DIR/holdout_w${IDS[$k]}.out" >&2 2>/dev/null || true
+    echo "  --- tail of $LOG_DIR/holdout${TAG}_w${IDS[$k]}.out ---" >&2
+    tail -n 5 "$LOG_DIR/holdout${TAG}_w${IDS[$k]}.out" >&2 2>/dev/null || true
   fi
 done
 echo "run_holdout.sh: $n_ok copy(ies) finished, $n_fail failed"
