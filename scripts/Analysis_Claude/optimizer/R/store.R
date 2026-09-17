@@ -329,6 +329,18 @@ restore_store_from_backup <- function(settings) {
                            AND m.scheme IS   b.scheme)",
     q, paste(sprintf('b."%s"', cols), collapse = ", "))))
 
+  # Run records too: the backup is a VACUUM of this store, so any run not copied here is gone
+  # from the next backup, and with it that domain's pinned universe.
+  runs_ins <- 0L
+  if (nrow(DBI::dbGetQuery(con, "SELECT name FROM bak.sqlite_master
+                                  WHERE type = 'table' AND name = 'runs'"))) {
+    rcols <- intersect(DBI::dbListFields(con, "runs"),
+                       names(DBI::dbGetQuery(con, "SELECT * FROM bak.runs LIMIT 0")))
+    rq <- paste(sprintf('"%s"', rcols), collapse = ", ")
+    runs_ins <- .with_busy_retry(function() DBI::dbExecute(con, sprintf(
+      "INSERT OR IGNORE INTO runs (%s) SELECT %s FROM bak.runs", rq, rq)))
+  }
+
   # Cells present on both sides but computed under different hidden axes -- worth seeing,
   # because both rows describe the same (config, trial, scheme) yet need not agree.
   hidden <- if (all(c("build", "dosage_budget") %in% cols)) {
@@ -339,10 +351,11 @@ restore_store_from_backup <- function(settings) {
            OR IFNULL(m.dosage_budget,-1) != IFNULL(b.dosage_budget,-1)")$n
   } else 0L
 
-  message(sprintf("store restore: +%d row(s) from %s (%d of %d already present%s)",
+  message(sprintf("store restore: +%d row(s) from %s (%d of %d already present%s), +%d run record(s)",
                   ins, src, n_bak - ins, n_bak,
-                  if (hidden > 0) sprintf("; %d differ on build/dosage_budget", hidden) else ""))
-  invisible(list(backup_rows = n_bak, inserted = ins, skipped = n_bak - ins,
+                  if (hidden > 0) sprintf("; %d differ on build/dosage_budget", hidden) else "",
+                  runs_ins))
+  invisible(list(backup_rows = n_bak, inserted = ins, skipped = n_bak - ins, runs_inserted = runs_ins,
                  skipped_hidden_axis = hidden, before = before, after = n_evals(con)))
 }
 

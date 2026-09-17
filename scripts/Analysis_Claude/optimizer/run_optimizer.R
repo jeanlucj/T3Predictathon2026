@@ -175,7 +175,7 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
                   length(pin$universe %||% character())))
   # No worker can be mid-evaluation when the leader starts, so any claim here is left over from
   # a job the scheduler killed. Only matters on a durable db_path: cluster scratch is wiped with
-  # the job, and restore_store_from_backup copies `evals` alone.
+  # the job, and restore_store_from_backup never copies claims.
   if (leader) clear_claims(con)
   # A build that invalidated earlier rows starts with less history than the store suggests.
   # Say so once, loudly, rather than let a silently-empty surrogate look like a fresh start.

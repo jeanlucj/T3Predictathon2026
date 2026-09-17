@@ -32,12 +32,107 @@ grid is fixed before any evaluation starts.
 | the same, inside an allocation you already hold | `./dev/run_holdout.sh 12 1 --trials=<ids>` |
 | see the grid without evaluating anything | `Rscript dev/holdout_test.R --trials=<ids> --dry-run` |
 | read the result | `Rscript dev/holdout_test.R --report` |
+| any of the above, for one domain of several | add `--settings=settings.local.XYZ.R` (below) |
 
 `--report` needs neither the optimizer's store nor T3 — the group of each row is recorded in the
 holdout store — so the analysis runs anywhere, any time after the evaluations.
 
 Everything runs **from the optimizer root**: `.Renviron`, and so the T3 credentials, is read from
 the working directory only.
+
+## Which domain's contenders — `--settings=`
+
+**The contenders are not stored anywhere; every copy works them out again from the optimizer's
+store when it starts.** To do that it must know which optimization run it is looking at, and the
+store may hold several: `evals.sqlite` (and its backup) is an archive of every evaluation ever
+made, across target domains.
+
+The chain:
+
+1. **Settings:** it builds the effective settings.
+2. **Run id:** `run_id_for()` hashes the run-defining ones (`.RUN_SIGNATURE_KEYS` in
+   `R/store.R`: `optimize_scheme`, `target_domain`, `focal_trait_db_id`, `min_trial_acc`, the
+   replication settings, `replicate_every`, `contender_z`, `n_random_init`, `simulate`) plus the
+   build.
+3. **Lookup:** that id is looked up in the store's `runs` table, whose row holds the run's pinned
+   trial universe.
+4. **Filtering:** evaluations are filtered to that scheme, build and universe, and the pool is
+   drawn from what is left.
+
+**By default the settings come from `settings.R` + `settings.local.R`**, i.e. whatever domain
+the checkout is currently set up to optimize. To test a different one without editing
+`settings.R`, write a **domain file** and name it on the command line:
+
+```r
+# settings.local.big6.R  -- in the optimizer root, gitignored
+settings_override <- list(
+  target_domain = list(programs = NULL, years = NULL, locations = NULL,
+                       trials = c("Big6_2023_FRA", "Big6_2023_URB", ...)),
+  optimize_scheme = "CV00",
+  build = "0.8.7"            # only if that run was made under an older build
+)
+```
+
+```
+./submit_holdout.sh -- --settings=settings.local.big6.R --trials=<ids>
+Rscript dev/holdout_test.R --settings=settings.local.big6.R --trials=<ids> --dry-run
+Rscript dev/holdout_test.R --settings=settings.local.big6.R --report
+```
+
+How it is applied:
+
+- **Order:** tracked defaults, then `settings.local.R` (cluster paths, sizing — unchanged), then
+  the domain file.
+- **Each key in the domain file replaces the whole value.** Settings are not merged, so a
+  `target_domain` must be written out in full, `NULL` fields included, exactly as it was when the
+  run was made.
+- **Only run-defining keys are allowed** (the signature keys above, plus `build`). A domain file
+  that sets anything else — `db_path`, `cache_dir`, … — is rejected, so it can never move the
+  store or cache that `settings.local.R` put on node-local disk.
+- **The file is gitignored** (`settings.local.*.R`), so copy it to the cluster checkout yourself,
+  as with `settings.local.R`. The path is relative to the optimizer root.
+
+**Where the domain's trial list comes from.** Two tables are involved:
+- **Evaluations (`evals`)** are the measurements: one row per configuration × trial × scheme.
+- **Run records (`runs`)** hold one row per optimization run: its settings and its domain
+  resolved into T3 trial ids.
+
+The filter keeps any evaluation whose trial is in the list, whichever run produced it; the run
+record only supplies the list. There are two ways to get it:
+
+1. **From the run record (preferred).** Your settings are hashed into a run id and looked up. A
+   single differing key or build gives a different id, so the file must reproduce the run's
+   run-defining settings exactly. On success the script prints
+   `domain: settings.local.big6.R -> run <id> (N trials)`.
+2. **From today's catalogue (fallback).** If no run record matches, the script prints every run
+   in the store and what differs, then resolves `target_domain` against the current T3
+   catalogue, as the optimizer does when a run starts (`resolve_trial_universe()`):
+
+   ```
+   no run in the store matches these settings (run_id e6b5fc4412f0, build 0.8.8).
+   Runs in the store:
+     7d75f214584a  started 2026-09-14 ...  build 0.8.8  scheme CV00  9 trials
+         differs in: target_domain
+     Resolving target_domain against the current T3 catalogue instead.
+   universe: 4 named, 4 samplable
+   domain: settings.local.24Crk.R -> catalogue (no run record) (4 trials)
+   ```
+
+   Trials below `min_trial_acc` are dropped, exactly as for a run. If T3 has renamed a trial
+   since the run, the name is not found and the script **stops** (`domain_not_covered`) rather
+   than use a shorter list. Update the name in the domain file; `dev/check_domain_coverage.R`
+   says why a name was dropped. The domain's *rule* is what counts here, so the other
+   run-defining keys (`contender_z`, replication settings) need not match — but `optimize_scheme`
+   and `build` still pick which evaluations are read.
+
+The store restore copies `runs` along with `evals`, so a run record survives a job restarting
+on a fresh node. Records lost before that fix (`docs/LESSONS.md` #32) are reached through the
+fallback.
+
+The same logic applies **without** `--settings`, using the domain in `settings.R`. It never
+carries on without a trial list: that would pool contenders from every domain in the store and
+leave the "not held out" guard with nothing to check against. A matching run with no trial list
+stops the script, except in simulate mode; so does a missing run record in simulate mode.
 
 ## Choosing the worker count
 
@@ -86,6 +181,7 @@ early anyway, record the timestamp — `--report` prints the configurations it u
 |---|---|
 | working store | `<dirname of the optimizer's db_path>/holdout.sqlite` — node-local on a cluster |
 | durable backup | `<dirname of db_backup_path>/holdout_backup.sqlite`, written after every evaluation |
+| with `--settings=settings.local.XYZ.R` | `holdout_XYZ.sqlite` and `holdout_XYZ_backup.sqlite` instead |
 | logs | `$LOG_DIR/holdout_w<N>.out`, one per copy |
 
 **Never the optimizer's store.** Beyond keeping its slice counts clean, this makes it impossible
@@ -96,9 +192,15 @@ working store is node-local because SQLite's WAL cannot coordinate N writers ove
 A new job restores the backup first, so resubmitting after a wall-clock kill resumes rather than
 repeats.
 
+**One holdout store per domain.** `--report` analyses everything in the store it opens, so results
+for two domains in one file would be pooled into a single comparison. A domain file's name
+therefore selects its own store. Pass the same `--settings=` to `--report` to read it, and keep
+the file name fixed between the evaluation job and the report. `--out=<path>` still overrides
+all of this.
+
 ## Choosing the trials
 
-Any trial **not** in the optimizer's pinned universe; the script hard-stops on one that is, which
+Any trial **not** in the pinned universe of the run chosen above; the script hard-stops on one that is, which
 is the single error that would silently invalidate the result. Names are accepted and resolved to
 ids against the catalogue, because T3 renames trials.
 

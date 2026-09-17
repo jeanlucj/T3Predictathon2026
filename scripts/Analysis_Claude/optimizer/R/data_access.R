@@ -462,6 +462,16 @@ pin_trial_universe <- function(con, conn, settings, leader = TRUE, wait_s = 600)
     return(list(run_id = run_id, universe = run_universe(row), resumed = TRUE))
   }
 
+  u <- resolve_trial_universe(conn, settings)
+  record_run(con, run_id, settings, build, u$ids, u$names,
+             catalog_ts = .trial_catalog_ts(settings))
+  list(run_id = run_id, universe = u$ids, resumed = FALSE)
+}
+
+# The target domain resolved against the CURRENT catalogue into samplable trial ids:
+# list(ids, names). Stops if a named trial is missing or nothing is left. pin_trial_universe()
+# records the result for a run; dev/holdout_test.R uses it directly when no run record matches.
+resolve_trial_universe <- function(conn, settings) {
   cand <- .eligible_trials(conn, settings)
   ids  <- unique(as.character(cand$study_db_id))
   if (!length(ids))
@@ -506,11 +516,7 @@ pin_trial_universe <- function(con, conn, settings, leader = TRUE, wait_s = 600)
   }
   message(sprintf("universe: %d named, %d samplable%s", length(n_acc), length(ids),
                   if (anyNA(n_acc)) sprintf(" (%d unchecked)", sum(is.na(n_acc))) else ""))
-
-  record_run(con, run_id, settings, build, ids,
-             cand$study_name[match(ids, as.character(cand$study_db_id))],
-             catalog_ts = .trial_catalog_ts(settings))
-  list(run_id = run_id, universe = ids, resumed = FALSE)
+  list(ids = ids, names = cand$study_name[match(ids, as.character(cand$study_db_id))])
 }
 
 sample_real_trial <- function(settings, conn, max_tries = 12) {

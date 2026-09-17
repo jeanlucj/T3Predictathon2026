@@ -2285,6 +2285,26 @@ local({
         "scheme is part of the key: the CV0 and CV00 rows both survive")
   close_store(c1)
 
+  # 1b. run records travel with the rows: a past domain's run survives, the work store's own
+  # run is not overwritten, and a second restore adds nothing.
+  bc <- open_store(bakp)
+  record_run(bc, "oldrun", optimizer_settings(), "0.0.1", universe_ids = c("T1", "T2"))
+  record_run(bc, "shared", optimizer_settings(), "0.0.1", universe_ids = "T1")
+  close_store(bc)
+  wr <- tempfile(fileext = ".sqlite"); wc <- open_store(wr)
+  record_run(wc, "shared", optimizer_settings(), "0.0.1", universe_ids = c("T8", "T9"))
+  close_store(wc)
+  rr <- restore_store_from_backup(sset(wr))
+  wc <- open_store(wr)
+  check(identical(run_universe(read_run(wc, "oldrun")), c("T1", "T2")),
+        "restore copies a past run's record and universe")
+  check(identical(run_universe(read_run(wc, "shared")), c("T8", "T9")),
+        "restore leaves the work store's own run record alone")
+  close_store(wc)
+  check(identical(rr$runs_inserted, 1L) &&
+          identical(restore_store_from_backup(sset(wr))$runs_inserted, 0L),
+        "run records are counted and not re-inserted")
+
   # 2. idempotent -- the property that makes it safe for the leader to run every startup.
   r2 <- restore_store_from_backup(sset(w1))
   check(identical(r2$inserted, 0L) && identical(r2$skipped, 4L),

@@ -18,8 +18,9 @@
 #   --settings=<file>        a domain file (settings.local.XYZ.R) naming the optimizer run whose
 #                            contenders are tested: `settings_override <- list(...)` holding only
 #                            run-defining keys (target_domain, optimize_scheme, build, ...),
-#                            layered over settings.local.R. It must match a run in the store
-#                            exactly, or the script stops and lists the runs that are there.
+#                            layered over settings.local.R. Its trial universe comes from the
+#                            matching run record; with none, the script lists the runs that
+#                            are there and resolves target_domain against today's catalogue.
 #                            Results then go to holdout_XYZ.sqlite, one store per domain.
 #   --trials=<ids or names>  the HELD-OUT trials. Names are resolved to ids (T3 renames them).
 #   --select=mean|ucb        how the eligible pool is defined; default `mean` (tied at the top).
@@ -111,6 +112,7 @@ out_db <- work_db
 # after the evaluations.
 grid_cfg <- list(); grid_grp <- character(); tested <- list(); seeds <- list()
 universe <- NULL
+conn <- NULL
 if (!o_report) {
 # Read the optimizer's store through a copy, as the tools do: it may be live.
 src <- resolve_read_store(opt("store"), "dev/holdout_test.R")
@@ -119,20 +121,27 @@ src_evals <- read_evals(con_src)
 rid  <- run_id_for(s, s$build %||% OPTIMIZER_BUILD)
 rrow <- tryCatch(read_run(con_src, rid), error = function(e) NULL)
 universe <- run_universe(rrow)
-# No matching run means no universe, and then the slice below would pool every domain in the
-# store and the held-out guard would check nothing -- so stop instead.
+# Without a universe the slice below would pool every domain in the store and the held-out
+# guard would check nothing. With no matching run record, resolve target_domain against
+# TODAY's catalogue instead; resolve_trial_universe() stops if a named trial is not found.
 if (is.null(rrow)) {
   msg <- explain_run_mismatch(con_src, s, s$build %||% OPTIMIZER_BUILD)
   close_store(con_src)
-  stop(msg, "\n  Pass --settings=settings.local.XYZ.R with the settings of the run you mean.",
-       call. = FALSE)
+  if (isTRUE(s$simulate))
+    stop(msg, "\n  Simulate mode has no catalogue to resolve the domain from.", call. = FALSE)
+  message(msg, "\n  Resolving target_domain against the current T3 catalogue instead.")
+  conn <- t3_connect(s)
+  universe <- resolve_trial_universe(conn, s)$ids
+  dom_src <- "catalogue (no run record)"
+} else {
+  close_store(con_src)
+  if (!length(universe) && !isTRUE(s$simulate))
+    stop("run ", rid, " has no pinned trial universe, so its domain cannot be isolated.",
+         call. = FALSE)
+  dom_src <- paste("run", rid)
 }
-close_store(con_src)
-if (!length(universe) && !isTRUE(s$simulate))
-  stop("run ", rid, " has no pinned trial universe, so its domain cannot be isolated.",
-       call. = FALSE)
-if (!is.null(o_settings))
-  message("domain: ", basename(o_settings), " -> run ", rid, " (", length(universe), " trials)")
+message("domain: ", if (is.null(o_settings)) "settings.R" else basename(o_settings),
+        " -> ", dom_src, " (", length(universe), " trials)")
 
 slice <- src_evals |>
   filter_evals_to_scheme(scheme) |>
@@ -187,10 +196,9 @@ grid_grp <- c(rep("contender", length(tested)), rep("seed", length(seeds)))
 }
 
 # ---- the held-out trials ---------------------------------------------------
-conn <- NULL
 resolve_trials <- function(spec) {
   want <- trimws(strsplit(spec, ",")[[1]])
-  conn <<- t3_connect(s)
+  if (is.null(conn)) conn <<- t3_connect(s)
   cat0 <- trial_catalog(conn, s)
   ids  <- as.character(cat0$study_db_id); nms <- as.character(cat0$study_name)
   out <- vapply(want, function(w) {

@@ -574,3 +574,22 @@ work. `.pid_alive()` is the test, run only when a claim is refused, so the `ps` 
 for on contention rather than on every selection.
 **Lives in.** `R/store.R::claim_eval` / `.purge_dead_claims` / `.pid_alive`,
 `run_optimizer.R::optimizer_step`, `R/optimizer.R::choose_trial`.
+
+### 32. A backup that is a copy of the working store keeps only what the restore brought back
+
+**Trap.** A job on a fresh node starts with an empty node-local store, and
+`restore_store_from_backup()` copied `evals` alone. The next `backup_store()` is a `VACUUM INTO`
+of that store and replaces the backup file. So every restart on a new node dropped the `runs`
+records of all past domains, while their evaluations survived. Nothing noticed until
+`dev/holdout_test.R` was asked for a past domain: its run id was correct, and the store holding
+38,340 evaluations had only the current run's record.
+**Side effect.** Losing the record also meant each chained job pinned its trial universe again
+from the catalogue, so the protection against a mid-run trial rename (the August stall) lasted
+one job, not one run.
+**Generalise.** When a backup is a snapshot of the working copy rather than an accumulating
+archive, the restore must bring back *every* table worth keeping. Anything it skips is deleted
+at the next backup.
+**Recovery.** A record already lost cannot be rebuilt from `evals`; `dev/holdout_test.R`
+resolves the domain from today's catalogue when no record matches (`resolve_trial_universe()`).
+**Lives in.** `R/store.R::restore_store_from_backup`, `R/data_access.R::resolve_trial_universe`,
+`dev/holdout_test.R`.
