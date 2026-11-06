@@ -115,7 +115,7 @@ write_report <- function(con, settings) {
                filter_evals_to_scheme(settings$optimize_scheme) |>
                filter_evals_to_build(settings$build %||% OPTIMIZER_BUILD)
   n_other <- nrow(all_evals) - nrow(evals)
-  agg   <- aggregate_scores(evals)
+  agg   <- aggregate_scores(evals, settings)
   inc   <- incumbent_config(agg, settings$incumbent_min_reps)
 
   ok <- evals |> dplyr::filter(is.finite(score))
@@ -165,9 +165,12 @@ write_report <- function(con, settings) {
              if (isTRUE(is.finite(mins) && mins > 120)) "  ** NOTHING STORED **" else "")
     }),
     # Which estimator ranked the configs and, when the random-effects fit ran, the variance
-    # components. sd_resid stays where lmer puts it -- at unit weight, i.e. n_test = 4, since
-    # the fit uses n_test - 3 as inverse-variance weights. Rescaling it to a typical evaluation
-    # is the Score precision block's job, which does it for two populations rather than one.
+    # components. sd_resid stays where lmer puts it -- at unit weight, since the fit uses
+    # .eval_weight() as inverse-variance weights. Rescaling it to a typical evaluation is the
+    # Score precision block's job, which does it for two populations rather than one.
+    # Read it as a CALIBRATION: at weight_cap = Inf it is the ratio of realised residual scatter
+    # to the Fisher prediction, so 1.0 means n_test - 3 was the whole variance story. It is not
+    # (dev/calibrate_weights.R, LESSONS #36), which is why the cap exists.
     #
     # A missing decomposition is stated, never left blank: no fit also means no `se`, and
     # .contenders() drops every config without one -- so a silent "pooled" here is the visible
@@ -176,10 +179,19 @@ write_report <- function(con, settings) {
       est  <- attr(agg, "estimator") %||% "pooled"
       vc   <- attr(agg, "var_comps")
       note <- attr(agg, "estimator_note")
+      core <- c("sd_trial", "sd_config", "sd_resid")
+      # sd_config is always the fit's own estimate; sd_config_ref appears only when the
+      # shrinkage was re-done on the reference population, so its ABSENCE is the report of a
+      # silent fallback to the fitted value -- which is the thing worth noticing, since the
+      # fitted value is the one that collapses as the search concentrates.
+      ref  <- if (!is.null(vc) && "sd_config_ref" %in% names(vc)) vc[["sd_config_ref"]] else NA
       paste0("- config score estimator: ", est,
-             if (!is.null(vc) && all(is.finite(vc)))
+             if (!is.null(vc) && all(is.finite(vc[core])))
                paste0(sprintf("  (sd_trial %.3f, sd_config %.3f, sd_resid %.3f at unit weight)",
                               vc[["sd_trial"]], vc[["sd_config"]], vc[["sd_resid"]]),
+                      if (is.finite(ref))
+                        sprintf("  shrunk on sd_config %.4f from the reference population", ref)
+                      else "  shrunk on the FITTED sd_config (no reference estimate available)",
                       if (!is.null(note)) paste0("  _fit warned: ", note, "_") else "")
              else paste0("  ** no variance components, and no `se` so contender replication is",
                          " idle: ", note %||% "reason not recorded", " **"))
@@ -187,16 +199,18 @@ write_report <- function(con, settings) {
     # How much is still undecided. 1 means the field is settled at this contender_z; every
     # contender being domain-covered means no further evidence about the leaders is obtainable.
     local({
-      z    <- settings$contender_z %||% 1
-      cand <- .contenders(agg, z, k = 8L)
+      sp   <- .contender_spec(settings)
+      z    <- sp$z
+      cand <- .contenders(agg, z, k = 8L, delta = sp$delta, rule = sp$rule)
       if (!length(cand)) return(NULL)
       # The listed set is capped at 8; the COUNT must not be, or a field of 280 reads as 8.
-      n_all <- length(.contenders(agg, z, k = .Machine$integer.max))
+      n_all <- length(.in_play(agg, z, sp$delta, sp$rule))
       seen <- evals |> dplyr::filter(config_hash %in% cand) |>
         dplyr::group_by(config_hash) |>
         dplyr::summarise(n_trial = dplyr::n_distinct(trial_id), .groups = "drop")
       nu <- length(settings$trial_universe %||% character())
-      paste0("- contenders: ", n_all, " within z = ", z,
+      paste0("- contenders: ", n_all, sprintf(" within %s z = %g, delta = %g",
+                                              sp$rule, z, sp$delta),
              if (n_all > length(cand)) sprintf("  (listing the top %d)", length(cand)) else "",
              if (n_all == 1L) "  ** the field is settled at contender_z; raise it to continue **"
              else if (nu > 0 && all(seen$n_trial >= nu))
@@ -238,14 +252,20 @@ write_report <- function(con, settings) {
     # contender tier no better replicated than the base means contender replication has stalled.
     #
     # `se` here is on the Fisher-z scale, as .blup_scores() produces it, while mean_score is
-    # back-transformed to the correlation scale. At the scores this project sees (r ~ 0.15) the
-    # two differ by ~2%, which is why the report does not convert.
+    # back-transformed to the correlation scale. Printed as it is, DELIBERATELY: it is the
+    # ranking device's own unit, and converting it would make the report disagree with the
+    # setting (`contender_z`) that is denominated in it. The comparison .in_play() makes is NOT
+    # on these two columns -- it forms the interval on z from `z_mean` and transforms the
+    # endpoints -- because mixing the scales there biased the bound in favour of whatever was
+    # already winning (docs/LESSONS.md #43). Read `se` beside `contender_z`, not beside `mean`.
     local({
       vc <- attr(agg, "var_comps")
-      if (is.null(vc) || !all(is.finite(vc)) || !nrow(agg)) return(NULL)
-      cand <- .contenders(agg, settings$contender_z %||% 1, k = 8L)
+      if (is.null(vc) || !all(is.finite(vc[c("sd_trial", "sd_config", "sd_resid")])) ||
+          !nrow(agg)) return(NULL)
+      sp   <- .contender_spec(settings)
+      cand <- .contenders(agg, sp$z, k = 8L, delta = sp$delta, rule = sp$rule)
       # The same weighting the fit applied, from the same function -- see .fisher_weights().
-      w <- .fisher_weights(evals)
+      w <- .fisher_weights(evals, .min_test(settings), .weight_cap(settings))
       row <- function(label, hashes) {
         a  <- if (is.null(hashes)) agg else dplyr::filter(agg, config_hash %in% hashes)
         wi <- if (is.null(hashes)) w else dplyr::filter(w, config_hash %in% hashes)
@@ -292,8 +312,9 @@ write_report <- function(con, settings) {
     # The same rows, one column per contender, so the two tables read as one grid: which of
     # these methods do the leaders actually use? Built from `imp` itself rather than from
     # SUBTASKS, so the rows and their order cannot drift from the table above.
-    z    <- settings$contender_z %||% 1
-    cand <- .contenders(agg, z, k = 8L)
+    sp   <- .contender_spec(settings)
+    z    <- sp$z
+    cand <- .contenders(agg, z, k = 8L, delta = sp$delta, rule = sp$rule)
     if (length(cand)) {
       cc <- agg[match(cand, agg$config_hash), , drop = FALSE]
       # One column per contender: its method for each subtask, looked up per row of `imp`.
@@ -324,7 +345,7 @@ write_report <- function(con, settings) {
         dplyr::group_by(config_hash) |>
         dplyr::summarise(n_try = dplyr::n_distinct(trial_id), .groups = "drop")
       ntry <- att$n_try[match(cc$config_hash, att$config_hash)]
-      vc_l <- attr(agg, "var_comps")
+      vc_l <- attr(agg, "var_comps")[c("sd_trial", "sd_config", "sd_resid")]
       # se_fixed = sd_resid / sqrt(n): the standard error of the mean, which is what "how well
       # do we know this" means. The shrunk se beside it is the ranking device .contenders() uses.
       wl   <- attr(agg, "median_weight") %||% NA_real_
@@ -336,8 +357,8 @@ write_report <- function(con, settings) {
                      vapply(se_fix, fmt_num, character(1), 3), cc$se,
                      cc$n_ok, ifelse(is.na(ntry), "?", ntry))
       lines <- c(lines, "",
-                 sprintf("## Contender methods (top %d by UCB at contender_z = %g)",
-                         length(cand), z),
+                 sprintf("## Contender methods (top %d by UCB, %s rule at contender_z = %g)",
+                         length(cand), sp$rule, z),
                  "```", hdr, body, "",
                  "  n = usable evaluations / trials attempted",
                  leg, "```")

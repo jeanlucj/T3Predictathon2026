@@ -91,7 +91,12 @@ optimizer_step <- function(con, settings, conn = NULL) {
              # 2026-07-31 switch would be averaged together (dev/EM_COMBINE_COMPARISON.md item 1).
              em_df_method  = "effective_n",
              build         = settings$build %||% OPTIMIZER_BUILD,
-             run_id        = settings$run_id %||% NA_character_)
+             run_id        = settings$run_id %||% NA_character_,
+             # WHICH PHASE of choose_config() proposed this configuration. Logged since the
+             # first build, stored only since 2026-11-03: without it the rows picked
+             # independently of the surrogate cannot be told from the rows it picked, and those
+             # are the only unbiased sample of the configuration universe (LESSONS #38).
+             source        = choice$source %||% NA_character_)
   # scores/statuses kept as length-1 vectors so the main-loop logging is unchanged.
   list(source = choice$source, trial = trial$id,
        scores = ev$score, statuses = ev$status, ei = choice$ei %||% NA_real_,

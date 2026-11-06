@@ -74,7 +74,7 @@ evaluate_config_on_trial <- function(cfg, trial, scheme, settings, conn = NULL) 
         .sim_evaluate(cfg, trial, scheme, settings)
       } else {
         preds_obs <- run_pipeline(cfg, trial, scheme, settings, conn)  # R/pipeline.R
-        score_predictions(preds_obs$pred, preds_obs$obs)
+        score_predictions(preds_obs$pred, preds_obs$obs, .min_test(settings))
       }
     },
     error = function(e) {
@@ -103,9 +103,11 @@ evaluate_config_on_trial <- function(cfg, trial, scheme, settings, conn = NULL) 
 }
 
 # Score = correlation of predictions with observed BLUEs over shared accessions.
-# Fails (NA) if fewer than 5 lines overlap or predictions/observations are
-# constant -- matching the Predictathon's "task can fail" rule.
-score_predictions <- function(pred, obs) {
+# Fails (NA) if fewer than `min_test` lines overlap or predictions/observations are constant.
+# `min_test` is settings$min_test_acc, passed in rather than defaulted: this is the gate that
+# decides whether a row EXISTS, and aggregate_scores() applies the same number to decide
+# whether it COUNTS. A default here would let the two drift apart silently.
+score_predictions <- function(pred, obs, min_test) {
   j <- dplyr::inner_join(
     tibble::tibble(germ = names(pred), pred = as.numeric(pred)),
     tibble::tibble(germ = names(obs),  obs  = as.numeric(obs)),
@@ -120,9 +122,10 @@ score_predictions <- function(pred, obs) {
                 reason = sprintf("%d joined, 0 finite (pred non-finite %d, obs non-finite %d)",
                                  nrow(j), nap, nao)))
   }
-  if (nrow(m) < 5) return(list(score = NA_real_, n_test = nrow(m),
-                               status = "too_few_overlap",
-                               reason = sprintf("n<5 (%d joined, %d finite)", nrow(j), nrow(m))))
+  if (nrow(m) < min_test)
+    return(list(score = NA_real_, n_test = nrow(m), status = "too_few_overlap",
+                reason = sprintf("n<%d (%d joined, %d finite)",
+                                 min_test, nrow(j), nrow(m))))
   if (stats::sd(m$pred) == 0 || stats::sd(m$obs) == 0) {
     return(list(score = NA_real_, n_test = nrow(m),
                 status = "constant", reason = "no variance"))

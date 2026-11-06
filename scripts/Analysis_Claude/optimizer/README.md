@@ -148,6 +148,28 @@ diagnostics sanity-check.)
   `CANARY ALARM` in the log, means the build needs a developer's attention
   (`docs/EVALUATION.md`).
 - **Running best** -- the learning curve over evaluation order.
+- **The diagnostic lines above the tables** -- easy to scroll past, and the ones that say
+  whether the search is working:
+  - `config score estimator: blup (sd_trial ..., sd_config ..., sd_resid ... at unit weight)`.
+    If it says `pooled`, read the note after it: no fit means no `se`, which means contender
+    replication is switched off entirely. Divide `sd_resid` by `sqrt(median(n_test) - 3)`
+    before comparing it with the other two.
+  - `contenders: N within racing z = 0.25, delta = 0.002` -- N is the **uncapped** count of
+    configurations that cannot yet be ruled out, and the line names the rule it was computed
+    under. 1 means the field is settled. If N stays in the hundreds while the incumbent's score
+    stops moving, the run is churning (`docs/SEARCH_ALGORITHM.md` §9); if it stays at the whole
+    scored population, `sd_config` has collapsed and §11 is the section to read.
+  - `shrunk on sd_config X from the reference population` on the estimator line -- which
+    `sd_config` the shrinkage actually used. `shrunk on the FITTED sd_config` instead means no
+    reference estimate was available, which is a silent fallback worth noticing
+    (`docs/SEARCH_ALGORITHM.md` §11). There are four reasons for it: too few reference
+    configurations, a design the fit cannot support, a boundary estimate of 0, and an estimate
+    that did not survive resampling.
+  - `src=random_reference` in the iteration log -- the persistent exploration rate (one step in
+    `reference_every`), which keeps the reference population growing after `n_random_init` is
+    spent. If you never see it, check `reference_every`.
+  - `replication backlog: A base, B contender` -- the `base` floor preempts the contender
+    tier, so if A is rarely 0 no configuration is being pinned down.
 
 ## Running several workers
 
@@ -433,6 +455,10 @@ The invocations themselves are environment-specific: **`RUNBOOK_INTERACTIVE.md` 
   time (`arm_evaluation`), run/extend the tests, trace one evaluation, and use the
   validation tooling (the canary oracle, `diagnose_trial`).
 - **`docs/DESIGN.md`** -- the architecture: every function, and where outputs go.
+- **`docs/SEARCH_ALGORITHM.md`** -- how the search itself decides what to evaluate next: terms
+  defined, the variance components, the contender threshold and the top-8 cap, how replication
+  is prioritized, and what "churn" is. Read it before changing any replication knob or
+  diagnosing a run that is not improving.
 - **`docs/BACKGROUND.md`** -- the statistical and data-management challenges and how
   each is addressed.
 - **`RUNBOOK_INTERACTIVE.md`** / **`RUNBOOK_SLURM.md`** -- the do-lists for actually launching
@@ -447,5 +473,5 @@ The invocations themselves are environment-specific: **`RUNBOOK_INTERACTIVE.md` 
   goes, and the ranked open threads.
 - **`container/README.md`** -- building the image and submitting jobs that use it.
 
-`docs/README.md` is a one-line-per-document index of the first four, if you would rather pick
+`docs/README.md` is a one-line-per-document index of the first five, if you would rather pick
 from a list.

@@ -159,23 +159,38 @@ reported as "best seed" — and (b) good building blocks for crossover from
 iteration one, so the search starts near known-decent pipelines instead of from
 noise.
 
-### Denoising: aggregate to a per-configuration mean before fitting the surrogate
-Because each trial is a noisy sample, the surrogate is trained on the **mean score
-per distinct configuration** across all the trials and schemes it has been run on,
-not on raw `(config, trial)` points. This denoises the signal the model learns
-from. A more elaborate alternative — modelling `(config, trial)` jointly with
-trial descriptors as extra features, so the surrogate learns *which configs suit
-which trial types* — is deliberately deferred (see §4); the per-config mean is
-simpler, and the optimum of the mean is precisely the "best pipeline for a random
-trial" we want.
+### Denoising: remove the trial effect before fitting the surrogate
+Because each trial is a noisy sample, the signal the surrogate learns from has to have the
+trial effect taken out of it. The original design did this by collapsing to the **mean score
+per distinct configuration**; since 0.8.x the default instead keeps one row per
+`(config, trial)` and models the trial as a random effect, because collapsing to means throws
+away the replication weighting that says which means are trustworthy (`LESSONS.md` #19). Three
+modes are attempted in order -- **MERF** (trial as a shrunken random effect fitted outside the
+forest), **blocked** (`trial_id` as a forest feature, marginalised at prediction), **pooled**
+(the original per-configuration mean) -- each falling through when it cannot be fitted.
+`SEARCH_ALGORITHM.md` §8.2 is the full description.
+
+What is still deliberately deferred (see §4) is the more elaborate alternative: modelling
+`(config, trial)` jointly with trial **descriptors** as extra features, so the surrogate learns
+*which configs suit which trial types*. The objective remains the optimum of the trial-marginal
+mean, which is precisely the "best pipeline for a random trial" we want.
 
 ### Acquisition and keeping exploration alive
 Candidates are ranked by **Expected Improvement** over the current best mean
 score, which balances "predicted to be good" against "uncertain, worth probing."
-Two safeguards prevent premature convergence: the between-tree uncertainty is
-**floored** (`0.25 × sd(observed scores)`) so a config the trees happen to agree
-on is never treated as known with certainty, and a fraction of the candidate pool
-is always **fresh random** draws, not just elite recombinations.
+Two safeguards are intended to prevent premature convergence: the between-tree uncertainty is
+**floored** (`0.25 × sd(observed scores)`) so a config the trees happen to agree on is never
+treated as known with certainty, and a fraction of the candidate pool is always **fresh
+random** draws, not just elite recombinations.
+
+**Both have been measured failing together.** A floor that binds for *every* candidate gives
+them all the same uncertainty, and EI is then strictly increasing in the predicted mean -- so
+the acquisition is plain greedy exploitation with no exploration term. Since the forest
+systematically predicts lower for fresh random draws than for elite recombinations (the elite
+neighbourhood is where the high observed scores are), the random fraction is then never
+selected. On run `9a2664962c01` the floor bound for 121 of 121 candidates, Spearman(EI,
+predicted mean) was 1.000, and 97% of the 1043 configurations evaluated shared five identical
+continuous parameters. `SEARCH_ALGORITHM.md` §8.3-8.5 has the measurements and the chain.
 
 ### Re-evaluating the incumbent (the noise tax)
 With a noisy objective, the apparent best config may just have had lucky trials.
@@ -186,6 +201,13 @@ means toward the grand mean in proportion to replication; and the reported
 **incumbent must have at least `incumbent_min_reps` successful trials** before it
 can hold the title. This trades a little speed for a trustworthy leader — at the
 default the search covers half as many configurations per evaluation budget.
+
+Two caveats on where that guard does and does not reach. `incumbent_min_reps` is consulted
+**only by the report** (`R/report.R`): the search's own elite set has no replication
+requirement, and neither does the configuration whose score becomes the Expected-Improvement
+reference point. So a single lucky evaluation cannot be *reported* as the incumbent but can
+parent the next candidate pool and raise the bar every candidate is measured against.
+Shrinkage, not `incumbent_min_reps`, is what guards those two.
 
 ### Persistence and resumability: one SQLite table as the single source of truth
 A background job that runs for days must survive being killed. Every evaluation —
@@ -213,7 +235,7 @@ future change to the search space or optimizer.
 
 ### Scoring and failure handling
 `score_predictions()` reproduces the Predictathon metric (Pearson correlation of
-predicted vs observed BLUEs) and its failure rules (fewer than 5 overlapping
+predicted vs observed BLUEs) and its failure rules (fewer than `min_test_acc` overlapping
 accessions, or constant predictions → `NA` with a recorded reason). Failures are
 *stored*, not discarded, so the surrogate can learn to avoid configurations — or
 config/trial-type combinations — that reliably break, rather than blindly
@@ -290,9 +312,13 @@ broken build can run for hours looking like it is working. Three defences:
   spend fewer full evaluations on clearly-bad configs by testing them on cheaper
   proxies (fewer markers, fewer training trials) first. The current loop gives
   every evaluation the full budget.
-- **Parallel evaluation.** `future`/`furrr` are available; several trials/configs
-  could be evaluated concurrently, with the surrogate refit between batches. The
-  current loop is sequential for simplicity and reproducibility.
+- **Batched parallel evaluation.** *Partly done.* Several workers now evaluate concurrently
+  against one shared store, made safe by `claim_eval()` on the `(config, trial, scheme)`
+  triple plus per-worker offsets into the seed, replication and trial backlogs
+  (`README.md`, "Running several workers"). What is still absent is *batching*: each worker
+  refits the surrogate for its own next pick, so there is no notion of proposing a diverse
+  batch and refitting once between batches, and nothing stops N workers picking N
+  near-identical candidates.
 - **Multi-objective.** CV0 and CV00 are scored separately but optimized as one
   mean. If the two scenarios trade off, a Pareto or scalarized multi-objective
   treatment may be preferable.
@@ -313,6 +339,15 @@ broken build can run for hours looking like it is working. Three defences:
   winner's curse). Making individual evaluations more precise would not help; the note below
   sets out what would. Until one of those lands, an incumbent's reported score is an
   optimistic estimate, not evidence that it beats the submissions.
+- **The search can churn, and the contender rule cannot always settle.** Measured on the
+  stored runs: on two of six targets the replication needed before a configuration's own data
+  outweigh the shrinkage prior exceeds the number of trials in the universe, so the contender
+  set cannot narrow however the budget is spent; the top-8 cap displaces candidates on rank
+  rather than eliminating them on evidence, and keeps no memory of having done so; and the
+  Expected-Improvement floor has been observed binding for every candidate at once, which
+  turns the acquisition into plain greedy exploitation and collapses the elite population onto
+  a single lineage. `SEARCH_ALGORITHM.md` §§9-11 and `LESSONS.md` #33 are the full account; the
+  note below is the candidate remedy, and none of it is built.
 - **Real run partially validated.** The real-data path has now been exercised
   against the live BrAPI server: the project-membership layer agrees with the
   independent submission-file anchor on all nine canary trials, the dosage
@@ -326,62 +361,107 @@ broken build can run for hours looking like it is working. Three defences:
 
 Recorded for later; deliberately not built, because the code is complicated enough already.
 The idea is that the optimizer accumulates, evaluation by evaluation, exactly the information
-needed to choose its own replication level and `incumbent_min_reps` — and to decide how far to
+needed to choose its own replication level and `incumbent_min_reps` -- and to decide how far to
 trust an observed mean against the surrogate's prediction.
 
-**The design problem comes first, and it is not replication.** Write an evaluation as
+Every symbol below is defined where it first appears; `SEARCH_ALGORITHM.md` §1 is the full
+glossary if a term is still unfamiliar.
 
-  y_ij = μ + q_i + t_j + e_ij
+**The design problem comes first, and it is not replication.** Write one evaluation as
 
-for configuration *i* on trial *j*: `q_i` is the quality we want to rank, `t_j` is trial
-difficulty, `e_ij` the residual. `optimizer_step()` samples a **fresh** trial for every
-evaluation, so each trial appears essentially once and `t_j` is confounded with `e_ij` —
-not merely large, but *inestimable*. A configuration's observed mean therefore carries the
-mean difficulty of whichever trials it happened to draw, and two configurations evaluated on
-different trials are not directly comparable. That, rather than measurement error, is what the
-three-regime experiment identified as the binding constraint.
+```
+y_ij = mu + q_i + t_j + e_ij
+```
+
+where **`i`** labels a configuration and **`j`** labels the trial it was evaluated on, so
+**`y_ij`** is the score that configuration `i` got on trial `j`. **`mu`** ("mu", the Greek
+letter m) is the overall average score; **`q_i`** is the part attributable to the
+*configuration* -- its quality, which is the thing the search is trying to rank; **`t_j`** is
+the part attributable to the *trial* -- how easy or hard that trial is to predict, which is a
+nuisance here; and **`e_ij`** is everything left over for that particular pairing.
+
+`optimizer_step()` samples a **fresh** trial for every evaluation, so each trial appears
+essentially once. With one observation per trial there is no way to tell `t_j` (this trial is
+hard) apart from `e_ij` (this pairing went badly): the two are **confounded**, meaning not
+merely large but *inestimable* -- no amount of data in that design separates them. A
+configuration's observed mean therefore carries the mean difficulty of whichever trials it
+happened to draw, and two configurations evaluated on different trials are not directly
+comparable. That, rather than measurement error, is what the three-regime experiment identified
+as the binding constraint.
 
 **The cheap fix is a shared trial panel.** Evaluate configurations on a common set of trials
 rather than one fresh trial each. The cost is far lower than it looks: a trial's phenotypes,
 accession lists and dosage matrices are cached on first touch, so the expensive part is paid
-once per *trial*, not once per (config, trial) pair — the marginal cost of a second
-configuration on an already-touched trial is a model fit. Comparisons then become paired,
-`t_j` drops out of the contrast, and the two variance components become estimable by ordinary
-means (`lme4::lmer(score ~ (1|config) + (1|trial))` on the stored table, which already carries
+once per *trial*, not once per (config, trial) pair -- the marginal cost of a second
+configuration on an already-touched trial is a model fit. Comparisons then become **paired**
+(both configurations measured on the same trials), `t_j` cancels out of the difference between
+them, and the variance components become estimable by ordinary means
+(`lme4::lmer(score ~ (1|config) + (1|trial))` on the stored table, which already carries
 `config_hash` and `trial_id`).
 
-**Then the constants follow from the variances.** With paired trials, resolving a quality
-difference Δ between two configurations at level α with power 1−β needs about
+*Partly superseded since this was written.* `trial_replication` already forces each trial to
+carry several configurations, and `aggregate_scores()` fits exactly that model and removes
+`t_j`, so the components **are** now estimated every step and printed in `report.md`. What is
+still missing is the *panel*: trials are shared only incidentally, so two configurations are
+still usually compared across different trial subsets, and `sd_resid` still absorbs the
+`config x trial` interaction, which the design cannot identify at all.
 
-  r ≥ 2 σ²_e (z_{1−α/2} + z_{1−β})² / Δ²
+**Then the constants follow from the variances.** Resolving a quality difference of size
+**`Delta`** (the difference in predictive ability you care about -- say 0.02 in correlation)
+between two configurations needs about
 
-replicates — note σ²_e, not σ²_t + σ²_e, which is the gain pairing buys. `incumbent_min_reps`
-is then whatever *r* corresponds to the Δ actually worth resolving (a difference of 0.02 in
-predictive ability, say). The remaining question is the budget share that equalizes the marginal
-information from replicating a current leader against probing a new configuration; the
-standard treatment is Optimal Computing Budget Allocation (Chen et al. 2000), which allocates
-replicates roughly in proportion to (σ_i/δ_i)² where δ_i is a configuration's distance from the
-best. Racing (F-Race, and `irace`) is the simpler alternative: evaluate a set of candidates on
-a growing common panel and drop those already statistically dominated, which reallocates budget
-without needing the variances up front.
+```
+r  >=  2 * sigma_e^2 * (z_a + z_b)^2 / Delta^2
+```
 
-**Blending the observation with the surrogate** is then an empirical-Bayes shrinkage rather
-than a choice between two numbers:
+**replicates `r`** per configuration, where **`sigma_e^2`** ("sigma squared sub e") is the
+variance of `e_ij` -- the leftover noise of a single evaluation *after* pairing has removed the
+trial effect -- and **`z_a`** and **`z_b`** are the usual normal-distribution constants for the
+error rates you accept: `z_a` for the chance of declaring a difference that is not there
+(1.96 at the conventional 5%) and `z_b` for the chance of missing one that is (0.84 for an
+80% chance of catching it). The thing to notice is that the formula contains `sigma_e^2` alone
+and **not** `sigma_t^2 + sigma_e^2`: dropping the trial variance is exactly the gain pairing
+buys. `incumbent_min_reps` would then be whatever `r` comes out of the `Delta` actually worth
+resolving.
 
-  q̂_i = ( (r_i/σ²_e)·ȳ_i + (1/τ²)·μ̂_i ) / ( r_i/σ²_e + 1/τ² )
+The remaining question is the budget share that equalizes the marginal information from
+replicating a current leader against probing a new configuration. The standard treatment is
+**Optimal Computing Budget Allocation** (OCBA; Chen et al. 2000), which allocates replicates
+roughly in proportion to `(sigma_i / delta_i)^2`, where `sigma_i` is configuration `i`'s own
+noise and `delta_i` is how far its estimate sits from the best one -- so budget flows to
+configurations that are both noisy and close to the top. **Racing** (F-Race, and the `irace`
+package) is the simpler alternative: evaluate a set of candidates on a growing common panel and
+drop those already statistically dominated, which reallocates budget without needing the
+variances up front. Racing is the direct answer to the top-8 cap problem in
+`SEARCH_ALGORITHM.md` §7: it eliminates candidates on evidence instead of displacing them on
+rank.
 
-where μ̂_i is the surrogate's prediction and τ² its residual variance. A configuration seen once
-leans on the model; one seen many times leans on its own data. This attacks the winner's curse
-directly, since a lucky singleton is pulled back toward what the model expects of a
-configuration with its features. One caveat to respect if it is ever built: the surrogate is
-trained on those same observed means, so using its in-sample prediction would double-count the
-luck — the bagged forest makes **out-of-bag** predictions available, and those are what belong
-in the formula.
+**Blending the observation with the surrogate** is then an **empirical-Bayes shrinkage** --
+combining a noisy direct measurement with a model's prediction, weighting each by its own
+precision -- rather than a choice between two numbers:
+
+```
+q_i_hat = ( (r_i / sigma_e^2) * ybar_i  +  (1 / tau^2) * mu_i_hat )
+          / ( r_i / sigma_e^2  +  1 / tau^2 )
+```
+
+where **`ybar_i`** is configuration `i`'s own observed mean over its `r_i` replicates,
+**`mu_i_hat`** is the surrogate's prediction for it, and **`tau^2`** ("tau squared") is the
+surrogate's residual variance -- how wrong its predictions typically are. Each term is weighted
+by its precision (one over its variance), so a configuration seen once leans on the model and
+one seen many times leans on its own data. This attacks the **winner's curse** -- the tendency
+of whatever currently looks best to be partly lucky -- directly, since a lucky singleton is
+pulled back toward what the model expects of a configuration with its features. One caveat to
+respect if it is ever built: the surrogate is trained on those same observed means, so using
+its in-sample prediction would double-count the luck. The bagged forest makes **out-of-bag**
+predictions available -- each tree predicting only the rows its bootstrap sample left out --
+and those are what belong in the formula.
 
 **Order of value, on current evidence:** the shared panel first (it removes the dominant
 variance component and costs little), shrinkage second (it fixes incumbent selection, which is
-where the observed failure was), and tuned replication / `incumbent_min_reps` third — those
-matter mainly once the first two make the remaining variance the limiting factor.
+where the observed failure was), and tuned replication / `incumbent_min_reps` third -- those
+matter mainly once the first two make the remaining variance the limiting factor. Add racing
+fourth, as the replacement for the fixed top-8 contender cap.
 
 ---
 

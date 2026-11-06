@@ -1,0 +1,36 @@
+# File to specify multiple settings to run sequentially
+#
+# How many days to run each setting
+days_per_setting <- 3
+
+setting_file_names_holdouts <- list(
+  list(
+    setting_file_name = "settings.local.24Crk_CV0.R",
+    holdouts = c("24Crk_AY2-3", "23Ferg_AY-3_Yield")
+  ),
+
+  list(
+    setting_file_name = "settings.local.25SVREC_CV0.R",
+    holdouts = c("Big6_2025_SVREC", "Big6_2024_MAS")
+  ),
+
+  list(
+    setting_file_name = "settings.local.YTUrb25_CV0.R",
+    holdouts = c("YT_Urb_25", "YT_Addie_23")
+  ),
+
+  list(
+    setting_file_name = "settings.local.24Crk_CV00.R",
+    holdouts = c("24Crk_AY2-3", "23Ferg_AY-3_Yield")
+  ),
+
+  list(
+    setting_file_name = "settings.local.25SVREC_CV00.R",
+    holdouts = c("Big6_2025_SVREC", "Big6_2024_MAS")
+  ),
+
+  list(
+    setting_file_name = "settings.local.YTUrb25_CV00.R",
+    holdouts = c("YT_Urb_25", "YT_Addie_23")
+  )
+)

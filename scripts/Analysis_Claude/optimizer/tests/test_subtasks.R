@@ -529,16 +529,83 @@ check(!identical(run_id_for(modifyList(base_s, list(target_domain = dom$target_d
       "(modifyList would have dropped the NULL fields and changed the run_id)")
 df2 <- tempfile("settings.local.", fileext = ".R")
 writeLines("settings_override <- list(contender_z = 2, db_path = '/tmp/x.sqlite')", df2)
+check(!inherits(try(read_domain_settings(local({
+        f <- tempfile("settings.local.", fileext = ".R")
+        writeLines("settings_override <- list(run_identity = 'experiment', contender_z = 2)", f)
+        f })), silent = TRUE), "try-error"),
+      "a domain file may set run_identity and the policy keys of a past experiment-mode run")
 e2 <- try(read_domain_settings(df2), silent = TRUE)
 check(inherits(e2, "try-error") && grepl("db_path", e2), "a domain file may not set db_path")
 check(inherits(try(read_domain_settings(tempfile(fileext = ".R")), silent = TRUE), "try-error"),
       "a missing domain file errors")
+# --- run identity: a run as a TARGET or as an EXPERIMENT ---------------------
+# Oracle: which settings define a run is a choice, and run_identity makes it. Under "target"
+# only the keys that change what a stored row MEANS identify the run, so policy can be retuned
+# and the evidence keeps accumulating; under "experiment" every policy change starts a new run.
+local({
+  tgt <- modifyList(base_s, list(run_identity = "target"))
+  exp <- modifyList(base_s, list(run_identity = "experiment"))
+  id  <- function(x) run_id_for(x, "0.0.1")
+  for (k in list(contender_z = 2, n_random_init = 99L, trial_replication = 7L,
+                 config_replication = 5L, replicate_every = 9L)) NULL
+  for (nm in c("contender_z", "n_random_init", "trial_replication",
+               "config_replication", "replicate_every")) {
+    bump <- setNames(list(if (is.numeric(base_s[[nm]])) base_s[[nm]] + 1 else 2), nm)
+    check(identical(id(modifyList(tgt, bump)), id(tgt)),
+          sprintf("target identity ignores %s -- policy does not start a new run", nm))
+    check(!identical(id(modifyList(exp, bump)), id(exp)),
+          sprintf("experiment identity rotates on %s", nm))
+  }
+  for (nm in c("optimize_scheme", "focal_trait_db_id", "min_trial_acc")) {
+    alt <- setNames(list(if (identical(nm, "optimize_scheme"))
+                           setdiff(base_s$schemes, base_s$optimize_scheme)[1]
+                         else paste0(base_s[[nm]], "X")), nm)
+    check(!identical(id(modifyList(tgt, alt)), id(tgt)),
+          sprintf("but target identity DOES rotate on %s -- the row would mean something else",
+                  nm))
+  }
+  check(!identical(id(tgt), id(exp)),
+        "switching the reading rotates run_id once, because the two hashes differ")
+  check(identical(id(modifyList(tgt, list(run_identity = "nonsense"))), id(tgt)),
+        "an unrecognised run_identity reads as target, the recoverable default")
+  # The keys themselves: target is a strict subset, and run_identity is in NEITHER -- it selects
+  # the signature, so including it would make the identity depend on how it is computed.
+  check(all(.RUN_SIGNATURE_KEYS_TARGET %in% .RUN_SIGNATURE_KEYS) &&
+        length(.RUN_SIGNATURE_KEYS_TARGET) < length(.RUN_SIGNATURE_KEYS),
+        "the target signature is a strict subset of the experiment one")
+  check(!("run_identity" %in% .RUN_SIGNATURE_KEYS),
+        "and run_identity is not itself run-defining")
+  check(setequal(union(.RUN_SIGNATURE_KEYS_TARGET, .RUN_SIGNATURE_KEYS_POLICY),
+                 .RUN_SIGNATURE_KEYS),
+        "target and policy keys partition the full signature")
+})
+
 rdb <- tempfile(fileext = ".sqlite"); rcon <- open_store(rdb)
-record_run(rcon, run_id_for(base_s, "0.0.1"), base_s, "0.0.1", universe_ids = c("1", "2"))
-s_z <- modifyList(base_s, list(contender_z = (base_s$contender_z %||% 1) + 1))
-check(is.null(read_run(rcon, run_id_for(s_z, "0.0.1"))), "a changed contender_z matches no run")
+base_x <- modifyList(base_s, list(run_identity = "experiment"))
+record_run(rcon, run_id_for(base_x, "0.0.1"), base_x, "0.0.1", universe_ids = c("1", "2"))
+s_z <- modifyList(base_x, list(contender_z = (base_x$contender_z %||% 1) + 1))
+check(is.null(read_run(rcon, run_id_for(s_z, "0.0.1"))),
+      "under experiment identity a changed contender_z matches no run")
 msg <- explain_run_mismatch(rcon, s_z, "0.0.1")
 check(grepl("differs in: contender_z$", msg), "explain_run_mismatch names exactly contender_z")
+# Oracle: the same change under TARGET identity resumes the run instead, and the mismatch
+# explainer -- if asked about something else -- names the policy difference as non-identifying,
+# so a resumed run never looks like it matched by accident.
+local({
+  tdb <- tempfile(fileext = ".sqlite"); tcon <- open_store(tdb)
+  bt <- modifyList(base_s, list(run_identity = "target"))
+  record_run(tcon, run_id_for(bt, "0.0.1"), bt, "0.0.1", universe_ids = c("1", "2"))
+  zt <- modifyList(bt, list(contender_z = (bt$contender_z %||% 1) + 1))
+  r <- read_run(tcon, run_id_for(zt, "0.0.1"))
+  check(!is.null(r), "under target identity the same change RESUMES the run")
+  check(identical(run_universe(r), c("1", "2")),
+        "and inherits its pinned trial universe, so no evidence is scoped out")
+  m <- explain_run_mismatch(tcon, modifyList(zt, list(optimize_scheme = "nope")), "0.0.1")
+  check(grepl("policy, not identifying", m) && grepl("contender_z", m),
+        "and a mismatch report names the policy difference as non-identifying")
+  check(grepl("run_identity target", m), "and states which reading it used")
+  close_store(tcon); unlink(tdb)
+})
 check(grepl("2 trials", msg), "explain_run_mismatch reports the run's universe size")
 check(grepl("differs in: build", explain_run_mismatch(rcon, base_s, "0.0.2")),
       "explain_run_mismatch names a build difference")
@@ -647,44 +714,44 @@ unlink(.ctmp, recursive = TRUE)
 cat("score_predictions\n")
 # Oracle: correlation of a vector with a positive affine transform of itself is 1.
 obs <- setNames(c(1, 2, 3, 4, 5, 6), letters[1:6])
-r <- score_predictions(setNames(2 * obs + 10, names(obs)), obs)
+r <- score_predictions(setNames(2 * obs + 10, names(obs)), obs, 5L)
 check(r$status == "ok" && r$n_test == 6 && approx(r$score, 1), "self-correlation = 1")
 # Oracle: a negative transform gives -1.
-r <- score_predictions(setNames(-obs, names(obs)), obs)
+r <- score_predictions(setNames(-obs, names(obs)), obs, 5L)
 check(approx(r$score, -1), "negated = -1")
 # Oracle: only shared accession names are joined (extras on each side ignored).
 p <- c(a = 1, b = 2, c = 3, d = 4, e = 5, f = 6, z = 99)   # z not in obs
 o <- c(obs, y = 99)                                         # y not in pred
-r <- score_predictions(p, o)
+r <- score_predictions(p, o, 5L)
 check(r$n_test == 6, "join keeps only shared names")
 # Oracle: fewer than 5 overlapping accessions is a defined failure.
-r <- score_predictions(c(a = 1, b = 2, c = 3, d = 4), obs)
+r <- score_predictions(c(a = 1, b = 2, c = 3, d = 4), obs, 5L)
 check(is.na(r$score) && r$status == "too_few_overlap", "n<5 -> too_few_overlap")
 # Oracle: constant predictions have no variance -> defined failure.
-r <- score_predictions(setNames(rep(5, 6), names(obs)), obs)
+r <- score_predictions(setNames(rep(5, 6), names(obs)), obs, 5L)
 check(is.na(r$score) && r$status == "constant", "constant pred -> constant")
 
 # Oracle: a JOIN THAT SUCCEEDED but whose values are all non-finite is a MODELLING failure,
 # not a coverage one, and must not hide behind too_few_overlap. Both used to report
 # n_test = 0 (it is counted after the finite filter), which made them indistinguishable in
 # the store -- and sent a real 2026-07-31 investigation down two wrong paths.
-r <- score_predictions(setNames(rep(NaN, 6), names(obs)), obs)
+r <- score_predictions(setNames(rep(NaN, 6), names(obs)), obs, 5L)
 check(r$status == "non_finite" && r$n_test == 0,
       "names join but predictions are all NaN -> non_finite, not too_few_overlap")
 check(grepl("pred non-finite 6", r$reason), "the reason names the side that went non-finite")
-r <- score_predictions(setNames(2 * obs, names(obs)), setNames(rep(Inf, 6), names(obs)))
+r <- score_predictions(setNames(2 * obs, names(obs)), setNames(rep(Inf, 6), names(obs)), 5L)
 check(r$status == "non_finite" && grepl("obs non-finite 6", r$reason),
       "non-finite OBSERVATIONS are reported as such, not blamed on the predictions")
 
 # Oracle: nothing joined at all stays too_few_overlap -- that IS a coverage problem.
-r <- score_predictions(c(x = 1, y = 2, z = 3), obs)
+r <- score_predictions(c(x = 1, y = 2, z = 3), obs, 5L)
 check(r$status == "too_few_overlap" && r$n_test == 0,
       "no shared names -> still too_few_overlap (a coverage problem)")
 check(grepl("0 joined", r$reason), "too_few_overlap now records how many joined vs stayed finite")
 
 # Oracle: a partial non-finite set still scores when >=5 finite pairs survive.
 p_part <- setNames(2 * obs, names(obs)); p_part["a"] <- NA
-r <- score_predictions(p_part, obs)
+r <- score_predictions(p_part, obs, 5L)
 check(r$status == "ok" && r$n_test == 5, "one NaN prediction drops that line, the rest score")
 
 # ===========================================================================
@@ -1002,7 +1069,7 @@ focal10 <- paste0("f", 1:10)
 need_bp <- union(paste0("t", 1:60), focal10)
 pl <- list(train_only = tr_only, focal_covering = fo_some)
 
-check(identical(.best_panel(pl, need_bp), pl$train_only),
+check(identical(.best_panel(pl, need_bp, NULL, 5L, 20L), pl$train_only),
       ".best_panel with focal = NULL keeps the old max-union behaviour (train_only wins)")
 check(identical(.best_panel(pl, need_bp, focal10, min_test = 5, min_train = 20),
                 pl$focal_covering),
@@ -1490,8 +1557,10 @@ dbpR <- tempfile(fileext = ".sqlite"); conR <- open_store(dbpR)
 sR   <- modifyList(optimizer_settings(), list(simulate = TRUE, optimize_scheme = "CV00"))
 ridR <- run_id_for(sR, "0.0.0")
 check(identical(ridR, run_id_for(sR, "0.0.0")), "run_id_for is stable for the same settings")
-check(!identical(ridR, run_id_for(modifyList(sR, list(trial_replication = 9)), "0.0.0")),
-      "run_id_for changes when a search-defining setting changes")
+check(!identical(ridR, run_id_for(modifyList(sR, list(optimize_scheme = "CV0")), "0.0.0")),
+      "run_id_for changes when a TARGET-defining setting changes")
+check(identical(ridR, run_id_for(modifyList(sR, list(trial_replication = 9)), "0.0.0")),
+      "and not when a policy setting changes, under the default target identity")
 check(identical(ridR, run_id_for(modifyList(sR, list(worker_id = "7")), "0.0.0")),
       "run_id_for ignores per-worker settings")
 check(is.null(read_run(conR, ridR)), "read_run: no row before the run is recorded")
@@ -1535,6 +1604,10 @@ close_store(con2); unlink(dbp2)
 
 # ===========================================================================
 cat("aggregate_scores: trial-adjusted config estimates (incumbent + elites)\n")
+# aggregate_scores() takes its usability floor from settings$min_test_acc. These fixtures all
+# use n_test >= 50, so the floor is not what they are testing; it is named explicitly so the
+# oracles do not move when settings.R's default does.
+ts <- list(min_test_acc = 10L, weight_cap = 50)
 # Oracle (the point of the change): a config that drew EASY trials must not outrank a better
 # config that drew HARD ones. Trials differ ~2x more than configs on the real store, so the
 # raw mean is confounded with which trials a config happened to get.
@@ -1544,8 +1617,8 @@ blup_ev <- tibble::tibble(
   trial_id    = c("hard1","hard2","easy1","easy2","hard1","easy1","hard2","easy2"),
   score       = c(0.30,0.32, 0.38,0.40, 0.22,0.44, 0.20,0.42),
   n_test      = 200L, config_json = "{}")
-agg_raw  <- aggregate_scores(blup_ev, adjust_trial = FALSE)
-agg_adj  <- aggregate_scores(blup_ev, adjust_trial = TRUE)
+agg_raw  <- aggregate_scores(blup_ev, ts, adjust_trial = FALSE)
+agg_adj  <- aggregate_scores(blup_ev, ts, adjust_trial = TRUE)
 check(identical(attr(agg_raw, "estimator"), "pooled"), "adjust_trial = FALSE keeps the pooled estimator")
 check(identical(attr(agg_adj, "estimator"), "blup"),   "adjust_trial = TRUE uses the BLUP estimator")
 rawA <- agg_raw$mean_score[agg_raw$config_hash == "cA"]
@@ -1570,14 +1643,215 @@ local({
   real <- .blup_scores
   # Shadow it in the global env, where aggregate_scores resolves it, so the fit does exactly
   # what it does now AND warns on the way out.
-  .blup_scores <<- function(evals) { r <- real(evals); warning("simulated convergence grumble"); r }
+  .blup_scores <<- function(evals, ...) { r <- real(evals, ...)
+                                          warning("simulated convergence grumble"); r }
   on.exit(.blup_scores <<- real, add = TRUE)
-  a <- aggregate_scores(blup_ev)
+  a <- aggregate_scores(blup_ev, ts)
   check(identical(attr(a, "estimator"), "blup"), "a warned fit is still used")
-  check(all(is.finite(attr(a, "var_comps"))), "and its variance components survive")
+  check(all(is.finite(attr(a, "var_comps")[c("sd_trial", "sd_config", "sd_resid")])),
+        "and its variance components survive")
   check(all(is.finite(a$se)), "and `se` arrives, without which .contenders() is empty")
   check(grepl("grumble", attr(a, "estimator_note") %||% ""),
         "and the warning is recorded for the report")
+})
+
+cat("sd_config from the reference population, not from what the search chose\n")
+# Oracle for the whole of .reference_hashes / .reference_sd_config / the pinned re-shrink.
+#
+# The regime being repaired: the search concentrates, so the configurations evaluated LATE are
+# near-identical, the fitted sd_config measures THEIR spread, and the shrinkage prior tightens
+# because the search succeeded. Built here on purpose -- 20 random-draw configurations with a
+# real spread, then 20 "acquisition" configurations that are all the same configuration effect.
+local({
+  set.seed(11)
+  nt <- 8L; tr <- sprintf("t%d", seq_len(nt)); teff <- rnorm(nt, 0, 0.50)
+  mk_rows <- function(hashes, effs, src) {
+    g <- expand.grid(i = seq_along(hashes), ti = seq_len(nt))
+    g <- g[sample(nrow(g), round(0.45 * nrow(g))), , drop = FALSE]
+    tibble::tibble(config_hash = hashes[g$i], trial_id = tr[g$ti],
+                   score = tanh(effs[g$i] + teff[g$ti] + rnorm(nrow(g), 0, 0.15)),
+                   n_test = 60L, config_json = "{}", source = src)
+  }
+  ref <- mk_rows(sprintf("r%02d", 1:20), rnorm(20, 0, 0.20), "random_init")   # spread 0.20
+  nar <- mk_rows(sprintf("a%02d", 1:20), rep(0.30, 20), "acquisition")        # no spread at all
+  ev  <- dplyr::bind_rows(ref, nar) |> dplyr::mutate(id = dplyr::row_number(),
+                                                     ts = sprintf("2026-01-%02d", 1 + id %% 28))
+  st  <- function(...) optimizer_settings(extra = c(list(reference_min_configs = 10L), list(...)))
+  w   <- .fisher_weights(ev, 10, 50)
+
+  rh <- .reference_hashes(w, st())
+  check(setequal(rh, sprintf("r%02d", 1:20)),
+        "the reference population is exactly the configs whose FIRST row was a random draw")
+  check(!any(grepl("^a", rh)), "and never a surrogate-chosen one")
+
+  # Oracle: seeds are excluded. They are five hand-picked submissions, not a sample of the
+  # space, so their spread would inflate the estimate rather than describe the universe.
+  sh <- vapply(seed_configs(optimizer_settings()$optimize_scheme), config_hash, character(1))
+  with_seeds <- dplyr::bind_rows(
+    tibble::tibble(config_hash = sh, trial_id = tr[1], score = 0.5, n_test = 60L,
+                   config_json = "{}", source = NA_character_),
+    dplyr::mutate(ev, source = NA_character_)) |>
+    dplyr::mutate(id = dplyr::row_number(), ts = sprintf("2026-01-%02d", 1 + id %% 28))
+  rh2 <- .reference_hashes(.fisher_weights(with_seeds, 10, 50), st(n_random_init = 25L))
+  check(!any(sh %in% rh2), "with no `source` column the arrival-order fallback still drops seeds")
+  check(length(rh2) == 25L, "and takes n_random_init of them")
+
+  s_ref <- .reference_sd_config(w, st())
+  v_all <- attr(.blup_scores(w), "var_comps")[["sd_config"]]
+  check(is.finite(s_ref) && s_ref > v_all,
+        sprintf("the reference estimate (%.3f) exceeds the whole-population one (%.3f), which the
+                 narrow acquisition cluster pulled down", s_ref, v_all))
+
+  a_fit <- aggregate_scores(ev, st(sd_config_source = "fitted"))
+  a_ref <- aggregate_scores(ev, st(sd_config_source = "reference"))
+  vf <- attr(a_fit, "var_comps"); vr <- attr(a_ref, "var_comps")
+  check(!("sd_config_ref" %in% names(vf)),
+        "sd_config_source = fitted leaves var_comps as the three-element vector readers expect")
+  check(identical(as.numeric(vr[["sd_config_ref"]]), as.numeric(s_ref)),
+        "and the reference run records WHICH sd_config the shrinkage used")
+  check(identical(as.numeric(vr[["sd_config"]]), as.numeric(vf[["sd_config"]])),
+        "while sd_config itself still reports the fit own estimate, so the number never changes meaning")
+  # The point of the whole exercise: a looser prior shrinks less. Tested with the pin against
+  # ITSELF at two values, because switching sd_config_source switches the se ESTIMATOR as well
+  # as the prior -- lmer postVar unpinned, the analytic formula pinned -- and on a design this
+  # thin the formula difference (~8% low) can outweigh a modest prior difference. See the
+  # re-shrink comment in .blup_scores(); on the real runs the prior difference is 3x and
+  # dominates easily.
+  b1 <- .blup_scores(w, sd_config_pin = s_ref)
+  b2 <- .blup_scores(w, sd_config_pin = 2 * s_ref)
+  check(stats::median(b2$se) > stats::median(b1$se),
+        "at the same estimator, doubling the pinned sd_config leaves a larger posterior SD")
+  check(stats::sd(b2$blup) > stats::sd(b1$blup),
+        "and spreads the BLUPs further from the grand mean -- less shrinkage")
+  check(stats::sd(a_ref$mean_score, na.rm = TRUE) > stats::sd(a_fit$mean_score, na.rm = TRUE),
+        "and the BLUPs are spread wider rather than collapsed onto the grand mean")
+  check(length(.in_play(a_ref, 0.25, 0, "racing")) >= length(.in_play(a_fit, 0.25, 0, "racing")),
+        "so more configurations survive the contender test at the same z")
+
+  # Oracle: it DECLINES rather than pinning a useless value. A boundary zero would shrink every
+  # BLUP exactly onto the grand mean -- strictly worse than the fitted estimate it replaced --
+  # and the three routes to "no estimate" are all taken. Every reference configuration scoring
+  # identically within a trial is the boundary case: the only variance left is the trial's.
+  gg   <- expand.grid(i = 1:20, ti = seq_len(nt))
+  flat <- tibble::tibble(config_hash = sprintf("r%02d", gg$i), trial_id = tr[gg$ti],
+                         score = tanh(teff[gg$ti]), n_test = 60L, config_json = "{}",
+                         source = "random_init", id = seq_len(nrow(gg)), ts = "2026-01-01")
+  fw <- .fisher_weights(flat, 10, 50)
+  check(identical(attr(suppressWarnings(.blup_scores(fw)), "var_comps")[["sd_config"]], 0),
+        "the constructed reference population really does fit sd_config to the boundary")
+  check(is.na(.reference_sd_config(fw, st())),
+        "a boundary estimate of 0 yields NA, never a pin that would flatten every BLUP")
+  check(is.na(.reference_sd_config(w, st(reference_min_configs = 500L))),
+        "too few reference configurations also yields NA")
+
+  # --- the stability gate --------------------------------------------------
+  # Oracle: the reference estimate becomes a FIXED prior with no allowance for its own
+  # uncertainty, so an estimate that depends on which configurations happened to be drawn must
+  # be refused. Built here as a reference population with one row per configuration: the fit can
+  # run and may return something non-zero, but nothing about it survives resampling.
+  thin <- tibble::tibble(config_hash = sprintf("z%02d", 1:24),
+                         trial_id = tr[1 + (1:24) %% nt],
+                         score = tanh(rnorm(24, 0, 0.2)), n_test = 60L, config_json = "{}",
+                         source = "random_init", id = 1:24, ts = "2026-01-01")
+  tw <- .fisher_weights(thin, 10, 50)
+  set.seed(4)
+  gated   <- .reference_sd_config(tw, st(reference_min_configs = 10L))
+  ungated <- .reference_sd_config(tw, st(reference_min_configs = 10L,
+                                         reference_stability_draws = 0L))
+  check(is.na(gated),
+        "a reference estimate that does not survive resampling is refused")
+  check(is.na(gated) || !identical(gated, ungated),
+        "and the gate is what refuses it -- not the floors, which this population passes")
+  check(identical(.reference_sd_config(w, st(reference_stability_draws = 0L)),
+                  .reference_sd_config(w, st())),
+        "a population that IS stable passes the gate unchanged, so it costs nothing when sound")
+  check(is.numeric(ungated) || is.na(ungated),
+        "reference_stability_draws = 0 disables the gate rather than erroring")
+  # The verdict has to be a function of the EVIDENCE, not of where the RNG happens to be: a
+  # re-rolled random decision flips the pinned prior between iterations on unchanged data.
+  set.seed(1); a1 <- .reference_sd_config(tw, st(reference_min_configs = 10L))
+  set.seed(9); a2 <- .reference_sd_config(tw, st(reference_min_configs = 10L))
+  check(identical(a1, a2),
+        "the gate's verdict is seeded from the reference set, so it does not change with the RNG")
+  before <- { set.seed(11); runif(1); .Random.seed }
+  set.seed(11); runif(1); invisible(.reference_sd_config(tw, st(reference_min_configs = 10L)))
+  check(identical(before, .Random.seed),
+        "and it restores the caller's RNG stream, so seeding it steals no draws from the search")
+  one <- dplyr::filter(w, trial_id == tr[1])
+  check(is.na(.reference_sd_config(one, st())),
+        "and a reference population the fit cannot support (one trial) yields NA")
+  check(identical(attr(suppressWarnings(aggregate_scores(flat, st())), "estimator"), "blup"),
+        "in every case the run keeps its fitted estimate without the fit failing")
+
+  # --- the pin must change the PRIOR and not the estimator -----------------
+  # Oracle: pinning at the fit own sd_config must reproduce lme4 output exactly. If it does
+  # not, then switching sd_config_source switches the se ESTIMATOR as well as the prior and the
+  # two settings are not comparable -- which is what the first implementation did, by
+  # recomputing from trial-adjusted deviations with an analytic form that ignores the
+  # uncertainty in the trial effects and runs a few percent low.
+  v0  <- attr(.blup_scores(w), "var_comps")[["sd_config"]]
+  u0  <- .blup_scores(w)
+  u1  <- .blup_scores(w, sd_config_pin = v0)
+  check(identical(attr(u1, "pin_route"), "rescaled"),
+        "a non-zero fitted sd_config takes the rescaling route")
+  check(isTRUE(all.equal(u1$se, u0$se)) && isTRUE(all.equal(u1$z_mean, u0$z_mean)),
+        "pinning at the fitted value reproduces lme4 se and estimate EXACTLY")
+  u2 <- .blup_scores(w, sd_config_pin = 2 * v0)
+  check(all(u2$se > u0$se) && stats::sd(u2$z_mean) > stats::sd(u0$z_mean),
+        "and a looser pin raises every se and spreads the estimates -- less shrinkage")
+  check(is.null(attr(u0, "pin_route")), "no pin leaves pin_route unset")
+
+  # Oracle: at a BOUNDARY fit there is nothing to rescale -- every effect is 0 or a rounding
+  # artefact of 0 -- so the effects are recomputed from the trial-adjusted deviations. This is
+  # the case the whole feature exists for: with se = 0 everywhere, every configuration ties at
+  # the maximum and the contender rule puts the entire population in play at any z.
+  #
+  # The construction is a Latin square in (config, trial) with no RNG at all: every
+  # configuration meets every residual value exactly once, so the configuration means are
+  # identical BY CONSTRUCTION and sd_config is exactly 0 up to floating point, while the
+  # residual variance stays well away from it. A random draw with a true zero effect reaches
+  # the boundary only most of the time, which is not a test.
+  K  <- 6L
+  vv <- c(-0.5, -0.3, -0.1, 0.1, 0.3, 0.5)
+  tt <- c(0, 0.4, -0.3, 0.2, -0.5, 0.1)
+  gz <- expand.grid(ci = seq_len(K), tj = seq_len(K))
+  sq <- tibble::tibble(config_hash = sprintf("q%d", gz$ci), trial_id = sprintf("q_t%d", gz$tj),
+                       score = tanh(tt[gz$tj] + vv[((gz$ci + gz$tj) %% K) + 1L]),
+                       n_test = 60L, config_json = "{}", source = "random_init",
+                       id = seq_len(nrow(gz)), ts = "2026-01-01")
+  qw <- .fisher_weights(sq, 10, 50)
+  q0 <- suppressWarnings(.blup_scores(qw))
+  qv <- attr(q0, "var_comps")
+  check(abs(qv[["sd_config"]]) < 1e-12 && qv[["sd_resid"]] > 0.1,
+        "the Latin square fits sd_config to the boundary with the residual variance intact")
+  check(max(abs(q0$z_mean - mean(q0$z_mean))) < 1e-12,
+        "so every configuration estimate ties at the grand mean")
+  qa <- tibble::tibble(config_hash = q0$config_hash, mean_score = q0$blup, se = q0$se,
+                       z_mean = q0$z_mean)
+  check(length(.in_play(qa, 0.25, 0.002, "racing")) == nrow(qa),
+        "and the whole population is in play, at any z -- the rule has nothing to read")
+  q1 <- suppressWarnings(.blup_scores(qw, sd_config_pin = 0.05))
+  check(identical(attr(q1, "pin_route"), "recomputed"),
+        "a boundary fit takes the recomputing route, not the rescaling one")
+  check(all(is.finite(q1$se)) && all(q1$se > 0),
+        "which supplies the standard errors the boundary fit could not")
+  # Oracle for the conditioning test specifically. A REML boundary returns 6e-17, not 0, so a
+  # route chosen on `sdf > 0` would rescale -- and rescaling multiplies a deviation of 0 by a
+  # factor of 1e30-odd. `se` would still come out right, because it is proportional either way,
+  # while every estimate stayed tied: a silent failure. The route is chosen on R, not on sdf.
+  check(qv[["sd_config"]] > 0,
+        "the boundary estimate is strictly positive, so `sdf > 0` would NOT have caught it")
+
+  # --- tagged_only: an inference is good enough to ESTIMATE from, not to SPEND on ----
+  untagged <- dplyr::mutate(ev, source = NA_character_)
+  uw <- .fisher_weights(untagged, 10, 50)
+  check(length(.reference_hashes(uw, st())) > 0L,
+        "with no `source` the arrival-order fallback still yields a reference population")
+  check(length(.reference_hashes(uw, st(), tagged_only = TRUE)) == 0L,
+        "but tagged_only refuses to infer it, so no evaluation is spent on a guess")
+  check(setequal(.reference_hashes(w, st(), tagged_only = TRUE),
+                 .reference_hashes(w, st())),
+        "and on tagged rows the two agree, since the tag is then available")
 })
 
 # Oracle: when the design cannot support the fit, the REASON is recorded rather than nothing.
@@ -1585,7 +1859,7 @@ local({
   one_each <- tibble::tibble(               # one config per trial -> trial effect unidentifiable
     config_hash = c("a", "b"), trial_id = c("t1", "t2"), score = c(0.3, 0.4),
     n_test = c(50L, 50L), config_json = c("{}", "{}"))
-  a <- aggregate_scores(one_each)
+  a <- aggregate_scores(one_each, ts)
   check(identical(attr(a, "estimator"), "pooled"), "it falls back to pooled")
   check(grepl("not separable", attr(a, "estimator_note") %||% ""),
         "and names the reason -- the report prints this instead of a bare 'pooled'")
@@ -1597,7 +1871,7 @@ shrink_ev <- tibble::tibble(
   trial_id    = c(paste0("t", 1:8), "t1", paste0("t", 1:8)),
   score       = c(rep(0.45, 8), 0.45, rep(0.05, 8)),
   n_test      = 200L, config_json = "{}")
-sa <- aggregate_scores(shrink_ev, adjust_trial = TRUE)
+sa <- aggregate_scores(shrink_ev, ts, adjust_trial = TRUE)
 if (identical(attr(sa, "estimator"), "blup")) {
   gm <- mean(sa$mean_score, na.rm = TRUE)
   d_many <- abs(sa$mean_score[sa$config_hash == "many"] - gm)
@@ -1609,44 +1883,72 @@ if (identical(attr(sa, "estimator"), "blup")) {
 # Oracle: every fallback path returns the pooled estimate rather than erroring.
 one_cfg_per_trial <- tibble::tibble(config_hash = c("a","b","c"), trial_id = c("t1","t2","t3"),
                                     score = c(0.2,0.3,0.4), n_test = 100L, config_json = "{}")
-fb <- aggregate_scores(one_cfg_per_trial, adjust_trial = TRUE)
+fb <- aggregate_scores(one_cfg_per_trial, ts, adjust_trial = TRUE)
 check(identical(attr(fb, "estimator"), "pooled"),
       "one config per trial is unidentifiable -> falls back to pooled")
 check(all(is.finite(fb$mean_score)), "the fallback still produces finite scores")
 single <- tibble::tibble(config_hash = "a", trial_id = "t1", score = 0.3,
                          n_test = 100L, config_json = "{}")
-check(identical(attr(aggregate_scores(single), "estimator"), "pooled"),
+check(identical(attr(aggregate_scores(single, ts), "estimator"), "pooled"),
       "a single row falls back to pooled without error")
-check(nrow(aggregate_scores(single[0, ])) == 0, "an empty slice returns an empty tibble")
+check(nrow(aggregate_scores(single[0, ], ts)) == 0, "an empty slice returns an empty tibble")
 
 # ===========================================================================
-cat("aggregate_scores: Fisher-z pooling weighted by n_test\n")
+cat("aggregate_scores: Fisher-z pooling weighted by n_test, capped at weight_cap\n")
 # Oracle: a score is a correlation, so a 5-accession one is nearly pure noise while a
 # 200-accession one is informative. Pooling must reflect that -- an unweighted mean of
 # r = 0.9 (n=5) and r = 0.3 (n=200) is 0.6, which is badly wrong.
 mkev <- function(scores, ns) tibble::tibble(
   config_hash = "H", config_json = "{}", score = scores, n_test = as.integer(ns))
-a1 <- aggregate_scores(mkev(c(0.9, 0.3), c(5, 200)), min_n_test = 0L)
+# weight_cap = Inf is the textbook Fisher weight n_test - 3, pinned exactly so the cap below is
+# measured against something fixed rather than against whatever settings.R currently says.
+a1 <- aggregate_scores(mkev(c(0.9, 0.3), c(5, 200)), min_test = 0L, weight_cap = Inf)
 check(abs(a1$unweighted - 0.6) < 1e-8, "aggregate_scores keeps the old unweighted mean alongside")
-check(a1$mean_score < 0.35 && a1$mean_score > 0.29,
-      "Fisher-z weighting: n=5 r=0.9 barely moves an n=200 r=0.3 (pools near 0.3)")
+check(abs(a1$mean_score - 0.310596) < 1e-5,
+      "uncapped Fisher weighting: n=5 r=0.9 barely moves an n=200 r=0.3 (pools near 0.3)")
 
-# Equal n must reproduce the unweighted mean (in z space), so the change is a no-op when
-# every evaluation is equally precise.
-a2 <- aggregate_scores(mkev(c(0.4, 0.2), c(50, 50)), min_n_test = 0L)
-check(abs(a2$mean_score - tanh(mean(atanh(c(0.4, 0.2))))) < 1e-8,
-      "equal n_test -> plain mean of the z-transformed scores")
+# The cap is a CEILING on one evaluation's weight: 1/w = 1/(n-3) + 1/cap. It exists because
+# n_test - 3 assumes sampling error is the only error, and config x trial interaction does not
+# shrink with the trial (LESSONS #36). Its visible effect is to give the SHORT evaluation more
+# relative say -- here the weight ratio falls from 98x to 21x and the pool moves 0.31 -> 0.35.
+a1c <- aggregate_scores(mkev(c(0.9, 0.3), c(5, 200)), min_test = 0L, weight_cap = 50)
+check(abs(a1c$mean_score - 0.347862) < 1e-5,
+      "weight_cap = 50 lifts the pool toward the short evaluation (0.311 -> 0.348)")
+check(a1c$mean_score > a1$mean_score,
+      "capping can only move the pool TOWARD the lower-n score, never away")
+# A cap at or below the smallest raw weight flattens the weights entirely.
+a1f <- aggregate_scores(mkev(c(0.9, 0.3), c(5, 200)), min_test = 0L, weight_cap = 1e-6)
+check(abs(a1f$mean_score - tanh(mean(atanh(c(0.9, 0.3))))) < 1e-4,
+      "a cap far below every raw weight reduces the pool to the unweighted z-mean")
+check(is.infinite(.eval_weight(NA_real_, Inf)) == FALSE && .eval_weight(NA_real_, 50) < 1,
+      "an NA n_test keeps the minimum weight rather than being dropped")
+
+# Equal n must reproduce the unweighted mean (in z space), so the weighting is a no-op when
+# every evaluation is equally precise -- with or without the cap, since it scales them together.
+for (cp in c(Inf, 50)) {
+  a2 <- aggregate_scores(mkev(c(0.4, 0.2), c(50, 50)), min_test = 0L, weight_cap = cp)
+  check(abs(a2$mean_score - tanh(mean(atanh(c(0.4, 0.2))))) < 1e-8,
+        paste0("equal n_test -> plain mean of the z-transformed scores (cap ", cp, ")"))
+}
 
 # atanh(+-1) is Inf; the clamp must keep a perfect correlation finite.
-a3 <- aggregate_scores(mkev(c(1, -1), c(40, 40)), min_n_test = 0L)
+a3 <- aggregate_scores(mkev(c(1, -1), c(40, 40)), min_test = 0L, weight_cap = 50)
 check(is.finite(a3$mean_score), "r = +-1 does not produce Inf through atanh")
 
 # The floor drops scores too small to inform, without dropping the ROW from n.
-a4 <- aggregate_scores(mkev(c(0.9, 0.3), c(5, 200)), min_n_test = 10L)
+a4 <- aggregate_scores(mkev(c(0.9, 0.3), c(5, 200)), min_test = 10L, weight_cap = 50)
 check(abs(a4$mean_score - 0.3) < 1e-8 && a4$n == 2 && a4$n_ok == 1,
-      "min_n_test drops the low-n score from the pool but still counts the row")
-check(is.na(aggregate_scores(mkev(c(0.9), c(5)), min_n_test = 10L)$mean_score),
+      "min_test drops the low-n score from the pool but still counts the row")
+check(is.na(aggregate_scores(mkev(c(0.9), c(5)), min_test = 10L,
+                             weight_cap = 50)$mean_score),
       "a config with only sub-floor scores gets mean_score = NA")
+
+# Neither threshold may come from a local default: both govern two estimators now.
+check(inherits(try(aggregate_scores(mkev(0.5, 100L)), silent = TRUE), "try-error"),
+      "aggregate_scores refuses to invent a floor or a cap when given no settings")
+check(abs(aggregate_scores(mkev(0.5, 100L), min_test = 0L,
+                           weight_cap = 50)$mean_score - 0.5) < 1e-8,
+      "an explicit floor and cap need no settings object")
 
 # ===========================================================================
 cat("filter_evals_to_build (retire rows a later build invalidated)\n")
@@ -1966,7 +2268,7 @@ cA <- sample_config(); hA <- config_hash(cA)
 put(cA, "simtrial_910", score = 0.5)
 bl <- function(st = cset()) {
   e <- filter_evals_to_scheme(read_evals(con7), st$optimize_scheme)
-  unlist(.replication_backlog(e, aggregate_scores(e), st), use.names = FALSE)
+  unlist(.replication_backlog(e, aggregate_scores(e, ts), st), use.names = FALSE)
 }
 check(hA %in% bl(), "a config with 1 of 2 evaluations is in the replication backlog")
 check(identical(choose_config(con7, cset())$source, "replicate"),
@@ -1982,7 +2284,7 @@ put(cA, "simtrial_911", score = 0.4)
 check(!(hA %in% unlist(.replication_backlog(
           filter_evals_to_scheme(read_evals(con7), "CV00"),
           local({ e <- filter_evals_to_scheme(read_evals(con7), "CV00")
-                  a <- aggregate_scores(e); a$se <- NA_real_; a }),   # no SEs -> no contenders
+                  a <- aggregate_scores(e, ts); a$se <- NA_real_; a }),   # no SEs -> no contenders
           cset()))),
       "at config_replication evaluations and not a contender, it leaves the backlog")
 
@@ -1991,7 +2293,7 @@ put(cB, "simtrial_912")
 check(!(config_hash(cB) %in% unlist(.replication_backlog(
           filter_evals_to_scheme(read_evals(con7), "CV00"),
           local({ e <- filter_evals_to_scheme(read_evals(con7), "CV00")
-                  a <- aggregate_scores(e); a$se <- NA_real_; a }),
+                  a <- aggregate_scores(e, ts); a$se <- NA_real_; a }),
           cset(cr = 1)))),
       "config_replication = 1 leaves a once-evaluated config out of the backlog")
 # A row under the OTHER scheme must not count toward the tally.
@@ -2029,11 +2331,11 @@ local({
   cX <- sample_config(); hX <- config_hash(cX)
   for (t in c("E1", "E2")) store_eval(cx, cX, t, "CV00", 0.3, 40L, "ok", build = OPTIMIZER_BUILD)
   ex <- read_evals(cx)
-  ax <- local({ a <- aggregate_scores(ex); a$se <- 0.5; a })      # force it to be a contender
+  ax <- local({ a <- aggregate_scores(ex, ts); a$se <- 0.5; a })  # force it to be a contender
   check(hX %in% unlist(.replication_backlog(ex, ax, es, universe = c("E1","E2","E3"))),
         "a contender with 2 of 3 eligible trials is still in the backlog")
   store_eval(cx, cX, "E3", "CV00", 0.3, 40L, "ok", build = OPTIMIZER_BUILD)
-  ex <- read_evals(cx); ax <- local({ a <- aggregate_scores(ex); a$se <- 0.5; a })
+  ex <- read_evals(cx); ax <- local({ a <- aggregate_scores(ex, ts); a$se <- 0.5; a })
   check(!(hX %in% unlist(.replication_backlog(ex, ax, es, universe = c("E1","E2","E3")))),
         "once it covers the whole domain it is dropped, contender or not")
   check(hX %in% unlist(.replication_backlog(ex, ax, es, universe = NULL)),
@@ -2108,9 +2410,16 @@ local({
   sf <- tempfile(); file.create(sf)                    # a STOP left behind by the last job
   st <- base(sf)
   invisible(capture.output(run_optimizer(st), type = "message"))
-  cn <- open_store(st$db_path); n <- n_evals(cn); close_store(cn); unlink(st$db_path)
+  cn <- open_store(st$db_path); n <- n_evals(cn)
+  # optimizer_step must thread choose_config()'s phase into the row, not just into the log.
+  src <- read_evals(cn)$source
+  close_store(cn); unlink(st$db_path)
   check(n == 3L, "a stale stop-file does not halt the next run")
   check(!file.exists(sf), "and the leader clears it")
+  check(length(src) == 3L && !any(is.na(src)),
+        "optimizer_step records a source on every row it writes")
+  check(all(grepl("^seed:|^random|^acquisition|^replicate$", src)),
+        "the recorded source is a choose_config phase name")
 
   # Still stops when the file appears mid-run: written from the report hook, which the loop
   # calls after every iteration.
@@ -2155,6 +2464,62 @@ local({
   unlink(st$db_path)
 })
 
+cat("the reference population keeps growing: a persistent rate, and replication for it\n")
+# Oracle for Phase 3b and the reference-replication tier. n_random_init is a one-time gate on a
+# cumulative count, so without these two the reference population is frozen at whatever the
+# first n_random_init configurations could support, and its sd_config estimate never improves.
+local({
+  st <- function(...) optimizer_settings(extra = c(list(simulate = TRUE), list(...)))
+  mk_ev <- function(n, src = "acquisition")
+    tibble::tibble(config_hash = sprintf("c%03d", seq_len(n)), config_json = "{}",
+                   trial_id = "t1", score = 0.2, n_test = 60L, status = "ok",
+                   scheme = "CV00", source = src, id = seq_len(n),
+                   ts = sprintf("2026-01-%02d", 1 + seq_len(n) %% 28))
+
+  # The cadence: 1 step in `reference_every`, keyed on the row count plus the worker index
+  # exactly as replicate_every is, so one worker alternates over time rather than clustering.
+  fires <- function(every, worker, rows)
+    vapply(rows, function(n) (n + worker) %% every == 0L, logical(1))
+  f <- fires(20L, 1L, 1:200)
+  check(sum(f) == 10L, "reference_every = 20 fires on a tenth of 200 steps... at one worker")
+  check(all(diff(which(f)) == 20L), "and the firings are evenly spaced, not clustered")
+  check(sum(fires(20L, 2L, 1:200)) == 10L && !identical(fires(20L, 2L, 1:200), f),
+        "a second worker fires as often but on different steps -- no lockstep")
+
+  # Oracle: it is OFF at 0 and 1, which is what lets the frozen behaviour be restored.
+  check(identical(.contender_spec(list())$rule, "racing"))   # settings plumbing is live
+  for (off in c(0L, 1L))
+    check(!(off >= 2L), sprintf("reference_every = %d disables the persistent draw", off))
+
+  # Oracle: reference configurations earn extra evaluations through the RATIONED tier, never
+  # the unrationed floor -- a reference floor in `base` would preempt everything else.
+  ev <- mk_ev(6, src = "random_init") |>
+    dplyr::bind_rows(mk_ev(6, src = "random_init") |>
+                       dplyr::mutate(id = id + 100L))    # 2 evaluations each
+  s_on  <- st(config_replication = 2L, reference_replication = 4L, reference_every = 0L)
+  s_off <- st(config_replication = 2L, reference_replication = 0L, reference_every = 0L)
+  agg_n <- local({ a <- aggregate_scores(ev, s_on); a$se <- NA_real_; a })  # no contenders
+  bl_on  <- .replication_backlog(ev, agg_n, s_on)
+  bl_off <- .replication_backlog(ev, agg_n, s_off)
+  check(length(bl_on$base) == 0L && length(bl_off$base) == 0L,
+        "a config at config_replication is off the unrationed floor either way")
+  check(length(bl_on$extra) == 6L,
+        "with reference_replication above the floor, the 6 reference configs earn more")
+  check(length(bl_off$extra) == 0L,
+        "and with it at 0 they do not -- the tier is empty when nothing is a contender")
+  # Oracle: the tag is required. On untagged rows the arrival-order inference would make most of
+  # a small store look like the reference population, so spending is gated on the recorded tag.
+  check(length(.replication_backlog(dplyr::mutate(ev, source = NA_character_),
+                                    agg_n, s_on)$extra) == 0L,
+        "untagged rows earn no reference replication, however they arrived")
+  # Oracle: once a reference config reaches reference_replication it leaves the tier, so the
+  # target is a floor and not an ever-rising demand.
+  ev4 <- dplyr::bind_rows(ev, dplyr::mutate(ev, id = id + 1000L))   # 4 evaluations each
+  check(length(.replication_backlog(ev4, local({ a <- aggregate_scores(ev4, s_on)
+                                                 a$se <- NA_real_; a }), s_on)$extra) == 0L,
+        "at reference_replication evaluations a reference config leaves the tier")
+})
+
 # --- contenders and the trial schedule --------------------------------------
 local({
   mk <- function(score, se) tibble::tibble(config_hash = paste0("h", seq_along(score)),
@@ -2168,6 +2533,103 @@ local({
         "the contender set is capped at 8")
   check(length(.contenders(mk(c(0.5, 0.2), c(NA_real_, NA_real_)), z = 1)) == 0L,
         "no standard errors (pooled fallback) means no contenders")
+
+  # --- the racing bar vs the point bar -------------------------------------
+  # Oracle: the point bar is max_j(mean_j), the maximum of a set of NOISY estimates, so one
+  # lucky thinly replicated configuration sets it for everyone -- including for the leader,
+  # which it can evict. The racing bar is max_j(mean_j - z*se_j), which that configuration
+  # cannot move, because setting the racing bar takes a high mean AND a small se.
+  # D below is the lucky singleton: highest mean, largest se.
+  b <- mk(c(0.50, 0.45, 0.48, 0.54), c(0.02, 0.12, 0.01, 0.15))
+  pt <- .in_play(b, z = 0.5, rule = "point")
+  rc <- .in_play(b, z = 0.5, rule = "racing")
+  check(identical(pt, "h4"), "under the point bar the lucky singleton rules out everything else")
+  check(!("h1" %in% pt), "including the well-replicated leader, which it evicts")
+  check(identical(sort(rc), c("h1", "h2", "h4")),
+        "under the racing bar the leader survives and the UNCERTAIN h2 joins it")
+  check(!("h3" %in% rc),
+        "while h3, precisely estimated and precisely second, is ruled out -- racing keeps what is unresolved, not what is merely close")
+  check(identical(.in_play(b, z = 0, rule = "racing"), .in_play(b, z = 0, rule = "point")),
+        "at z = 0 the two bars are the same test")
+
+  # --- the comparison happens on ONE scale ---------------------------------
+  # Oracle: the estimate and its `se` are both on z, where the fit produced them, and only the
+  # interval ENDPOINTS are transformed. The old code added a z-scale se to a tanh'd mean, which
+  # is on neither scale. Two checks: the bound is the transformed endpoint, and (because tanh is
+  # monotone) the delta = 0 decision is invariant to which scale it is evaluated on -- so the
+  # fix changes no decision except through delta, which is the point of making it.
+  zb  <- .to_z(b$mean_score)
+  ord <- .in_play(b, z = 0.5, rule = "racing")
+  check(isTRUE(all.equal(max(tanh(zb - 0.5 * b$se)), tanh(max(zb - 0.5 * b$se)))),
+        "the racing bar is the transform of the largest z-scale lower bound, monotonically")
+  check(setequal(ord, b$config_hash[(zb + 0.5 * b$se) >= max(zb - 0.5 * b$se)]),
+        "and the in-play set is the same one the comparison gives entirely on z")
+  # A configuration whose se is large and whose score is high is where the two scales diverge
+  # most, because tanh compresses hardest there. Adding a z-scale se to a correlation-scale mean
+  # overstates the bound; the transform does not.
+  hi <- mk(c(0.90, 0.80), c(0.30, 0.02))
+  check(tanh(.to_z(0.90) + 0.5 * 0.30) < 0.90 + 0.5 * 0.30,
+        "mixing the scales overstates a high-scoring config bound (the defect, LESSONS #43)")
+  check(length(.in_play(hi, z = 0.5, rule = "racing")) >= 1L,
+        "and the fixed comparison still returns the leader there")
+  for (z in c(0, 0.25, 0.5, 1, 2)) {
+    lead <- b$config_hash[which.max(b$mean_score)]
+    check(lead %in% .in_play(b, z, rule = "racing") &&
+          lead %in% .in_play(b, z, rule = "point"),
+          sprintf("the leader is in play under either bar at z = %g", z))
+  }
+  # Oracle: z does DOUBLE DUTY under racing -- it inflates the claim and lowers the bar -- so
+  # the racing set at z is at least as large as the point set at the same z. This is why the
+  # default z was halved when the rule changed, and the reason a z calibrated under one bar
+  # cannot be carried over to the other.
+  wide <- mk(seq(0.50, 0.30, length.out = 40), rep(0.03, 40))
+  for (z in c(0.25, 0.5, 1))
+    check(length(.in_play(wide, z, rule = "racing")) >=
+          length(.in_play(wide, z, rule = "point")),
+          sprintf("the racing set is never smaller than the point set at the same z (%g)", z))
+
+  # --- the resolution floor ------------------------------------------------
+  # Oracle: delta is a DEADBAND. It only ever widens the set, and it rescues exactly the
+  # configurations that miss the bar by less than the resolution anyone cares about.
+  check(length(.in_play(b, 0.5, delta = 0, rule = "racing")) == 3L &&
+        length(.in_play(b, 0.5, delta = 0.01, rule = "racing")) == 4L,
+        "a delta of 0.01 readmits h3, which missed the racing bar by 0.0086")
+  for (z in c(0, 0.25, 1)) for (dl in c(0, 0.002, 0.02))
+    check(length(.in_play(b, z, dl, "racing")) >= length(.in_play(b, z, 0, "racing")),
+          sprintf("delta never shrinks the in-play set (z %g, delta %g)", z, dl))
+  check(length(.in_play(b, 0, delta = 1, rule = "racing")) == nrow(b),
+        "a delta past the whole spread of the field puts everything in play -- the honest reading when nothing differs by an amount worth having")
+
+  # --- .contender_spec: one reading of the settings for every call site ----
+  sp <- .contender_spec(list())
+  check(identical(c(sp$z, sp$delta), c(0.25, 0)) && identical(sp$rule, "racing"),
+        ".contender_spec defaults to the racing bar at z 0.25 with no resolution floor")
+  check(identical(.contender_spec(list(contender_rule = "nonsense"))$rule, "racing"),
+        "an unrecognised rule name falls back to racing rather than erroring in the loop")
+  check(identical(.contender_spec(list(contender_z = -1, resolution_delta = "x"))$z, 0.25),
+        "a negative or unparseable z is ignored in favour of the default")
+
+  # --- get_parents: the contender set IS the parent pool -------------------
+  # Oracle: parenthood and replication now read the same set, with a cap and a floor. The
+  # floor is the part that matters operationally -- without it a pooled fallback (no `se`,
+  # so no contenders) would hand propose_candidates() an empty pool and turn the search into
+  # random draws with nothing saying so.
+  pj <- dplyr::mutate(mk(seq(0.50, 0.20, length.out = 40), rep(0.05, 40)),
+                      config_json = vapply(seq_len(40), function(i)
+                        config_to_json(sample_config()), character(1)))
+  # z = 2 so that enough of this fixture is in play for a cap of 12 to bind at all; at z = 1
+  # only 11 of the 40 are, and a cap above the set size tests nothing.
+  sp8 <- list(contender_rule = "racing", contender_z = 2, resolution_delta = 0,
+              n_elites = 8L, n_parents = 5L)
+  check(length(get_parents(pj, sp8)) == 8L,
+        "n_parents below n_elites cannot shrink the pool past the floor")
+  check(length(get_parents(pj, modifyList(sp8, list(n_parents = 12L)))) == 12L,
+        "and the cap binds when it is above the floor")
+  check(length(get_parents(dplyr::mutate(pj, se = NA_real_), sp8)) == 8L,
+        "with no `se` at all the pool falls back to the mean-ranked floor, never to empty")
+  check(length(get_parents(pj[0, ], sp8)) == 0L, "an empty aggregate gives an empty pool")
+  check(all(vapply(get_parents(pj, sp8), is.list, logical(1))),
+        "and the pool is parsed configurations, as propose_candidates() expects")
   ts <- function(n) .trial_target(modifyList(optimizer_settings(), list(trial_replication = 2)), n)
   check(identical(c(ts(0), ts(25), ts(100), ts(400)), c(2L, 3L, 4L, 6L)),
         "trial_replication schedule: 2 / 3 / 4 / 6 at 0 / 25 / 100 / 400 scored configs")
@@ -2205,6 +2667,52 @@ local({
         "marginal mean == mean over trials of the per-trial predictions")
   check(length(pm$sd) == 2 && all(is.finite(pm$sd)), "marginal sd is finite, one per candidate")
   check(pm$mean[2] > pm$mean[1], "the marginal still ranks on the config feature (a)")
+})
+
+cat("fit_surrogate: case weights (the surrogate and the estimator weight a row alike)\n")
+# Oracle: a correlation from 900 accessions must move the forest more than one from 12. Build a
+# feature that is uninformative in the HEAVY rows and strongly (but falsely) informative in the
+# LIGHT ones, then check the weighted fit follows the heavy rows and the unweighted one is
+# misled. This is the defect LESSONS #35 describes, as a test.
+local({
+  set.seed(11); n <- 120
+  a      <- rep(c(0, 1), length.out = n)        # the feature under test
+  heavy  <- rep(c(TRUE, FALSE), each = n / 2)   # half the rows well measured, half barely
+  # Truth: `a` does nothing. The light rows claim it is worth +2.
+  y <- ifelse(heavy, 0, 2 * a) + stats::rnorm(n, 0, 0.01)
+  X <- data.frame(a = a, b = stats::runif(n))
+  w <- ifelse(heavy, .eval_weight(900, 50), .eval_weight(12, 50))
+  check(w[1] / w[n] > 5, "the fixture's weight ratio is the one weight_cap = 50 produces")
+  newX <- data.frame(a = c(0, 1), b = c(0.5, 0.5))
+  pw <- predict_surrogate(fit_surrogate(X, y, weights = w, ntree = 60, min_obs = 10), newX)
+  pu <- predict_surrogate(fit_surrogate(X, y, ntree = 60, min_obs = 10), newX)
+  check(abs(diff(pw$mean)) < abs(diff(pu$mean)),
+        "weighting shrinks a slope the lightly-weighted rows invented")
+  check(is.null(fit_surrogate(X, y, weights = rep(0, n), ntree = 60, min_obs = 10)),
+        "all-zero weights leave no usable rows, so the fit declines rather than erroring")
+  check(!is.null(fit_surrogate(X, y, weights = NULL, ntree = 60, min_obs = 10)),
+        "weights = NULL still fits (unit weights), so every caller need not supply them")
+  # The weight column must not leak in as a predictor.
+  m <- fit_surrogate(X, y, weights = w, ntree = 60, min_obs = 10)
+  check(!(".w" %in% m$feat_names) && setequal(m$feat_names, c("a", "b")),
+        "the weight column is not taken in as a feature")
+})
+
+cat("fit_surrogate_merf: the trial effect is weighted too\n")
+# Oracle: the random effect subtracted from every row must itself be estimated with the weights,
+# or one short evaluation sets the level of a whole trial.
+local({
+  set.seed(12); n <- 90
+  tr <- factor(rep(c("t1","t2","t3"), each = n / 3))
+  X  <- data.frame(a = stats::runif(n), b = stats::runif(n))
+  y  <- X$a * 2 + as.numeric(tr) * 0.5 + stats::rnorm(n, 0, 0.05)
+  w  <- rep(.eval_weight(300, 50), n)
+  m  <- fit_surrogate_merf(X, y, tr, weights = w, ntree = 40, min_obs = 10)
+  check(!is.null(m), "merf fits with weights supplied")
+  check(isTRUE(all.equal(m$y_obs, y[is.finite(y)], tolerance = 1e-12)),
+        "the EI uncertainty floor still comes from the response AS OBSERVED, not y - b")
+  check(is.null(fit_surrogate_merf(X, y, tr, weights = rep(0, n), ntree = 40, min_obs = 10)),
+        "merf declines when the weights leave no usable rows")
 })
 
 # ===========================================================================
@@ -2250,6 +2758,128 @@ local({
     check(identical(got$source, "acquisition") || grepl("^seed:|^random", got$source),
           sprintf("surrogate_method = %s falls back to pooled on a single-trial store", m))
   }
+  close_store(cm); unlink(dbm)
+})
+
+# ===========================================================================
+cat("the EI reference point: one estimator for both sides of the comparison\n")
+# Oracle: EI's sd*dnorm(z) term is the ONLY reason an uncertain candidate ever outranks a
+# confident one. Understating `best` drives z up, kills that term, and leaves EI a strictly
+# increasing function of the predicted mean -- plain greedy exploitation. This pins the
+# mechanism the forest-scale reference point exists to prevent (LESSONS #37).
+local({
+  m  <- c(0.50, 0.46)        # candidate 1 looks better ...
+  sd <- c(0.01, 0.30)        # ... but the forest has no idea about candidate 2
+  near <- expected_improvement(m, sd, best = 0.50, xi = 0)
+  check(near[2] > near[1],
+        "EI: with `best` at the incumbent's true level the uncertain candidate wins")
+  far <- expected_improvement(m, sd, best = -5, xi = 0)
+  check(far[1] > far[2],
+        "EI: with `best` far understated EI ranks on the mean alone -- greedy")
+  check(abs(far[1] - (m[1] - (-5))) < 1e-6,
+        "EI: understating `best` collapses EI onto (mean - best), the greedy limit")
+  # And the invariance that makes the greedy limit unavoidable from the other side: a candidate
+  # has no replication, so it has no shrinkage factor to apply to its own predicted mean.
+  check(expected_improvement(m, sd, best = 0.50, xi = 0)[2] >
+        expected_improvement(m, sd, best = 0.50, xi = 0.5)[2],
+        "EI: xi is a margin on the same scale, and raising it lowers EI")
+})
+
+# Oracle: choose_config's reference point must survive every surrogate mode. `best` is now the
+# forest's own prediction at the EVALUATED configurations, so in blocked mode it goes through
+# predict_surrogate_marginal on a feature frame that carries no trial_id -- the path most
+# likely to break on a column mismatch.
+local({
+  sset <- function(m) modifyList(optimizer_settings(),
+    list(simulate = TRUE, optimize_scheme = "CV00", surrogate_method = m,
+         n_random_init = 6, surrogate_min_obs = 6,
+         trial_replication = 1, config_replication = 1))
+  dbm <- tempfile(fileext = ".sqlite"); cm <- open_store(dbm)
+  set.seed(404)
+  # The seeds must already be in the slice, or Phase 1 answers before the surrogate ever runs.
+  cfgs <- c(seed_configs("CV00"), replicate(12, sample_config(), simplify = FALSE))
+  for (tr in c("t1", "t2", "t3", "t4"))
+    for (i in seq_along(cfgs))
+      store_eval(cm, cfgs[[i]], tr, "CV00", 0.15 + i / 60 + stats::runif(1, -0.02, 0.02),
+                 40L, "ok", build = OPTIMIZER_BUILD)
+  for (m in c("merf", "blocked", "pooled")) {
+    got <- choose_config(cm, sset(m), replicate = FALSE)
+    check(grepl("^acquisition", got$source),
+          sprintf("surrogate_method = %s reaches acquisition on a 4-trial store", m))
+    check(is.finite(got$ei) && got$ei >= 0,
+          sprintf("surrogate_method = %s returns a finite, non-negative EI", m))
+    check(is.finite(got$pred_mean) && is.finite(got$pred_sd),
+          sprintf("surrogate_method = %s returns finite predictions", m))
+  }
+  close_store(cm); unlink(dbm)
+})
+
+# ===========================================================================
+cat("evals.source: which phase proposed a configuration\n")
+# Oracle: `source` is what separates rows chosen INDEPENDENTLY of the surrogate (seeds,
+# random_init) from rows the surrogate chose. Without it the only unbiased sample of the
+# configuration universe in the store cannot be identified -- LESSONS #38.
+local({
+  p <- tempfile(fileext = ".sqlite"); con <- open_store(p)
+  check("source" %in% DBI::dbListFields(con, "evals"), "evals carries a source column")
+  store_eval(con, sample_config(), "t1", "CV00", 0.3, 40L, "ok",
+             build = OPTIMIZER_BUILD, source = "random_init")
+  store_eval(con, sample_config(), "t1", "CV00", 0.4, 40L, "ok", build = OPTIMIZER_BUILD)
+  e <- read_evals(con)
+  check(identical(sort(e$source[!is.na(e$source)]), "random_init"),
+        "store_eval round-trips the source it was given")
+  check(sum(is.na(e$source)) == 1L,
+        "source is NA when not supplied, as every pre-2026-11-03 archive row is")
+  close_store(con); unlink(p)
+})
+# Oracle: the column arrives by migration, so a store written by an older build gains it on
+# open rather than failing every insert.
+local({
+  q <- tempfile(fileext = ".sqlite"); c2 <- DBI::dbConnect(RSQLite::SQLite(), q)
+  DBI::dbExecute(c2, paste("CREATE TABLE evals (config_hash TEXT, config_json TEXT,",
+    "trial_id TEXT, study_name TEXT, program_name TEXT, location_name TEXT, year INTEGER,",
+    "scheme TEXT, score REAL, n_test INTEGER, status TEXT, reason TEXT, detail TEXT,",
+    "seconds REAL, ts TEXT)"))
+  DBI::dbDisconnect(c2)
+  c3 <- open_store(q)
+  check("source" %in% DBI::dbListFields(c3, "evals"),
+        "open_store migrates a pre-source store by adding the column")
+  store_eval(c3, sample_config(), "t9", "CV0", 0.2, 30L, "ok", source = "seed:Prediction1")
+  check(identical(read_evals(c3)$source, "seed:Prediction1"),
+        "a migrated store accepts writes to the new column")
+  close_store(c3); unlink(q)
+})
+
+# ===========================================================================
+cat("surrogate_min_obs: the fit threshold, uncoupled from n_random_init\n")
+# Oracle: how long to explore at random and how many rows a regression needs are different
+# questions. They shared settings$n_random_init until 2026-11-03, so one could not be raised
+# without raising the other.
+local({
+  check(.surrogate_min_obs(list()) == 25L, "surrogate_min_obs defaults to 25 when unset")
+  check(.surrogate_min_obs(list(surrogate_min_obs = 80)) == 80L,
+        "surrogate_min_obs is read from settings")
+  check(.surrogate_min_obs(list(surrogate_min_obs = 0)) == 25L,
+        "a non-positive surrogate_min_obs falls back to the default rather than fitting on nothing")
+  check(.surrogate_min_obs(list(surrogate_min_obs = NA, n_random_init = 400)) == 25L,
+        "surrogate_min_obs does NOT fall back to n_random_init")
+  # And it is the setting that actually gates the fit: identical stores, one threshold above
+  # the row count and one below.
+  sset <- function(mo) modifyList(optimizer_settings(),
+    list(simulate = TRUE, optimize_scheme = "CV00", surrogate_method = "pooled",
+         n_random_init = 6, surrogate_min_obs = mo,
+         trial_replication = 1, config_replication = 1))
+  dbm <- tempfile(fileext = ".sqlite"); cm <- open_store(dbm)
+  set.seed(77)
+  cfgs <- c(seed_configs("CV00"), replicate(10, sample_config(), simplify = FALSE))
+  for (tr in c("t1", "t2"))
+    for (cf in cfgs)
+      store_eval(cm, cf, tr, "CV00", stats::runif(1, 0.1, 0.4), 40L, "ok",
+                 build = OPTIMIZER_BUILD)
+  check(grepl("^acquisition", choose_config(cm, sset(5L), replicate = FALSE)$source),
+        "surrogate_min_obs below the row count lets the surrogate fit")
+  check(identical(choose_config(cm, sset(10000L), replicate = FALSE)$source, "random_fallback"),
+        "surrogate_min_obs above the row count declines the fit and falls back to random")
   close_store(cm); unlink(dbm)
 })
 

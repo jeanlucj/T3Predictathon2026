@@ -12,16 +12,23 @@
 
 library(tidyverse)
 
-# Fit the surrogate. `features` is the data.frame from configs_to_features();
-# `y` the observed scores (e.g. predictive ability). Returns a list of fitted
-# trees plus the feature names, or NULL if there is not yet enough signal to fit.
-fit_surrogate <- function(features, y,
+# Fit the surrogate. `features` is the data.frame from configs_to_features(); `y` the observed
+# scores ON THE Z SCALE, and `weights` their precisions from .eval_weight(). Returns a list of
+# fitted trees plus the feature names, or NULL if there is not yet enough signal to fit.
+#
+# The weights are CASE weights: rpart's anova split minimises WEIGHTED within-node SSE and its
+# node value is the weighted mean, so a correlation from 12 accessions stops counting as much as
+# one from 900. The bootstrap stays uniform -- it estimates the uncertainty, the weights carry
+# the precision, and conflating them would do neither job.
+fit_surrogate <- function(features, y, weights = NULL,
                           ntree   = 300,
                           mtry    = max(2, floor(sqrt(ncol(features)))),
                           min_obs = 12) {
-  ok <- is.finite(y)
+  if (is.null(weights)) weights <- rep(1, length(y))
+  ok <- is.finite(y) & is.finite(weights) & weights > 0
   features <- features[ok, , drop = FALSE]
   y <- y[ok]
+  weights <- weights[ok]
   if (length(y) < min_obs || stats::var(y) < .Machine$double.eps) return(NULL)
 
   feat_names <- names(features)
@@ -32,8 +39,11 @@ fit_surrogate <- function(features, y,
     cols <- sample(feat_names, mtry)                            # feature bagging
     df <- features[rows, cols, drop = FALSE]
     df$.y <- y[rows]
+    df$.w <- weights[rows]
+    # Name the predictors rather than using `.`, which would take .w in as a feature.
+    f <- stats::as.formula(paste(".y ~", paste(sprintf("`%s`", cols), collapse = " + ")))
     tryCatch(
-      rpart::rpart(.y ~ ., data = df, method = "anova", control = ctrl),
+      rpart::rpart(f, data = df, weights = .w, method = "anova", control = ctrl),
       error = function(e) NULL)
   })
   trees <- trees[!vapply(trees, is.null, logical(1))]
@@ -53,25 +63,32 @@ fit_surrogate <- function(features, y,
 # the objective wants: no marginalisation step, and trial_id is NOT among the features.
 # Returns NULL -- so the caller falls back -- when lme4 is missing, when there are fewer than
 # two groups, or when the forest itself declines.
-fit_surrogate_merf <- function(features, y, groups,
+fit_surrogate_merf <- function(features, y, groups, weights = NULL,
                                ntree = 300, min_obs = 12, iters = 3L) {
   if (!requireNamespace("lme4", quietly = TRUE)) return(NULL)
-  ok <- is.finite(y) & !is.na(groups)
+  if (is.null(weights)) weights <- rep(1, length(y))
+  ok <- is.finite(y) & !is.na(groups) & is.finite(weights) & weights > 0
   features <- features[ok, , drop = FALSE]
   y        <- y[ok]
+  weights  <- weights[ok]
   groups   <- factor(as.character(groups[ok]))
   if (length(y) < min_obs || nlevels(groups) < 2L) return(NULL)
 
   work <- y                      # the response the LMM sees; y minus the forest, after round 1
   m <- NULL
   for (it in seq_len(max(1L, as.integer(iters)))) {
+    # Weighted, like the aggregate's fit: an unweighted trial effect here would be estimated
+    # giving a 12-accession correlation the same say as a 900-accession one, and that effect is
+    # then subtracted from every row.
     re <- tryCatch(suppressMessages(lme4::lmer(work ~ 1 + (1 | g),
-                                               data = data.frame(work = work, g = groups))),
+                                               data = data.frame(work = work, g = groups,
+                                                                 .w = weights),
+                                               weights = .w)),
                    error = function(e) NULL)
     if (is.null(re)) return(NULL)
     b <- lme4::ranef(re)$g[as.character(groups), 1]
     if (!length(b) || anyNA(b)) return(NULL)
-    m <- fit_surrogate(features, y - b, ntree = ntree, min_obs = min_obs)
+    m <- fit_surrogate(features, y - b, weights = weights, ntree = ntree, min_obs = min_obs)
     if (is.null(m)) return(NULL)
     fitted_rf <- rowMeans(vapply(m$trees, function(tr)
       as.numeric(stats::predict(tr, newdata = features)), numeric(nrow(features))))

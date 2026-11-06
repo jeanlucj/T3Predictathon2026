@@ -259,7 +259,7 @@ hr("6. Contenders (the report caps its list at k = 8)")
 cat("  run ", rid, ": ", if (length(uni)) paste0(length(uni), "-trial universe")
     else "no run row -- not filtered to a universe", "\n", sep = "")
 # `e` is already the slice (or everything, under --all).
-agg <- aggregate_scores(e)
+agg <- aggregate_scores(e, s)
 cat(sprintf("  %d distinct config(s) in the slice; %d with an se (>= 2 evals)\n",
             nrow(agg), sum(is.finite(agg$se))))
 # aggregate_scores shrinks the config BLUPs in proportion to replication, so a slice with
@@ -282,7 +282,7 @@ for (z in o_z) {
 ct <- .contenders(agg, o_z[1], k = o_top)
 cat(sprintf("\ntop %d by UCB at z = %g:\n", length(ct), o_z[1]))
 print(agg |> filter(config_hash %in% ct) |>
-        mutate(ucb = mean_score + o_z[1] * se) |>
+        mutate(ucb = tanh(dplyr::coalesce(z_mean, .to_z(mean_score)) + o_z[1] * se)) |>
         select(config_hash, n, n_ok, mean_score, se, ucb) |>
         arrange(desc(ucb)), n = Inf)
 

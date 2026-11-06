@@ -62,12 +62,28 @@ scores well has to generalize. The optimization target is the mean score across
 trials, so the search is driven toward configurations that are robust across the
 whole database, not tuned to nine specific environments.
 
+A score exists only when at least `min_test_acc` (**10**) accessions carry both
+a finite prediction and a finite observation. One setting governs both halves of
+that: `score_predictions()` refuses to produce a score below it, and
+`aggregate_scores()` refuses to use one below it. They were two numbers until
+2026-11-02 -- feasibility at 5, usability at 10 -- and the band between them was
+pure waste: a row that cost a full pipeline run, stored as `ok` with a real
+score, and invisible to every estimate (`docs/LESSONS.md` #34). Where a trial
+sits permanently below the floor it now fails fast, rather than being paid for
+and discarded, but the universe is still effectively smaller than the pinned
+one.
+
 This makes the objective **noisy and expensive**: noisy because a single trial
 is a high-variance sample of a configuration's true quality; expensive because
 each evaluation pulls phenotypes and genotypes and fits mixed models. The
 optimizer is built around those two facts.
 
 ## 3. The optimizer: random-forest-surrogate Bayesian optimization, with evolutionary recombination
+
+> This section is the summary. **`SEARCH_ALGORITHM.md` is the full statement** --
+> every rule with its code anchor, every term defined, and what the stored runs
+> measure each rule to do in practice. Read it before concluding anything about
+> why a run is behaving as it is.
 
 For a **noisy, expensive, mixed categorical+continuous** search space, the
 literature consensus (SMAC; Hutter et al. 2011) is a **random-forest-surrogate
@@ -79,28 +95,53 @@ methods from different algorithms* -- is literally crossover.
 
 The loop (`R/optimizer.R`), one iteration:
 
-1. **Surrogate fit.** Train a surrogate on all evaluations so far: a bagged
-   ensemble of regression trees (`rpart`) mapping a configuration's features to
+1. **Surrogate fit.** Train a surrogate on the evaluations so far: a bagged
+   ensemble of 300 regression trees (`rpart`) mapping a configuration's features to
    its score. This is SMAC's random forest, written transparently
-   (`R/surrogate.R`): each tree sees a bootstrap sample; the ensemble mean is the
-   predicted score and the spread across trees is the uncertainty. Trees handle
-   categoricals and missing (irrelevant) parameters natively.
+   (`R/surrogate.R`): each tree sees a bootstrap sample and a random `sqrt(p)`
+   subset of the features; the ensemble mean is the predicted score and the spread
+   across trees is the uncertainty. Trees handle categoricals and missing
+   (irrelevant) parameters natively.
+
+   The trial effect is handled in one of three ways, most structured first, each
+   falling through when it cannot be fitted: **MERF** (the default) fits the trial
+   as a shrunken random effect *outside* the forest and so predicts the
+   trial-marginal value directly; **blocked** puts `trial_id` in the forest and
+   averages it away at prediction; **pooled** collapses to one row per
+   configuration mean. Rows whose trial carries fewer than two distinct
+   configurations are dropped first, because an `rpart` split on a one-observation
+   trial memorises noise (`LESSONS.md` #19).
 
 2. **Candidate generation.** Propose many candidate configurations three ways,
    so the search both exploits good structure and keeps exploring:
-   - **Crossover** of two elite configurations -- swap whole subtask blocks
-     (e.g. take P1's training-trial selection, P5's kernel, P4's blending). This
-     is the "recombine the submitted algorithms" operation.
-   - **Mutation** of an elite -- resample one subtask's method/parameters.
-   - **Random** sampling of fresh configurations.
+   - **Crossover** of two elite configurations (60 draws) -- swap whole subtask
+     blocks (e.g. take P1's training-trial selection, P5's kernel, P4's blending).
+     This is the "recombine the submitted algorithms" operation. Because it moves
+     whole blocks, it can only ever produce values one parent already has: once the
+     eight elites agree on a block, crossover is a no-op for that block.
+   - **Mutation** of an elite (60 draws) -- resample 1 or 2 of the 6 subtask blocks.
+     With the block count fixed at 6, a given block is touched by roughly a quarter
+     of the mutants.
+   - **Random** sampling of fresh configurations (60 draws).
+
+   The pool is then de-duplicated by hash, and candidates not already in the store
+   are preferred -- so a configuration already evaluated is normally not re-proposed.
 
 3. **Acquisition.** Score every candidate by **Expected Improvement** under the
    surrogate (mean and uncertainty), which balances "predicted to be good" with
-   "uncertain, worth probing." Pick the top candidate(s) to actually run.
+   "uncertain, worth probing." Pick the top candidate to actually run. The
+   between-tree uncertainty is floored at `0.25 * sd(observed scores)` so a
+   candidate the trees happen to agree on is not treated as known -- but note that
+   when the floor binds for *every* candidate it equalises their uncertainty and EI
+   collapses to plain argmax of the predicted mean (`SEARCH_ALGORITHM.md` §8.3,
+   where this is measured happening).
 
-4. **Evaluate** the chosen configuration on a freshly sampled random trial,
-   append `(config, trial, scheme, score)` to the store, and update the
-   incumbent (best configuration by surrogate-predicted mean over trials).
+4. **Evaluate** the chosen configuration on a trial chosen by `choose_trial()`
+   and append `(config, trial, scheme, score)` to the store. Nothing else is
+   updated: there is no stored incumbent. Every ranking -- elites, contenders, the
+   EI reference point, the reported incumbent -- is recomputed from the store at
+   each step, and the *reported* incumbent (`incumbent_min_reps`) is a report-time
+   quantity the search itself never consults.
 
 Early iterations (before there is enough data to fit a surrogate) are pure random
 + the five submitted configurations as seeds, so the submissions are an explicit
@@ -108,28 +149,66 @@ baseline the search must beat.
 
 ### Replication, and why it ramps
 
-A single evaluation is a weak measurement of a configuration: on the real store the
-config effect (`sd_config` ≈ 0.03) is small against the trial effect (≈ 0.10) and the
-per-evaluation residual (≈ 0.08 at a typical `n_test`). The correlation between a
-config's estimate and its true quality is about 0.47 at two evaluations, 0.65 at five
-— so ranking on one or two observations is close to ranking on noise.
+A single evaluation is a weak measurement of a configuration: the config effect is small
+against the trial effect and against the per-evaluation residual. Across the seven runs in
+`state/evals_backup.sqlite` (build 0.8.8, 2026-10-30) `sd_config` ranges from **0.000 to
+0.173** and `sd_trial` from **0.055 to 0.221**, with `sd_trial` the larger in six of the
+seven. These are not constants: `sd_config` in particular is a property of the population of
+configurations a run happens to evaluate, and it falls as that population homogenises
+(`SEARCH_ALGORITHM.md` §11). Quote the run's own figures from `report.md`, not a remembered
+pair.
 
-Both replication levels therefore rise with the store rather than sitting at a constant:
+The number that says how much precision a target allows at all is
+
+```
+n* = (sd_resid / sqrt(median weight))^2 / sd_config^2
+```
+
+the replication at which a configuration's own data half-outweigh the shrinkage prior. Since
+`se/sd_config = 1/sqrt(1 + n/n*)` and `n` cannot exceed the universe size `N`, `n*/N` fixes the
+best precision obtainable. Measured: `n*` is 1.0-3.4 on the 4-, 8- and 9-trial targets, and
+**24.9 and 26.6 on the two 24-trial targets** -- larger than the number of trials a
+configuration can possibly be run on, so on those two a full budget still leaves `se` at about
+0.7 `sd_config` and the configurations' posteriors heavily overlapped. Nothing here is ever
+decided; `n*` says how sharp the estimates can get. `SEARCH_ALGORITHM.md` §4.5.
+
+Both replication levels rise with the store rather than sitting at a constant:
 
 - **Trials** — a trial must reach `.trial_target()` distinct configurations,
   `trial_replication + floor(sqrt(n_scored) / 5)`, before fresh trials are drawn. The
   square root matters: under a linear schedule the number of *new* trials per unit
   budget flattens to a constant, and the search stops seeing new environments.
 - **Configurations** — everyone earns `config_replication` evaluations, and a
-  **contender** earns one more each time the backlog is built. A contender is a config
-  whose optimistic bound `blup + contender_z * se` still reaches the leader's estimate,
-  capped at the top 8. The set shrinks on its own as the estimates sharpen, so the ramp
-  is emergent rather than scheduled, and a contender set of size 1 means the field is
-  settled at that `contender_z`.
+  **contender** earns one more each time the backlog is built. A contender is a config whose
+  optimistic bound `tanh(z_mean + contender_z * se)` still reaches the bar -- which since
+  2026-11-04 is the best *defensible* value in the set, `max tanh(z_mean - contender_z * se)`,
+  not the best point estimate -- plus a resolution floor `resolution_delta` that the search
+  cannot shrink. The interval is formed on the z scale the fit produced it on and only its
+  endpoints are transformed, so `resolution_delta` is added to a difference in predictive
+  accuracy. Capped at the top 8 by that bound for replication; the same set, capped at
+  `n_parents` = 32 and floored at `n_elites` = 8, is the parents of candidate generation. A
+  contender set of size 1 means the field is settled at that spec. `SEARCH_ALGORITHM.md` §7 has
+  the rule, the scales and why the bar changed.
 
-One worker in `replicate_every` takes from the replication backlog and the rest explore,
-keyed on the store's row count so a single worker alternates over time and N workers
-split at any instant without falling into lockstep.
+  **The set does not reliably shrink.** `se` can never exceed `sd_config`, and replication
+  reduces it only in proportion to `n/n*`: measured, the median `se` falls from 0.98 to 0.74
+  of `sd_config` between 1 and 13+ evaluations on `80cfbd7c27e9` (`n*` = 24.9) but from 0.66
+  to 0.35 on `34e15bd03838` (`n*` = 1.6). At the end of their runs the in-play count was 8 of
+  2147 configurations on one target and 301 of 1023, 486 of 660 and 7343 of 7343 on three
+  others. Treat a shrinking contender set as something to check in `report.md`, not as a
+  property of the design.
+
+  **The cap is absolute and has no memory.** A configuration pushed below the top 8 is in
+  neither backlog tier, is not re-proposed by acquisition (which prefers unevaluated
+  candidates), and is frozen at its current replication until some later fit puts it back in
+  the top 8. `SEARCH_ALGORITHM.md` §7 measures what that does: on `9a2664962c01` the leader at
+  one checkpoint sat at median rank 19 at the next.
+
+One worker in `replicate_every` takes from the **contender** tier and the rest explore, keyed
+on the store's row count so a single worker alternates over time and N workers split at any
+instant without falling into lockstep. The `config_replication` floor is *not* rationed and
+preempts the contender tier entirely whenever it is non-empty -- and every newly proposed
+configuration enters it, so with several workers proposing it refills continuously.
 
 A configuration already evaluated on every trial in `target_domain` is dropped from the
 backlog: no trial is left to inform it. When that is true of every contender, no further
@@ -192,6 +271,7 @@ optimizer/
   README.md            <- how to run it (user-facing)
   docs/EVALUATION.md        <- evaluation & validation runbook (arm_evaluation, tests, data-flow, tooling)
   docs/DESIGN.md            <- this file (what the optimizer is + where everything lives)
+  docs/SEARCH_ALGORITHM.md  <- the search's rules in full: terms, variance components, contenders, churn
   docs/BACKGROUND.md        <- challenges (statistical + data-management) and how each is met
   run_optimizer.R      <- background entry point (budget, stop-file, checkpoint, canary startup)
   settings.R           <- one place for all knobs (budgets, paths, simulate, canary trials)
@@ -305,7 +385,8 @@ condition classes; `.sim_true`/`.sim_evaluate`: the SIMULATE objective.
 (mean + uncertainty); `expected_improvement()`: the acquisition function.
 
 **`R/optimizer.R`** — `aggregate_scores()`: per-config mean (denoise);
-`get_elites()`, `fresh_random()`, `propose_candidates()`: candidate generation;
+`get_parents()`/`get_elites()`, `fresh_random()`, `propose_candidates()`: candidate generation;
+`.in_play()`: the one definition of "not ruled out", read by replication and parenthood alike;
 `incumbent_config()`: robust best-so-far; `choose_config()`: the phase logic
 (seeds → replicate → random → acquisition); `choose_trial()`: the trial to pair
 with it, excluding those that configuration has already been run on.

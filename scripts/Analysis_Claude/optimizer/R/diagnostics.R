@@ -518,7 +518,7 @@ diagnose_trial <- function(study_id, settings, conn,
   }
   res <- tryCatch(
     { po <- run_pipeline(cfg, trial, scheme, settings, conn)
-      sc <- score_predictions(po$pred, po$obs)
+      sc <- score_predictions(po$pred, po$obs, .min_test(settings))
       cat(sprintf("  PIPELINE OK: %d predictions, score=%s (status %s)\n",
                   length(po$pred), signif(sc$score, 3), sc$status)); sc },
     error = function(e) {

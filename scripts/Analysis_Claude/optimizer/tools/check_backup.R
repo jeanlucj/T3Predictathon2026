@@ -132,13 +132,13 @@ if (is.null(pick)) {
     "  -> the surrogate is driving; the search resumes where it left off\n"))
 }
 
-agg <- aggregate_scores(slice)
+agg <- aggregate_scores(slice, s)
 
 # The variance decomposition, from the fit aggregate_scores just paid for. Worth printing here
 # and not only in report.md: this is a FRESH process, so it reflects the current code even when
 # the workers writing the store are running an older build and their report.md cannot.
 #
-# sd_resid is on the unit-weight scale (the fit weights by n_test - 3), so it is not comparable
+# sd_resid is on the unit-weight scale (the fit weights by .eval_weight()), so it is not comparable
 # with the other two until divided by sqrt(median weight) -- LESSONS #19. Same rendering as
 # R/report.R.
 local({
@@ -147,7 +147,7 @@ local({
   w    <- attr(agg, "median_weight") %||% NA_real_
   if (!is.finite(w)) w <- 1
   cat(sprintf("\n  config score estimator: %s\n", attr(agg, "estimator") %||% "pooled"))
-  if (!is.null(vc) && all(is.finite(vc))) {
+  if (!is.null(vc) && all(is.finite(vc[c("sd_trial", "sd_config", "sd_resid")]))) {
     cat(sprintf("    sd_trial %.3f  sd_config %.3f  sd_resid %.3f per eval (%.3f at unit weight)\n",
                 vc[["sd_trial"]], vc[["sd_config"]], vc[["sd_resid"]] / sqrt(max(1, w)),
                 vc[["sd_resid"]]))

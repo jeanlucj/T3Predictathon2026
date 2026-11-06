@@ -72,7 +72,8 @@ open_store <- function(path, busy_timeout_ms = 60000) {
       reason        TEXT,
       detail        TEXT,
       seconds       REAL,
-      ts            TEXT
+      ts            TEXT,
+      source        TEXT
     )"))
   .with_busy_retry(function()
     DBI::dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_hash ON evals(config_hash)"))
@@ -124,13 +125,16 @@ open_store <- function(path, busy_timeout_ms = 60000) {
   # evals identically. peak_rss_mb is the figure to size a machine from; peak_r_mb is kept for
   # the ratio (R/memory.R). dosage_budget and em_df_method record HIDDEN axes -- neither is a
   # config parameter, so without them rows made under different settings would be averaged
-  # together.
+  # together. `source` records WHICH PHASE of choose_config() proposed the configuration, which
+  # is what separates the rows chosen independently of the surrogate (seeds, random_init) from
+  # the rows the surrogate chose -- the only unbiased sample of the configuration universe this
+  # store holds. Rows written before 2026-11-03 have it NA and cannot be classified.
   have <- DBI::dbListFields(con, "evals")
   add <- c(detail = "TEXT", study_name = "TEXT", program_name = "TEXT",
            location_name = "TEXT", year = "INTEGER",
            peak_r_mb = "REAL", rss_mb = "REAL", worker = "TEXT", dosage_budget = "REAL",
            peak_rss_mb = "REAL", em_df_method = "TEXT", build = "TEXT",
-           run_id = "TEXT")
+           run_id = "TEXT", source = "TEXT")
   for (col in names(add)) {
     if (col %in% have) next
     # Two workers starting together both see the column missing and both try to add it.
@@ -370,14 +374,14 @@ store_eval <- function(con, cfg, trial_id, scheme, score, n_test, status,
                        peak_r_mb = NA_real_, rss_mb = NA_real_, peak_rss_mb = NA_real_,
                        worker = NA_character_, dosage_budget = NA_real_,
                        em_df_method = NA_character_, build = NA_character_,
-                       run_id = NA_character_) {
+                       run_id = NA_character_, source = NA_character_) {
   invisible(.with_busy_retry(function() DBI::dbExecute(con,
     "INSERT INTO evals
        (config_hash, config_json, trial_id, study_name, program_name, location_name, year,
         scheme, score, n_test, status, reason, detail, seconds, ts,
         peak_r_mb, rss_mb, worker, dosage_budget, peak_rss_mb, em_df_method, build,
-        run_id)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        run_id, source)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     params = list(config_hash(cfg), config_to_json(cfg), trial_id,
                   study_name %||% NA_character_, program_name %||% NA_character_,
                   location_name %||% NA_character_,
@@ -393,19 +397,54 @@ store_eval <- function(con, cfg, trial_id, scheme, score, n_test, status,
                   as.numeric(peak_rss_mb %||% NA_real_),
                   as.character(em_df_method %||% NA_character_),
                   as.character(build %||% NA_character_),
-                  as.character(run_id %||% NA_character_)))))
+                  as.character(run_id %||% NA_character_),
+                  as.character(source %||% NA_character_)))))
 }
 
 # --- run provenance --------------------------------------------------------
-# A run is identified by the settings that DEFINE its search, so resuming with the same
-# settings continues the same run and inherits its pinned trial universe, while changing one
-# of them starts a new run. Paths, worker ids and other per-worker settings are excluded.
-.RUN_SIGNATURE_KEYS <- c("optimize_scheme", "target_domain", "focal_trait_db_id",
-                         "min_trial_acc", "trial_replication", "config_replication",
-                         "replicate_every", "contender_z", "n_random_init", "simulate")
+# A run is identified by the settings that DEFINE it, so resuming with the same settings
+# continues the same run and inherits its pinned trial universe, while changing one of them
+# starts a new run. Paths, worker ids and other per-worker settings are excluded.
+#
+# WHAT A RUN IS, which is a choice and not a fact. Apply the test "does this change what a
+# stored row MEANS" and the ten keys split in two:
+#
+#   THE TARGET    optimize_scheme, target_domain, focal_trait_db_id, min_trial_acc, simulate.
+#                 Change one and a stored score answers a different question, so old rows are
+#                 not evidence about the new one.
+#   SEARCH POLICY trial_replication, config_replication, replicate_every, contender_z,
+#                 n_random_init. These change the TRAJECTORY, not the interpretation of any
+#                 row. A score measured under one replication schedule is the same score.
+#
+# `settings$run_identity` picks which set defines a run:
+#
+#   "target"      the five target keys. Policy can be retuned mid-run without starting a new
+#                 run, so evidence accumulates on one target across changes of method. This is
+#                 the reading for "keep nudging toward a better configuration on this domain".
+#   "experiment"  all ten. Each policy is its own run, which is the reading for "compare search
+#                 policies against each other".
+#
+# run_identity is deliberately NOT in either set: it selects the signature, so putting it in
+# would make the identity depend on how the identity is computed. docs/SEARCH_ALGORITHM.md §13.
+.RUN_SIGNATURE_KEYS_TARGET <- c("optimize_scheme", "target_domain", "focal_trait_db_id",
+                                "min_trial_acc", "simulate")
+.RUN_SIGNATURE_KEYS_POLICY <- c("trial_replication", "config_replication",
+                                "replicate_every", "contender_z", "n_random_init")
+# The full set, which is what a run was identified by before run_identity existed and what
+# "experiment" still means.
+.RUN_SIGNATURE_KEYS <- c(.RUN_SIGNATURE_KEYS_TARGET, .RUN_SIGNATURE_KEYS_POLICY)
+
+# Which keys define a run under these settings. Unset or unrecognised reads as "target": a run
+# that keeps its identity across a policy change is the recoverable mistake, since the rows stay
+# readable either way and only the `runs` bookkeeping differs.
+.run_signature_keys <- function(settings) {
+  if (identical(as.character((settings %||% list())$run_identity %||% "target")[1], "experiment"))
+    .RUN_SIGNATURE_KEYS
+  else .RUN_SIGNATURE_KEYS_TARGET
+}
 
 run_id_for <- function(settings, build = NA_character_) {
-  substr(rlang::hash(c(settings[.RUN_SIGNATURE_KEYS], list(build = build))), 1, 12)
+  substr(rlang::hash(c(settings[.run_signature_keys(settings)], list(build = build))), 1, 12)
 }
 
 read_run <- function(con, run_id) {
@@ -415,16 +454,20 @@ read_run <- function(con, run_id) {
 }
 
 # A domain file (settings.local.XYZ.R) names ONE past run for a tool reading a multi-domain store.
-# It may set only run-defining keys, so it cannot also move the store or cache paths that
-# settings.local.R puts on node-local disk. Pass the result to optimizer_settings(extra = ).
+# It may set only keys that can identify a run under either run_identity, plus run_identity
+# itself, so it cannot also move the store or cache paths that settings.local.R puts on
+# node-local disk. Pass the result to optimizer_settings(extra = ).
 read_domain_settings <- function(path) {
   if (!file.exists(path)) stop("no domain settings file at ", path, call. = FALSE)
   ov <- .local_overrides(path)
   if (!length(ov)) stop(basename(path), " defines no `settings_override`", call. = FALSE)
-  bad <- setdiff(names(ov), c(.RUN_SIGNATURE_KEYS, "build"))
+  # The UNION of both signatures, plus run_identity itself: a domain file naming a past
+  # experiment-mode run has to be able to set the policy keys that identified it.
+  ok <- c(.RUN_SIGNATURE_KEYS, "run_identity", "build")
+  bad <- setdiff(names(ov), ok)
   if (length(bad))
-    stop(basename(path), " may set only run-defining keys (",
-         paste(c(.RUN_SIGNATURE_KEYS, "build"), collapse = ", "), "); it also sets: ",
+    stop(basename(path), " may set only run-identifying keys (",
+         paste(ok, collapse = ", "), "); it also sets: ",
          paste(bad, collapse = ", "), call. = FALSE)
   ov
 }
@@ -434,8 +477,11 @@ read_domain_settings <- function(path) {
 # named list so a NULL value survives the round trip.
 explain_run_mismatch <- function(con, settings, build) {
   runs <- tibble::as_tibble(DBI::dbGetQuery(con, "SELECT * FROM runs ORDER BY started_ts"))
+  keys <- .run_signature_keys(settings)
   head <- paste0("no run in the store matches these settings (run_id ",
-                 run_id_for(settings, build), ", build ", build, ").")
+                 run_id_for(settings, build), ", build ", build,
+                 ", run_identity ", (settings$run_identity %||% "target"),
+                 " -- identified by: ", paste(keys, collapse = ", "), ").")
   if (!nrow(runs)) return(paste(head, "The store has no runs at all."))
   js <- function(x) as.character(jsonlite::toJSON(x, auto_unbox = TRUE, digits = NA,
                                                   null = "null"))
@@ -444,8 +490,16 @@ explain_run_mismatch <- function(con, settings, build) {
     stored <- tryCatch(jsonlite::fromJSON(r$settings_json, simplifyVector = FALSE),
                        error = function(e) NULL)
     diff <- if (is.null(stored)) "(settings_json unreadable)" else {
-      d <- .RUN_SIGNATURE_KEYS[vapply(.RUN_SIGNATURE_KEYS, function(k)
+      d <- keys[vapply(keys, function(k)
         !(k %in% names(stored)) || !identical(js(settings[k]), js(stored[k])), logical(1))]
+      # Policy keys that differ but do NOT affect identity under "target": worth naming, so a
+      # resumed run does not look like it matched by accident.
+      if (!identical(keys, .RUN_SIGNATURE_KEYS)) {
+        pd <- .RUN_SIGNATURE_KEYS_POLICY[vapply(.RUN_SIGNATURE_KEYS_POLICY, function(k)
+          !(k %in% names(stored)) || !identical(js(settings[k]), js(stored[k])), logical(1))]
+        if (length(pd)) d <- c(d, paste0("(policy, not identifying: ",
+                                         paste(pd, collapse = ", "), ")"))
+      }
       if (!identical(as.character(r$build), as.character(build))) d <- c(d, "build")
       if (length(d)) paste(d, collapse = ", ") else "(none -- hash mismatch not explained)"
     }

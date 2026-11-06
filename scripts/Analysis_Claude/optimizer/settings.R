@@ -5,7 +5,7 @@
 # Stamped into the log, the report and every stored eval. Last digit for a minor change, middle
 # for a major one. If a bump changes what a configuration COMPUTES, add a BUILD_CHANGES entry
 # (R/optimizer.R) so the invalidated rows can be retired.
-OPTIMIZER_BUILD <- "0.8.8"
+OPTIMIZER_BUILD <- "0.9.0"
 
 # TRUE puts state, logs and the cache backup on durable storage instead of the work directory.
 # OPTIMIZER_REMOTE decides if set; otherwise TRUE whenever OPTIMIZER_HOME is set.
@@ -152,10 +152,37 @@ optimizer_settings <- function(local_overrides = TRUE, extra = NULL) {
     surrogate_method = "merf",
 
     # ---- search behaviour -------------------------------------------------
+    # n_random_init is a BUDGET: draw configs at random until this many have a finite
+    # mean_score, then let acquisition take over. It is a one-time gate on a cumulative count,
+    # so raising it on a run that is already past it does nothing. `reference_every` below is
+    # the persistent rate, and is the knob that keeps the reference population growing. This key
+    # is run-defining only under run_identity = "experiment"; under "target" it is policy and
+    # can be changed on a live run. See SEARCH_ALGORITHM.md §13.
     n_random_init       = 25,    # random configs before the surrogate takes over
+    # surrogate_min_obs is a STATISTICAL FLOOR: rows a forest needs before it is worth fitting
+    # at all. Until 2026-11-03 this was n_random_init itself, which meant "explore longer" and
+    # "demand more data per tree" could not be set apart. Not run-defining.
+    #
+    # It counts whatever rows the chosen mode fits on, and the modes differ: merf and blocked
+    # get one row per (config, trial), pooled gets one row per CONFIG. So a value above
+    # n_random_init leaves pooled permanently unfittable -- phase 3 guarantees only
+    # n_random_init scored configs before acquisition begins -- and the search falls through to
+    # random_fallback instead. That is safe but wasteful, so keep this <= n_random_init unless
+    # you intend to retire the pooled fallback. Defaulting both to 25 preserves the behaviour
+    # the single coupled setting gave.
+    surrogate_min_obs   = 25,    # rows required before a surrogate is fitted
     incumbent_min_reps  = 2,     # trials a config needs before it can be "incumbent"
     ei_xi               = 0.01,  # Expected-Improvement exploration constant
-    n_elites            = 8,     # elites that seed crossover/mutation
+    # The parent pool for crossover/mutation is the CONTENDER set (get_parents()), so these two
+    # are the cap and the floor on it, not the pool itself:
+    #   n_parents  cap. The in-play set is every scored configuration when the estimator cannot
+    #              separate them, and unbounded parenthood is then recombination among all of
+    #              them. Ordered by UCB, so the cap keeps the most promising.
+    #   n_elites   floor, filled from the mean ranking. Covers the case where the random-effects
+    #              fit did not run at all: no `se`, so no contenders, so without this the
+    #              candidate pool would be pure random draws and nothing would say so.
+    n_elites            = 8,     # FLOOR on the parent pool (mean-ranked, needs no se)
+    n_parents           = 32,    # CAP on the parent pool (UCB-ranked contenders)
     n_cross             = 60, n_mut = 60, n_rand = 60,  # candidate pool sizes
     ntree               = 300,   # trees in the random-forest surrogate
 
@@ -206,14 +233,125 @@ optimizer_settings <- function(local_overrides = TRUE, extra = NULL) {
     min_trial_acc      = 30,     # skip trials with fewer genotyped accessions
     min_train_trials   = 3,      # skip focal trials with too few training TRIALS
     min_train_acc      = 20,     # genotyped overlap a GBLUP needs to fit, in ACCESSIONS
-    min_test_acc       = 5,      # the Predictathon's own "task can fail" rule, in ACCESSIONS
+    # The single floor on the TEST overlap, in ACCESSIONS. It governs both halves of the
+    # question, which is why there is one setting and not two:
+    #   FEASIBILITY  below it, run_pipeline() and score_predictions() decline the task, so no
+    #                evaluation is paid for and no row is stored.
+    #   USABILITY    aggregate_scores() keeps a score only at or above it, because a Fisher-z
+    #                weight of n_test - 3 cannot rescue a correlation this short.
+    # Set them apart and the difference is pure waste: an evaluation that costs a full pipeline
+    # run, succeeds, is stored, and is then invisible to every estimate -- 36% of one run's
+    # successful evaluations, before this was unified (docs/LESSONS.md #34). The Predictathon's
+    # own "task can fail" rule is 5, so 10 declines some tasks it would score; a correlation on
+    # 5 accessions is not worth an evaluation either way.
+    min_test_acc       = 10,
+    # The CEILING on how much one evaluation can count, as a WEIGHT. Two independent errors
+    # corrupt a score, and they behave differently as the trial grows:
+    #   SAMPLING ERROR   variance 1/(n_test - 3) on the Fisher-z scale. Shrinks with the trial.
+    #   CONFIG x TRIAL   the configuration really performing differently on THIS trial than on
+    #   INTERACTION      an average one; variance 1/weight_cap. Does NOT shrink -- a bigger
+    #                    trial measures that trial's idiosyncrasy more precisely, it does not
+    #                    make the idiosyncrasy smaller.
+    # So the weight is the two precisions in series, 1/w = 1/(n_test - 3) + 1/weight_cap, and
+    # this number is the weight a trial of unbounded size would get. It therefore reads as a
+    # trial size: 50 means "no trial counts for more than one with 53 usable accessions". Inf
+    # restores the uncapped n_test - 3.
+    # Without it the weight spans 7 to 1434 across a real store (205x) and the largest trials
+    # decide everything; at 50 the span is 8x. Governs BOTH the aggregate estimator and the
+    # surrogate, from one helper, because they estimate the same quantity from the same rows
+    # (docs/LESSONS.md #36). dev/calibrate_weights.R re-derives it.
+    weight_cap         = 50,
+    # WHICH POPULATION sd_config is estimated on. It is the shrinkage prior and it sets the unit
+    # the contender test is denominated in, but as a fitted quantity it is the spread of the
+    # configurations the SEARCH CHOSE to evaluate -- which narrows as the search concentrates,
+    # so the prior tightens because the search succeeded, and every BLUP collapses toward the
+    # grand mean (SEARCH_ALGORITHM.md §11).
+    #   "reference"  estimate it on the configurations drawn WITHOUT the surrogate -- the Phase
+    #                3 random draws, read off evals.source -- and re-shrink on that. Seeds are
+    #                excluded: five hand-picked submissions are not a sample of the space.
+    #   "fitted"     the whole-population REML estimate, i.e. the behaviour before 2026-11-03.
+    # Falls back to "fitted" silently whenever the reference estimate cannot be had, which the
+    # report states; `source` has only been stored since 2026-11-03, so for older rows the
+    # reference set is inferred from arrival order (.reference_hashes()). Not run-defining: it
+    # changes an estimate derived from rows, not what any row means.
+    sd_config_source      = "reference",
+    reference_min_configs = 20,  # reference configs required before that estimate is trusted
+    # The reference sd_config becomes a FIXED prior with no allowance for its own uncertainty,
+    # and it is fitted on ~20-odd configurations with one or two rows each, so it can be large,
+    # confident and meaningless. Each draw refits on two thirds of the reference
+    # configurations; the estimate is rejected (and the fitted value kept) when too many draws
+    # collapse to the boundary. Measured: this is what separates a trustworthy 0.0246 on
+    # 9a2664962c01 from a 0.0517 on e7517df121d5 whose subsample IQR is 0.0000-0.0924. A few
+    # extra fits on a few dozen rows, against an evaluation that takes tens of minutes. 0
+    # disables the gate. The draws are seeded from the reference set itself, so the verdict is a
+    # function of the evidence and does not flip between iterations on unchanged data.
+    reference_stability_draws = 25,
+    # A PERSISTENT exploration rate, which n_random_init is not: that is a one-time gate on a
+    # cumulative count, so once it is passed the reference population never grows again and its
+    # sd_config estimate stops improving. 1 step in this many draws a fresh random
+    # configuration no matter how mature the run is, logged as source = "random_reference" so it
+    # is distinguishable in the log while counting as a reference draw. 0 disables, restoring
+    # the frozen reference population.
+    reference_every       = 20,
+    # Evaluations a REFERENCE configuration earns, against config_replication for everything
+    # else. A variance component needs replication WITHIN level: at config_replication = 2 the
+    # reference fit rests on about two rows per configuration, which was thin enough on one real
+    # run (7d75f214584a) for it to return a boundary 0 and decline. Served through the RATIONED
+    # tier of .replication_backlog(), never the unrationed floor, so a large value here cannot
+    # starve the search. <= config_replication disables it.
+    reference_replication = 4,
     # The two halves of LESSONS #19, both applying in simulate mode as well. 1 disables either.
     # Both are the BASE of a schedule that rises as the store grows -- see .trial_target() and
     # the replication backlog in R/optimizer.R.
     trial_replication  = 2,      # distinct configs a trial reaches before the search moves on
     config_replication = 2,      # evaluations every config gets, spread over distinct trials
-    contender_z        = 1,      # z in blup + z*se; a config stops earning reps once its
-                                 # optimistic bound falls below the leader's estimate
+    # WHAT COUNTS AS STILL IN PLAY. One definition, used for two things: which configurations
+    # earn extra evaluations, and which are parents for candidate generation (get_parents()).
+    #
+    # contender_rule names what the optimistic bound mean_i + z*se_i is compared against:
+    #   "racing"  max_j(mean_j - z*se_j), the best DEFENSIBLE value in the set. Optimistic
+    #             against pessimistic, so both sides are charged the same z, and a candidate is
+    #             eliminated only once its interval stops overlapping the leader's.
+    #   "point"   max_j(mean_j). The bar is then the maximum of a set of noisy estimates, which
+    #             one lucky thinly replicated configuration can set for everyone; measured, the
+    #             in-play set moves 2.4x to 4.6x further per checkpoint than under racing at the
+    #             same z (dev/sweep_contender_z.R).
+    #
+    # z does DOUBLE DUTY under racing -- it inflates the claim and lowers the bar -- so the two
+    # rules give comparable set sizes at z_racing ~ z_point/2. 0.25 here is the racing
+    # equivalent of 0.5 under "point", which is where the sweep found the most checkpoints with
+    # a usable set size. Under run_identity = "experiment" contender_z is run-defining, so
+    # changing it starts a new run_id; under the default "target" none of these three is, which
+    # is the reading SEARCH_ALGORITHM.md §13 argues for.
+    contender_rule     = "racing",
+    contender_z        = 0.25,
+    # The RESOLUTION FLOOR: the difference in predictive accuracy worth resolving, on the
+    # correlation scale, chosen from outside the run instead of measured in it. A configuration
+    # keeps its place when it misses the bar by less than this, so membership flips only on
+    # evidence that moves further than the resolution anyone cares about. It is the only term in
+    # the contender test that does NOT shrink as the evaluated population homogenizes, which is
+    # the defect SEARCH_ALGORITHM.md §11 describes. Read it against sd_config, which the
+    # reference population puts at 0.013 to 0.056 across this project's runs: as delta
+    # approaches sd_config everything is in play, and that is the honest reading rather than a
+    # failure -- no configuration then differs from another by an amount worth having. 0
+    # switches it off.
+    #
+    # 0.002 is measured, not chosen (dev/sweep_contender_rule.R, racing z 0.25, reference
+    # sd_config, pooled over the runs with a non-zero fitted sd_config):
+    #
+    #   delta   in_play (median)   % of scored   checkpoint-to-checkpoint jump
+    #   0.000         7                2.4            0.66
+    #   0.002        16                6.4            0.38
+    #   0.005        33                12.8           0.31
+    #   0.010        88                24.7           0.27
+    #   0.020       117                63.7           0.24
+    #
+    # 0.002 cuts the thrashing by 42% against no floor while keeping the set comfortably above
+    # the cap of 8 and inside a tenth of the population. Larger values keep buying stability --
+    # a set of 117 can hardly move -- but by then the rule has stopped discriminating. Note that
+    # SEARCH_ALGORITHM.md §11 suggested 0.02 before this was measured; at 0.02 two thirds of the
+    # field is in play.
+    resolution_delta   = 0.002,
     replicate_every    = 3,      # rations the CONTENDER tier only: 1 worker in this many takes
                                  # from it. The config_replication floor is never rationed.
     max_sample_fail    = 25,     # consecutive trial-sampling failures before halting
@@ -235,6 +373,22 @@ optimizer_settings <- function(local_overrides = TRUE, extra = NULL) {
     canary_weak_trials = c("10674", "10678", "10681"),  # marginal: soft-warn, not ALARM
     oracle_trials      = c("10675", "10677"),           # data-rich, for sweep_rich_trials()
     brapi_host         = "wheat.triticeaetoolbox.org",
+
+    # WHAT A RUN IS. The run signature decides when new evaluations join the existing evidence
+    # and when they start a separate history (R/store.R .run_signature_keys):
+    #   "target"      a run is a TARGET. Identified by optimize_scheme, target_domain,
+    #                 focal_trait_db_id, min_trial_acc and simulate -- the keys that change what
+    #                 a stored score MEANS. Search policy (trial_replication,
+    #                 config_replication, replicate_every, contender_z, n_random_init) can then
+    #                 be retuned without starting a new run, so evidence keeps accumulating on
+    #                 one domain while the method improves.
+    #   "experiment"  a run is an EXPERIMENT. All ten keys identify it, so every policy change
+    #                 starts a fresh run. Use this to compare search policies against each other.
+    # Switching between them rotates run_id ONCE, because the two hashes differ; after that the
+    # chosen reading is stable. It does NOT change which rows the search reads -- that is the
+    # universe, scheme and build filters (R/optimizer.R), none of which consult run_id -- so no
+    # store migration is involved either way. SEARCH_ALGORITHM.md §13.
+    run_identity     = "target",
 
     # ---- target domain: which trials the pipeline is optimized FOR --------
     # Focal trials are drawn from here. NULL places no constraint; fields combine with AND.
@@ -297,6 +451,37 @@ optimizer_settings <- function(local_overrides = TRUE, extra = NULL) {
       !(s$surrogate_method %in% c("merf", "blocked", "pooled")))
     stop("surrogate_method must be one of merf, blocked, pooled -- got: ",
          paste(s$surrogate_method, collapse = ", "))
+  if (length(s$surrogate_min_obs) != 1L ||
+      !is.finite(suppressWarnings(as.integer(s$surrogate_min_obs))) ||
+      as.integer(s$surrogate_min_obs) < 1L)
+    stop("surrogate_min_obs must be a single integer >= 1 -- got: ",
+         paste(s$surrogate_min_obs, collapse = ", "))
+  if (length(s$run_identity) != 1L || !(s$run_identity %in% c("target", "experiment")))
+    stop("run_identity must be one of target, experiment -- got: ",
+         paste(s$run_identity, collapse = ", "))
+  for (nm in c("reference_every", "reference_replication", "reference_stability_draws")) {
+    v <- suppressWarnings(as.integer(s[[nm]]))
+    if (length(v) != 1L || is.na(v) || v < 0L)
+      stop(nm, " must be a single integer >= 0 -- got: ", paste(s[[nm]], collapse = ", "))
+  }
+  if (length(s$contender_rule) != 1L || !(s$contender_rule %in% c("racing", "point")))
+    stop("contender_rule must be one of racing, point -- got: ",
+         paste(s$contender_rule, collapse = ", "))
+  if (length(s$sd_config_source) != 1L ||
+      !(s$sd_config_source %in% c("reference", "fitted")))
+    stop("sd_config_source must be one of reference, fitted -- got: ",
+         paste(s$sd_config_source, collapse = ", "))
+  for (nm in c("contender_z", "resolution_delta")) {
+    v <- suppressWarnings(as.numeric(s[[nm]]))
+    if (length(v) != 1L || !is.finite(v) || v < 0)
+      stop(nm, " must be a single finite number >= 0 -- got: ",
+           paste(s[[nm]], collapse = ", "))
+  }
+  for (nm in c("n_parents", "n_elites", "reference_min_configs")) {
+    v <- suppressWarnings(as.integer(s[[nm]]))
+    if (length(v) != 1L || is.na(v) || v < 1L)
+      stop(nm, " must be a single integer >= 1 -- got: ", paste(s[[nm]], collapse = ", "))
+  }
   if (length(s$optimize_scheme) != 1L || !is.character(s$optimize_scheme) ||
       !(s$optimize_scheme %in% s$schemes))
     stop("optimize_scheme must be a single scheme that is one of `schemes` (",

@@ -14,10 +14,10 @@ The code cites these by number (`see docs/LESSONS.md #11`). Numbers are stable: 
 |---|---|
 | §1 The T3 data layer | #1–#10, #27 |
 | §2 Genomic methods | #11–#14 |
-| §3 Search space and design | #15–#17 |
+| §3 Search space and design | #15–#17, #33 |
 | §4 Testing and validation | #18–#20 |
 | §5 Numerical robustness | #21–#22 |
-| §6 Running it: resources, concurrency, configuration | #23–#26, #28 |
+| §6 Running it: resources, concurrency, configuration | #23–#26, #28–#32, #34–#45 |
 
 ---
 
@@ -239,6 +239,46 @@ overlap is counted in germplasm **name** space (what every downstream join uses)
 restricted to the focal-trait catalogue — a trial that never measured the trait is not a training
 trial.
 **Lives in.** `R/pipeline.R::.find_related`.
+
+### 33. The search can churn: turnover among candidates with no improvement and no resolution
+
+**Trap.** Reading a plateau in the leader's score plus constant turnover in the contender list as
+"the search is still exploring", and waiting for replication to settle the field.
+**Symptom.** On run `9a2664962c01` the leader's estimate rose from 0.324 to 0.342 by evaluation
+703 and then sat between 0.336 and 0.339 for the remaining 5,533 evaluations, while the leader's
+identity changed at 19 of 25 checkpoints (19 distinct leaders, median top-8 Jaccard 0.33) and the
+leader's usable replication was often 1–3. Nothing was converging and nothing was being decided.
+Run `80cfbd7c27e9`, same code and build, did not churn (5 leaders, Jaccard 0.89) — so this is a
+regime, not a constant, and a run cannot be judged by another run's behaviour.
+**The five mechanisms, each measured.** (1) `sd_trial` exceeds `sd_config` in six of the seven
+stored runs. (2) `se` can never exceed `sd_config`, and replication shrinks it only in proportion
+to `n/n*` where `n* = (sd_resid/sqrt(w_bar))^2 / sd_config^2`; on the two 24-trial targets `n*` is
+24.9 and 26.6, i.e. larger than the universe, so the best precision a full budget can reach there
+is `se = 0.7 sd_config` — the posteriors stay overlapped whatever the budget.
+(3) The contender cap is the top 8 by UCB, with no memory: a configuration pushed out is in no
+backlog tier, is not re-proposed by acquisition, and is frozen — and because the extra evaluation
+pulls a top-ranked BLUP back toward the grand mean, replication *removes* configurations from the
+set rather than accumulating evidence on them (the previous checkpoint's leader sat at median rank 19 at the
+next). (4) The EI uncertainty floor bound for 121 of 121 candidates, which equalises their
+uncertainty and makes EI a strictly increasing function of the predicted mean — plain greedy
+exploitation — and since the forest predicts lower for fresh random draws than for elite
+recombinations, exploration stops; 97% of that run's 1,043 configurations then shared five
+identical continuous parameters and 60 crossover draws de-duplicated to 2. (5) That homogeneous
+population drives `sd_config` down (0.0263 → 0.0078 over the run; exactly 0.0000 when the second
+half is fitted alone), which strengthens the shrinkage in (3) and the greediness in (4).
+**Now.** Nothing is fixed. What exists is the diagnosis: `docs/SEARCH_ALGORITHM.md` defines churn
+as three required series (turnover, direction, resolution), gives `n*` against the universe size
+as the cheap test of how much precision a target allows at all, and documents each mechanism against
+its code. `BACKGROUND.md` holds the candidate remedies (shared trial panel, empirical-Bayes
+blending, racing in place of the fixed cap), none built.
+**Generalise.** A quantity that is both the prior and the yardstick will dissolve the decision
+rule it is supposed to enforce. `sd_config` is the shrinkage prior *and* the unit the contender
+threshold is measured in, so a search that concentrates its population automatically shrinks the
+scale on which "still in play" is judged. A threshold worth trusting is denominated in a fixed,
+externally chosen difference — the `Delta` in predictive ability actually worth resolving — not in
+a variance the search itself moves.
+**Lives in.** `R/optimizer.R::.contenders` / `.replication_backlog` / `.blup_scores`,
+`R/surrogate.R::predict_surrogate`.
 
 ---
 
@@ -593,3 +633,529 @@ at the next backup.
 resolves the domain from today's catalogue when no record matches (`resolve_trial_universe()`).
 **Lives in.** `R/store.R::restore_store_from_backup`, `R/data_access.R::resolve_trial_universe`,
 `dev/holdout_test.R`.
+
+### 34. One quantity, two thresholds: the band between them was evaluations paid for and thrown away
+
+**Trap.** Gating *feasibility* and *usability* on the same quantity with different numbers.
+`score_predictions()` produced a score from as few as **5** joined, finite accession pairs — the
+Predictathon's own "task can fail" rule — while `aggregate_scores()` admitted a score to the
+estimates only at **10** or more (`min_n_test`, a hardcoded default argument, not a setting).
+Each number was defensible alone. Together they defined a band in which an evaluation ran to
+completion, cost a full pipeline, was stored with `status = "ok"` and a real correlation, and
+was then invisible to the BLUP, the contender rule, the elite pool and `n_ok`.
+**Symptom.** Nothing. Both gates behaved exactly as written; no warning, no failure row, and
+the report counted those evaluations as successes. The waste was only visible by crossing
+`n_test` with `trial_id`: on run `9a2664962c01`, six of the fourteen trials ever evaluated
+returned `n_test = 7` on **every** evaluation, so **2029 of 5631 successful evaluations (36%)**
+were discarded by every estimate, and the maximum attainable replication for any configuration
+in that run was 8 usable evaluations rather than 15. The same crossing on `80cfbd7c27e9` loses
+10% and on `46b0d4b39c79` none, so the cost depends entirely on the target domain — which is
+why no single run's health said anything about it.
+**Aggravator.** The Fisher-z weighting (`n_test - 3`) made the pair *look* harmless: a short
+correlation already enters the pooled mean at near-zero weight, so the hard floor reads like a
+belt-and-braces refinement. It is not, because the surrogate is **not** weighted — see #35 —
+and because a weight cannot refund an evaluation that should never have been attempted.
+**Now.** One setting, `settings$min_test_acc`, default **10**, read through `.min_test()` and
+applied at both ends: `score_predictions()` declines the task below it, so no row is created,
+and `.fisher_weights()` marks a row `.usable` only at or above it. `min_test` is a required
+argument of both `score_predictions()` and `.fisher_weights()`, and `aggregate_scores()` takes
+`settings` — there is no local default left to drift. The `.usable` test is still live code
+because the archive holds rows written under the old pair.
+**Cost of the fix, stated plainly.** 10 declines tasks the Predictathon would score at 5. That
+is deliberate: a correlation on 5 accessions is not worth a 29-minute median evaluation on
+either side of the gate, and the alternative — scoring it and then ignoring it — is what this
+entry is about.
+**Generalise.** When two stages of a pipeline test the same quantity, they must read the same
+constant from the same place, and that place should be the settings file. Two independently
+reasonable thresholds on one quantity do not compose into a reasonable policy; they compose
+into a silent dead zone whose width nobody chose and whose cost nobody measured. The smell to
+look for is a hardcoded default argument that shadows a real setting.
+**Lives in.** `settings.R::min_test_acc`, `R/pipeline.R::.min_test`,
+`R/evaluate.R::score_predictions`, `R/optimizer.R::.fisher_weights` / `aggregate_scores`.
+
+### 35. The surrogate sees raw, unweighted correlations — not the z-transformed weighted ones
+
+**Trap.** Assuming that because `aggregate_scores()` does the statistically careful thing —
+Fisher-z transform, weight `n_test - 3`, trial effect blocked out by a mixed model — everything
+downstream of a score does too. It is a natural assumption and it is what makes #34's two
+thresholds look safe.
+**Symptom.** None visible. The surrogate predicts, the search proceeds. But `choose_config()`
+builds the forest's training rows with `dplyr::filter(evals, is.finite(score))`
+(`R/optimizer.R:521`) — `is.finite`, not `.usable` — and passes raw `score` to
+`fit_surrogate_merf()`, which applies **no** weights, **no** z-transform, and **no** `n_test`
+floor at any point: not in the `lmer` call that estimates the trial effect, not in the `rpart`
+trees. So a 5-accession correlation of 0.9 and a 200-accession correlation of 0.9 are the same
+observation to the forest, and rows the BLUP refuses to use still shape every prediction and
+every EI value.
+**Now.** Closed, 2026-11-03. `choose_config()` runs its slice through `.fisher_weights()` — the
+estimator's own helper — keeps only `.usable` rows, fits on `.z`, and passes `.w` as `rpart`
+case weights and as `lmer` weights inside `fit_surrogate_merf()`. One floor, one weight, one
+transform, one helper, two consumers. The cap on that weight is #36; putting `best` on the same
+scale as the predictions took a second step, and is #37.
+**Generalise.** Two consumers of the same column are two chances to disagree about what the
+column means. Being careful in one estimator does not propagate; the care has to be applied
+where each consumer reads, or the column has to arrive pre-weighted. The structural fix is not
+"weight the second consumer too" but "make both call the same function", which is why
+`.fisher_weights()` is now the only place a row's worth is decided.
+**Lives in.** `R/optimizer.R::choose_config` (the row filter),
+`R/surrogate.R::fit_surrogate_merf` / `fit_surrogate`.
+
+### 36. `n_test - 3` is the wrong weight, because sampling error is not the only error
+
+**Trap.** Taking the textbook inverse-variance weight for a correlation, `n_test - 3`, as
+correct because the Fisher transform makes `Var(z) = 1/(n-3)` exactly. It is the right weight
+for *resampling the test set*. This design never resamples a test set: every configuration on a
+trial is scored against the **same** accessions, and a configuration can also genuinely perform
+differently on that trial than on an average one. That second error — config × trial interaction
+— does **not** shrink as the trial grows. A bigger trial measures the trial's idiosyncrasy more
+precisely; it does not make the idiosyncrasy smaller.
+**Symptom.** Weights spanning 7 to 1434 within one run (205×), so a handful of large trials
+decided every split and every pooled mean. And a calibration failure hiding in plain sight:
+`lmer` reports `sd_resid` at unit weight, so if `n_test - 3` were the whole variance story the
+fitted `sd_resid` would be **1**. Measured across seven runs it spans **0.096 to 4.72** — a
+factor of 49, in *both* directions. Above 1 is the unmodelled interaction; below 1 is the shared
+test set, whose realised sampling error is common to every configuration on that trial and is
+therefore absorbed by `(1 | trial_id)` rather than appearing in the residual.
+**Now.** Two precisions in series, `1/w = 1/(n_test - 3) + 1/weight_cap`, in `.eval_weight()`,
+used by `.fisher_weights()` and so by both the aggregate and the surrogate. `weight_cap` is the
+weight an unboundedly large trial gets, so it reads as a trial size: the default **50** means
+"no trial counts for more than one with 53 accessions", and collapses the within-run weight span
+from 205× to 8×.
+**What the calibration actually said, and why the default is not it.** Solving `sd_resid = 1`
+per run gives `C ≈ 33` and `41` for the two CV0 runs and `C ≈ 608` and `1058` for the two CV00
+runs — tight within scheme, 25× apart across it, which fits the mechanism (CV00 masks the focal
+genotypes, so configurations are forced onto more similar information and interact less with the
+trial). The other three runs cannot inform it at all: their `n_test` is near-constant (127–130),
+which makes the fit *invariant* to the cap — identical `sd_trial`, `sd_config` and `n*` at every
+grid point. A single conservative 50 was chosen over two per-scheme numbers fitted on two runs
+each. It is right for CV0 and ~20× too tight for CV00.
+**Cost of that choice, stated plainly.** Capping at 50 drives `sd_config` to exactly **0** in
+both 24-trial runs (`80cfbd7c27e9`, `e7517df121d5`), where uncapped they fitted 0.0135 and
+0.0305. `80cfbd7c27e9` keeps a non-zero 0.0105 at its own calibrated 1058, so for that run the
+collapse is the cap's doing, not the data's. And `sd_config = 0` is worse than it sounds: every
+BLUP shrinks to exactly the grand mean, so all configurations **tie** at the maximum, all of them
+pass the contender test (`in_play` goes to 2147/2147 and 705/705), and the top-8 cap hands
+`get_elites` an arbitrary eight. The ranking stops carrying information rather than merely
+getting noisier.
+**But that zero is singleton dilution, not a lost signal — measured.** Re-fitting
+`80cfbd7c27e9` on replicated configurations only takes `sd_config` from 0.0000 to **0.0068**
+(`n_ok >= 4`) and **0.0134** (`n_ok >= 6`) — back to its uncapped whole-population value. The
+capped fit is not blind; it is telling the truth about a population that is mostly singletons,
+and `config_replication` plus contender replication are the mechanisms that answer it. The
+contrast is the evidence: on `e7517df121d5` and `f92e28ec6415`, `sd_config` is 0 at **every**
+replication threshold, so there the zero is the answer. Which is why one conservative cap was
+acceptable after all — on a 24-trial CV00 target, the shape of the live run, it costs
+replication effort, not information.
+**Generalise.** A variance model inherited from a textbook is a hypothesis about your design,
+not a property of your statistic. It is testable almost for free whenever the fit reports a
+residual at unit weight: calibrated weights put that residual at 1, and any other value is the
+size of what the weight does not model. Check it before trusting the weight, and check it per
+run — ours disagreed by 49×.
+**Lives in.** `settings.R::weight_cap`, `R/optimizer.R::.eval_weight` / `.fisher_weights`,
+`R/surrogate.R::fit_surrogate` / `fit_surrogate_merf`, `dev/calibrate_weights.R`.
+
+### 37. EI compared a shrunken incumbent against unshrunken predictions, and that killed exploration
+
+**Trap.** Reaching for the best number you have as the EI reference point. `max(mean_score)` is
+the best estimate of the best configuration's quality, so it looks like the right incumbent —
+and it is, as an estimate. It is the wrong *reference*, because EI does not compare estimates,
+it compares a prediction against a reference that must be produced the same way.
+**Symptom.** Acquisition quietly stops exploring. Nothing errors, nothing warns, EI is still
+computed and still has a well-defined argmax. But `best <- max(.to_z(scored$mean_score))` is a
+BLUP, shrunk toward the grand mean in proportion to `sd_config` (SEARCH_ALGORITHM §4.5), while
+`pr$mean` is a forest prediction with no shrinkage at all. Write EI out:
+
+```
+EI = (m - best - xi)·Phi(z) + sd·phi(z),      z = (m - best - xi)/sd
+```
+
+Driving `best` down sends `z -> +inf`, so `Phi(z) -> 1`, `phi(z) -> 0`, and `EI -> m - best - xi`.
+The ranking does not flatten — it **collapses onto the predicted mean**. `sd·phi(z)` is the only
+term that ever lets EI prefer a candidate the forest is unsure about, so losing it converts
+Expected Improvement into plain greedy exploitation of the surrogate mean. And the error grows
+with exactly the thing that should trigger more caution: the less the configurations are
+distinguishable, the smaller `sd_config`, the harder the shrinkage, the greedier the search. In
+the limiting case `sd_config` fits to 0, every BLUP *is* the grand mean, and `best` was the
+grand mean of the whole run.
+**Now.** Closed, 2026-11-03. `best` is the forest's own trial-marginal prediction at the
+features of the configurations already evaluated, through the same `.marginal()` closure that
+predicts the candidates — one estimator, one scale, by construction. **Measured** on the final
+rows of four runs at `weight_cap = 50`: `best` rises 0.1211 -> 0.2239 (`80cfbd7c27e9`) and
+0.3516 -> 0.5228 (`e7517df121d5`), the two runs where `sd_config` fits to 0, and Spearman(EI,
+predicted mean) falls from 0.682 to 0.260 and from 0.766 to -0.017. Where shrinkage is mild
+(`34e15bd03838`, `sd_config = 0.1001`) `best` moves -0.02 and little changes. The size of the
+correction tracks the shrinkage, which is the algebra's own prediction.
+**Why the repair only runs one way.** The symmetric-looking alternative — shrink `m` to the
+posterior scale instead of deregressing `best` — is not available. A candidate's shrinkage
+factor is `lambda_i = W_i/sd_resid² / (1/sd_config² + W_i/sd_resid²)` and an unevaluated
+candidate has `W_i = 0`, so `lambda = 0` and every candidate would collapse to `mu_hat`. The
+posterior scale has no room for a configuration with no data. Harmonisation has to go toward the
+unshrunken scale, which is why "use the model's own prediction at the evaluated points" is the
+standard EI reference under noisy observations rather than a local trick.
+**What this does NOT fix, measured.** On `9a2664962c01` the change does nothing at all —
+Spearman(EI, mean) stays at exactly 1.000 — because the uncertainty floor
+`sd_floor <- 0.25 * sd(y_obs)` binds for **129 of 129** candidates, and under a uniform `sd` EI
+is monotone in `m` whatever `best` is. There are two independent routes to the same degeneracy
+and only one is closed. The floor is the open one.
+**Open: the reference is partly in-sample.** Predicting at a configuration's own features uses
+trees that saw its rows. Measured against the unshrunk pooled means the forest smooths far
+harder than it memorises — `max(prediction)` is 0.22-0.52 where `max(pooled z)` is 0.70-0.93,
+and restricting to `n_ok >= 3` barely moves it — and the bias errs toward a higher `best`, hence
+more weight on `sd`, which is the safe direction here. An out-of-bag reference would remove it
+at the cost of storing per-tree in-bag indices; not built.
+**Generalise.** Whenever two numbers are subtracted, ask what estimator produced each. Shrinkage
+is the usual culprit because it is invisible at the call site: both sides are "the score",
+on the same units, back-transformed the same way, and only the *estimation* scale differs. The
+defence is structural — make both sides come out of the same function, as `.marginal()` now
+does — not a correction factor, which would need the very variance component that was unstable.
+**Lives in.** `R/optimizer.R::choose_config` (the `.marginal()` closure and `best`),
+`R/surrogate.R::expected_improvement`, `docs/SEARCH_ALGORITHM.md` §8.3-8.4.
+
+### 38. The log knew which phase proposed a configuration; the store did not
+
+**Trap.** Logging a fact and recording it are not the same thing, and the difference is invisible
+until someone asks a question about the past. `choose_config()` has always returned `source` --
+`seed:Prediction3`, `random_init`, `acquisition_merf`, `random_fallback` -- and the main loop has
+always printed it (`src=acquisition` in every iteration line). It was never written to `evals`.
+**Symptom.** A question that should have been a one-line query turned out to be unanswerable.
+`sd_config` is estimated over the configurations *in the fit*, and the search narrows that
+population deliberately, so the estimate falls as the search concentrates (#33, SEARCH_ALGORITHM
+§11). The fix is to estimate it instead over the configurations chosen **independently of the
+surrogate** -- the seeds and the Phase 3 random draws -- which is an unbiased sample of the
+universe and whose rows are sitting in the store already. Except that nothing in `evals` says
+which rows those are. The best available reconstruction is "the first `n_random_init + 5`
+distinct `config_hash` by `ts`", which is approximate (concurrent workers interleave), fragile,
+and silently wrong for any run whose phases did not proceed in the expected order.
+**Measured, on that reconstruction.** Where the reconstructed set is replicated enough to
+identify a variance component at all, it says what the theory predicts: on `80cfbd7c27e9`
+(median `n_ok` 5) `sd_config` is **0.0130** over the selection-independent set against 0.0000
+over the whole population, and 0.0130 agrees with both the uncapped whole-population fit
+(0.0135) and the `n_ok >= 6` restriction (0.0134) -- three routes to the same number. On
+`9a2664962c01` (median 6) it is 0.0246 against 0.0078. On the three runs whose reconstructed set
+has median `n_ok` of 1-3 the estimate is noise and lands on both sides. So the idea works and the
+archive can only half-demonstrate it.
+**Now.** `evals` has a `source TEXT` column, added by the same `ALTER TABLE` migration loop that
+added `build` and `run_id`, so old stores gain it on open. `store_eval()` takes `source` and
+`optimizer_step()` passes `choice$source`. Rows written before 2026-11-03 are `NA` and stay
+unclassifiable -- the column is not retroactive, which is the whole point of this entry.
+**Generalise.** When a decision procedure has branches, record which branch fired, in the same
+row as the outcome. It costs one column and it is the only way to ask afterwards whether a
+subset of the data was selected on the thing you are now trying to estimate. The tell is a
+variable that exists in the code, is interesting enough to print, and is not in the schema: the
+log is a stream nobody can join against, and by the time the question arrives the stream is
+gone. Selection provenance in particular is not recoverable by inference -- `ts` ordering is a
+guess, not a record.
+**Lives in.** `R/store.R` (schema, the `add` migration vector, `store_eval`),
+`run_optimizer.R::optimizer_step`.
+
+### 39. Two unrelated quantities shared one setting, and the coupling was load-bearing
+
+**Trap.** `min_obs` -- the rows a forest needs before it is worth fitting -- was passed as
+`settings$n_random_init` at all three `fit_surrogate*` call sites. The two numbers want to be
+equal at the start of a run, so one setting looked like economy rather than conflation. They are
+different questions: `n_random_init` is a search-policy budget ("explore at random until this
+many configurations are scored"), `min_obs` is a statistical floor on a regression fit.
+**Symptom.** Neither could be changed alone. Raising the random-exploration budget to 100 also
+demanded 100 rows before any surrogate would fit; lowering the fit threshold also cut exploration
+short. Worse, `n_random_init` was at the time one of the ten run-defining keys and `min_obs` has
+no business being one, so a purely statistical choice could not be made without rotating the
+run's identity. (Both halves of that have since moved: `run_identity = "target"` makes
+`n_random_init` policy rather than identifying, and #45 records that rotating `run_id` never hid
+the rows in the first place. SEARCH_ALGORITHM §13.)
+**What the coupling was silently doing.** Decoupling them broke a test, which is how the load-
+bearing part surfaced: `min_obs` counts the rows of whichever mode is being tried, and the modes
+count differently -- MERF and BLOCKED get one row per `(config, trial)`, POOLED gets one row per
+*configuration*. Phase 3 guarantees exactly `n_random_init` scored configurations before
+acquisition begins, so `min_obs = n_random_init` was precisely the largest threshold at which
+POOLED could ever fit. Setting the new `surrogate_min_obs` above `n_random_init` therefore
+retires the POOLED fallback without saying so; the search falls through to `random_fallback`
+instead, which is safe but spends the step.
+**Now.** `settings$surrogate_min_obs` (default 25, equal to `n_random_init`, so behaviour is
+unchanged), read through `.surrogate_min_obs()`, validated as an integer >= 1, and not
+run-defining. The mode-dependent row count and the POOLED consequence are written next to the
+setting and in SEARCH_ALGORITHM §8.2.
+**Generalise.** Sharing one setting between two quantities that merely happen to be equal is a
+latent constraint, and removing it can remove a guarantee nobody wrote down. Before splitting a
+coupled constant, ask what the equality was protecting -- the answer is often in a test that
+breaks for a reason unrelated to the change. The converse trap is #34: one quantity read from
+two places. Both come from the same failure to ask "is this the same number, or two numbers that
+agree today?"
+**Lives in.** `settings.R::surrogate_min_obs`, `R/optimizer.R::.surrogate_min_obs` and
+`choose_config`, `dev/measure_churn.R`.
+
+### 40. `sd_config` was measured on the population the search had already narrowed
+
+**Symptom.** The shrinkage prior tightened *because the search was working.* `sd_config` is the SD
+of the configuration effects in whatever population is currently in the fit, and by late in a run
+most evaluated configurations are recombinations of a few parents. On `9a2664962c01` the fitted
+value fell from 0.0251 to 0.0078 over 6236 evaluations; on `80cfbd7c27e9` and `f92e28ec6415` it
+reached the boundary at 0, where every BLUP ties at the grand mean, every `se` is 0, and the
+contender rule is inoperative at every `z`. Nothing errored, and the number was a correct REML
+estimate of the quantity it was actually estimating.
+
+**Why it mattered three times over.** That one number is the shrinkage prior, it is the unit the
+contender test is denominated in (`se <= sd_config`), and it feeds back into the homogenization
+that lowered it. So a search that concentrated became a search that could no longer tell anything
+apart, and the mechanism looked like success.
+
+**What made the repair possible.** #38 — storing `evals.source`. Once the store records which
+phase of `choose_config()` proposed a configuration, the rows drawn *without* reference to the
+surrogate can be named, and `sd_config` can be estimated on those alone. That set is a sample of
+the configuration space; the full evaluated set is a sample of the search's trajectory. Seeds are
+excluded: five hand-picked submissions are not a sample of anything.
+
+**Measured.** Replaying the real runs (`dev/sweep_contender_rule.R`), the reference estimate is
+flat across a run where the fitted one collapses — `9a2664962c01`, fitted 0.0251 → 0.0078,
+reference 0.0240 → 0.0246 — and it exists where the fitted one is zero: `80cfbd7c27e9` 0 → 0.0130,
+`e7517df121d5` 0 → 0.0517, `f92e28ec6415` 0 → 0.0250. On `34e15bd03838` it runs the *other* way
+(fitted 0.100, reference 0.056), which is the honest counter-case: a run whose evaluated set
+genuinely is more spread out than the space gets a *tighter* prior, not a looser one. The
+consequence for the search is large: median in-play share goes from 100% to 0.7% on
+`80cfbd7c27e9` and from 100% to 0.05% on `f92e28ec6415` — from a set containing every scored
+configuration to one the cap of 8 can actually serve.
+
+**Two things the repair does not fix.** The reference population is frozen when Phase 3 ends, so
+its estimate stops improving — with `n_random_init = 25` and `config_replication = 2` it rests on
+about 2 rows per configuration, and on `7d75f214584a` that is thin enough that the reference fit
+itself returns a boundary 0 and the code declines (correctly: a pin of 0 is strictly worse than the
+fitted value it would replace). A persistent exploration rate, or a larger `n_random_init`, is the
+lever, and neither is built. Second, the pinned path re-shrinks analytically while the unpinned
+path uses lme4's `postVar`, so switching `sd_config_source` switches the `se` *estimator* as well
+as the prior; the analytic form runs a few percent low, which is immaterial beside the 2–4x prior
+differences above but is a real confound in any small comparison.
+
+**Generalise.** When an estimate is used to *decide* what to sample next, ask what population it
+is an estimate *of*. A quantity computed from the search's own output describes the search, and
+feeding it back as a prior closes a loop that looks like convergence from the inside. The fix is
+not a better estimator — it is a sample that the decision did not choose.
+
+**Lives in.** `R/optimizer.R::.reference_hashes`, `.reference_sd_config`, `.blup_scores`
+(`sd_config_pin`), `settings.R::sd_config_source`/`reference_min_configs`,
+`dev/sweep_contender_rule.R`, SEARCH_ALGORITHM §11.
+
+### 41. The contender bar was a point estimate, so a lucky singleton could evict the leader
+
+**Symptom.** The in-play set did not drift over a run, it *thrashed*: on `9a2664962c01` at
+`contender_z = 0.5` the count went 5, 33, 4, 66, 7, 24, 24, 156, 120, 131, 144, 99, 156, 231, 254,
+88, 90, 259, 271, 84, 61, 156, 7, 7, 13 across 25 checkpoints while `sd_config` declined smoothly.
+Membership in a set that governs *all* further replication (§7: dropping out costs everything) was
+turning over almost completely between refits, and there was no stage signal for an adaptive `z` to
+track.
+
+**Cause.** The rule compared an optimistic bound against a *point* estimate,
+`mean_i + z*se_i >= max_j(mean_j)`. The bar was therefore the maximum of a set of noisy
+estimates — the most upward-biased order statistic in the set — so one thinly replicated
+configuration with a lucky draw set the bar for everyone, including for a well-replicated leader it
+could evict. The asymmetry is also unprincipled on its own terms: the candidate is charged for its
+uncertainty and the leader gets a free pass on its.
+
+**Fix.** The racing comparison, `mean_i + z*se_i >= max_j(mean_j - z*se_j)` — optimistic against
+pessimistic, both sides charged the same `z`, which is the criterion a racing algorithm eliminates
+on (intervals must stop overlapping). A lucky singleton can now *join* the set but cannot
+*redefine* it, because setting the racing bar takes a high mean **and** a small `se`.
+
+**What the measurement actually said, including the part that deflates it.** At a fixed `z` racing
+is more stable at every run tested, by 2.4–4.6x at `z = 0.5`. But it also produces a set 3–5x
+larger, and larger sets are mechanically steadier, so the fair comparison is at matched set size —
+and there the advantage mostly evaporates (two runs of three better, one worse). Once the
+reference prior of #40 is in place it evaporates further: at comparable set size racing and the
+point rule are a wash on stability. The rule is kept because its failure mode is structurally
+worse, not because the stability gain survived. **The prior was the lever; the comparison was
+not.** Two independent diagnoses had pointed at the bar, and only measurement separated them.
+
+**And the stability metric itself turned out to reward vacuity.** `jump` falls as the set grows,
+so the old settings' apparent steadiness was the steadiness of a set containing 66-100% of the
+population — it could not move because it already held everything. On the settings that fixed the
+set size, `jump` got *worse* on four of seven runs. Any scale-free turnover measure has to be read
+beside the quantity it is measuring; here that was stated as a caveat first and then confirmed as
+the dominant effect, which is the right order but was close to being forgotten in between.
+
+**Two consequences of adopting it.** `z` does double duty under racing — it inflates the claim and
+lowers the bar — so the set grows about twice as fast in `z`, and the default fell from 1 to 0.25
+to hold the operating point. And `mean_score` is on the correlation scale while `se` is on the z
+scale, so both bars mix the two; every `z` here is calibrated against that mixed comparison, so
+correcting the scale would silently move the operating point and needs a re-sweep, not an edit.
+
+**Lives in.** `R/optimizer.R::.in_play`/`.contender_spec`, `settings.R::contender_rule`/
+`contender_z`, `dev/sweep_contender_z.R` (which measured the point rule and is pinned to it),
+`dev/sweep_contender_rule.R`, SEARCH_ALGORITHM §7.
+
+### 42. Replication and parenthood asked the same question two different ways
+
+**Symptom.** Two decisions turn on "is this configuration potentially good": whether it earns
+further evaluations, and whether it is a parent for crossover and mutation. The first consulted
+uncertainty — the contender set, `mean + z*se` against a bar. The second did not: parents were the
+top `settings$n_elites` by point estimate, `get_elites()` sorting on `mean_score` with `se`
+unread. So a configuration could be judged good enough to deepen and not good enough to breed
+from, or the reverse, with nothing anywhere giving a reason for the asymmetry. §4.4's claim that
+`se` enters the search in exactly one place was the symptom stated as a feature.
+
+**Fix.** One definition, `.in_play()`, read by both. Parents are the in-play set, capped at
+`n_parents` (32) and floored at `n_elites` (8).
+
+**Why both bounds are load-bearing.** The cap: when the estimator cannot separate anything the
+in-play set is *every* scored configuration, and unbounded parenthood is then recombination among
+all of them — ordered by UCB, so the cap keeps the most promising. The floor: the in-play set is
+*empty* whenever the random-effects fit did not run, because no fit means no `se` and `.in_play()`
+drops every row without one — and an empty parent pool turns `propose_candidates()` into pure
+random draws with nothing saying so. That is #30's failure in a new place.
+
+**A worry that measurement refuted.** UCB ranking was expected to flood the parent pool with
+singletons, since `se` is largest where replication is smallest. It does the opposite in the usable
+range: median `n_ok` of the UCB top 8 is 4.5–5 at `z <= 0.75` and falls to 2 only at `z >= 1.5`.
+Shrinkage is why — a singleton's BLUP is pulled so far toward the grand mean that its inflated
+`se` does not recover the gap.
+
+**Generalise.** When two decisions depend on the same latent judgement, look for the one that was
+implemented first and ask whether the other inherited its criterion or just never got one. The
+asymmetry here was not a design choice anybody defended; it was two functions written at different
+times.
+
+**Lives in.** `R/optimizer.R::get_parents`/`get_elites`/`.in_play`,
+`settings.R::n_parents`/`n_elites`, SEARCH_ALGORITHM §7 and §8.5.
+
+### 43. The contender bound added a z-scale standard error to a correlation-scale mean
+
+**Symptom.** None visible. `.contenders()` computed `mean_score + z * se` where `mean_score` is
+`tanh(mu + c_i)` on the correlation scale and `se` is the posterior SD on the Fisher-z scale, so
+the sum was a quantity on neither scale. Nothing errored, every number looked plausible, and at
+this project's score range (r ~ 0.15) the two differ by about 2% — which is exactly why it
+survived: the report even carried a comment saying the report "does not convert" because the
+difference is small.
+
+**Why it still mattered.** Two reasons, and the second is the one that forced the fix.
+
+1. `tanh'(x) = 1 - r²` runs 0.99 at r = 0.1 but 0.79 at r = 0.45 and 0.19 at r = 0.9, so the
+   error is not uniform: it *overstates* the optimistic bound of a high-scoring configuration
+   relative to a low-scoring one. The bias runs in favour of whatever is already winning.
+2. `resolution_delta` is a difference in predictive **accuracy**. That only means something on
+   the correlation scale, so adding it to a comparison that was on neither scale had no defined
+   interpretation at all. The resolution floor could not be specified honestly until the
+   comparison it modifies was on one scale.
+
+**Fix.** `.blup_scores()` now returns `z_mean` beside `blup`, so the estimate and its `se` are
+available on the same scale. `.in_play()` forms the interval on z and transforms the
+**endpoints**: `ucb_i = tanh(z_mean_i + z*se_i)`, `bar = max_j tanh(z_mean_j - z*se_j)`. Exact,
+not a delta-method approximation. `atanh(mean_score)` is the fallback for a caller supplying
+only `mean_score`, which is exact for a BLUP row.
+
+**What changed and what did not.** Because `tanh` is monotone, the fix changes **no** in/out
+decision for `z` alone — the ordering and the membership are identical. What moves is anything
+involving `delta`, and the measured effect on real runs is modest but not nil: median in-play at
+the live spec went 25.0 → 23.5, 53.0 → 34.5, 179.0 → 141.5 on three runs. So the calibration of
+`contender_z` carried over, and the re-sweep confirmed rather than redid it.
+
+**Generalise.** A transform applied to one side of a comparison and not the other is invisible
+when the transform is near-linear over the observed range, and small numerical disagreement is
+the easiest thing in the world to write a comment excusing. The tell is not the size of the
+error, it is that the two operands have different units. Here the giveaway had been sitting in a
+comment in `R/report.R` for months: "`se` here is on the Fisher-z scale ... while mean_score is
+back-transformed ... the two differ by ~2%, which is why the report does not convert."
+
+**Lives in.** `R/optimizer.R::.blup_scores` (`z_mean`), `.in_play`, `aggregate_scores`,
+SEARCH_ALGORITHM §7.
+
+### 44. A prior estimated from 24 configurations was pinned as if it were known
+
+**Symptom.** The reference-population `sd_config` of #40 fixed the collapse it was built for and
+then over-corrected on the thinnest run. `e7517df121d5`'s fitted `sd_config` is 0; its reference
+estimate is 0.0517; pinning that resolved its contender set to **2 configurations out of 300**
+after 2964 evaluations. The pipeline was working exactly as designed and the answer was absurd.
+
+**Cause.** The reference estimate becomes a *fixed* prior, and nothing anywhere allows for its
+own uncertainty. It is fitted on as few as `reference_min_configs` = 20 configurations, and the
+floor counts **configurations**, not rows. `e7517df121d5` had 37 usable rows across 24 reference
+configurations — 1.5 rows each — which is enough to run a crossed fit and not nearly enough to
+estimate a variance component from it.
+
+**How it was caught.** Not by inspection. The per-run table showed two runs resolving to 1–2
+configurations in play, which is a strong claim, so the estimate they rested on was resampled:
+refit each reference population on two thirds of its configurations, 25 draws. Measured at the
+full prefix of each run (`dev/`, the profile behind the table below), the spread of the draws
+separates the runs cleanly even where the collapse count does not:
+
+| run | reference `sd_config` | IQR of the draws | Q3/Q1 | collapses | usable rows / configs |
+|---|---|---|---|---|---|
+| `34e15bd03838` | 0.0560 | 0.0561–0.0657 | 1.2 | 0/25 | 86 / 25 |
+| `f92e28ec6415` | 0.0251 | 0.0209–0.0299 | 1.4 | 0/25 | 50 / 25 |
+| `9a2664962c01` | 0.0246 | 0.0207–0.0284 | 1.4 | 1/25 | 86 / 24 |
+| `46b0d4b39c79` | 0.0273 | 0.0156–0.0333 | 2.1 | 4/25 | 32 / 20 |
+| `e7517df121d5` | **0.0517** | **0.0265–0.0970** | **3.7** | 5/25 | **37 / 24** |
+| `80cfbd7c27e9` | 0.0130 | 0.0053–0.0188 | 3.5 | 6/25 | 169 / 25 |
+
+`e7517df121d5` has 1.5 usable rows per reference configuration, and its quartiles span a factor
+of 3.7. The number is an artefact of which configurations happened to be in it.
+
+**Fix.** `reference_stability_draws` (25) runs that resampling inside `.reference_sd_config()`
+on every fit and refuses the estimate when more than a quarter of the draws collapse to the
+boundary. A row-count floor would **not** have worked: `80cfbd7c27e9` has 6.8 usable rows per
+reference configuration and is the *least* stable of the seven by collapse count, because its 25
+configurations are spread over 24 trials and few of them share one. Resampling measures whether
+the answer depends on the sample; a row count is a proxy for that, and a bad one here.
+
+**What the gate does and does not catch, measured.** On this store it refuses only
+`7d75f214584a`, whose reference fit returns a boundary 0 before the gate is reached. The other
+six sit at 0–24% collapse, under the quarter, so the gate passes them — including
+`e7517df121d5`. **It is a guard against a reference population that is genuinely too thin, not a
+discriminator among these seven**, and `e7517df121d5`'s 0.0517 is pinned with a factor-of-3.7
+uncertainty that nothing downstream allows for (SEARCH_ALGORITHM §15). The earlier claim that it
+"rejects exactly `e7517df121d5`" was wrong, and the next paragraph is why.
+
+**A second cause: the check was itself random.** The gate drew its subsamples from the ambient
+RNG, so it was a *coin flip re-rolled at every call* — the same reference population, unchanged,
+could pin 0.0517 on one iteration and fall back to the fitted value on the next, which is
+precisely the thrashing §7 exists to stop. It also meant the conclusion above was read off a
+single lucky draw: repeated eight times on the full store, that build refused `e7517df121d5`
+once. The draws are now seeded from a hash of the reference configurations and the caller's RNG
+stream is restored on exit, so the verdict is a function of the evidence and changes only when
+the evidence does. Separately, the subsample size was `max(reference_min_configs, 2n/3)`, which
+with 24 configurations and a floor of 20 could drop only four — the probe was weaker than the
+one the threshold was calibrated against. It is now `max(12, ceil(2n/3))`, independent of the
+acceptance floor.
+
+**Generalise.** Four compounding things, each reasonable alone. An estimate was promoted from
+*a number the fit reports* to *a number the search is told to believe*, and the promotion did not
+come with a check that the number could bear the weight. The sufficiency floor counted the wrong
+unit — levels rather than observations within level — which is the standard way a
+variance-component estimate gets trusted too early. The validation that caught it was a
+resample, not a formula: when the question is "does this estimate depend on which data I
+happened to get", perturbing the data answers it directly and no summary statistic does. And
+then the resample was installed as a *gate* while staying random, which turns a validation into
+a source of variance: **a stochastic accept/reject re-rolled on unchanged evidence is worse than
+no gate**, because the quantity it guards now flickers. Seed a validation from the evidence it
+is validating.
+
+**Lives in.** `R/optimizer.R::.reference_sd_config`, `settings.R::reference_stability_draws`,
+SEARCH_ALGORITHM §11.
+
+### 45. "A new run cannot see the old rows" was false, and it had shaped the design
+
+**Symptom.** `SEARCH_ALGORITHM` §13 stated that changing a run-defining setting "starts a fresh
+run against an empty slice, leaving the old rows in the archive, unreachable from the new run",
+and the whole argument about `run_id` being too broad rested on that cost. It is not true.
+
+**What is actually true.** Selection composes exactly three filters —
+`filter_evals_to_universe`, `filter_evals_to_scheme`, `filter_evals_to_build` — and **none of
+them consults `run_id`**. The store is one archive shared by every run, so a new run over the
+same domain, scheme and build reads every row the old run wrote. No migration and no new store
+is involved in changing the run signature.
+
+A changed `run_id` costs two real but different things: the trial universe is **re-resolved**
+against the live catalogue by `pin_trial_universe`, so if a trial has been renamed or become
+infeasible the new universe is smaller and `filter_evals_to_universe` *does* then gate rows out
+(this is the replicate-livelock failure of #32 in another guise); and the run record splits, so
+any analysis grouping by `run_id` sees one target's history as two runs.
+
+**Why the false version was plausible.** `run_id` is stamped on every row, there is a `runs`
+table keyed on it, `explain_run_mismatch()` exists to explain when it does not match, and the
+tooling groups by it everywhere. Everything about the surface says it is the unit of evidence.
+It is the unit of *provenance*, and nothing reads it when deciding what to learn from.
+
+**Generalise.** A column that appears on every row, has its own table and its own diagnostic
+function will be assumed to be load-bearing. Before designing around the cost of changing an
+identifier, grep for what reads it — the answer here was "the report and the dev scripts", which
+changes the decision completely. The fix was two settings' worth of code because the hard part
+had never been hard.
+
+**Lives in.** `R/store.R::.run_signature_keys`/`run_id_for`, `settings.R::run_identity`,
+SEARCH_ALGORITHM §13.

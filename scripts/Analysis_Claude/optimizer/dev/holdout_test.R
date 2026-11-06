@@ -147,7 +147,7 @@ slice <- src_evals |>
   filter_evals_to_scheme(scheme) |>
   filter_evals_to_build(s$build %||% OPTIMIZER_BUILD)
 if (length(universe)) slice <- filter_evals_to_universe(slice, universe)
-agg <- aggregate_scores(slice)
+agg <- aggregate_scores(slice, s)
 if (!nrow(agg)) stop("no configurations in the optimizer store's own domain/scheme/build slice")
 
 # THE ELIGIBLE POOL, then a RANDOM sample of it -- never the top-k.
@@ -386,7 +386,7 @@ hr("3. primary: mixed model, configuration nested in group")
 # replication across ~20 evaluations per configuration. A FIXED config term would alias group;
 # a random one does not. Failures are simply absent rows: lmer uses what exists and the trial
 # effect adjusts for WHICH trials each configuration completed.
-fw <- .fisher_weights(ok)
+fw <- .fisher_weights(ok, .min_test(s), .weight_cap(s))
 fit <- tryCatch(suppressMessages(lme4::lmer(
         .z ~ group + (1 | trial_id) + (1 | config_hash), data = fw, weights = .w)),
         error = function(err) { cat("  fit failed: ", conditionMessage(err), "\n"); NULL })

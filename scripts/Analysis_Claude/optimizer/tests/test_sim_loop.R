@@ -44,7 +44,7 @@ run_optimizer(settings)
 
 con   <- open_store(settings$db_path)
 evals <- read_evals(con)
-agg   <- aggregate_scores(evals)
+agg   <- aggregate_scores(evals, settings)
 inc   <- incumbent_config(agg, settings$incumbent_min_reps)
 
 # The objective this run was optimizing, evaluated exactly.

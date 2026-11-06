@@ -13,11 +13,14 @@
 
 library(tidyverse)
 
-# Feasibility floors on the GENOTYPED overlap, in ACCESSIONS -- not TRIALS, which
-# min_train_trials counts. Single-sourced so .best_panel selects against the same guard
-# run_pipeline applies.
+# Floors on the GENOTYPED overlap, in ACCESSIONS -- not TRIALS, which min_train_trials counts.
+# Single-sourced so .best_panel selects against the same guard run_pipeline applies.
+#
+# .min_test() reaches further than this file: score_predictions() declines a task below it and
+# aggregate_scores() declines a SCORE below it, so feasibility and usability cannot drift apart
+# and leave a band of evaluations that are paid for and then discarded. See settings.R.
 .min_train <- function(settings) as.integer(settings$min_train_acc %||% 20L)
-.min_test  <- function(settings) as.integer(settings$min_test_acc  %||% 5L)
+.min_test  <- function(settings) as.integer(settings$min_test_acc  %||% 10L)
 
 run_pipeline <- function(cfg, trial, scheme, settings, conn) {
   focal_id  <- trial$id
@@ -759,8 +762,7 @@ build_kernel <- function(cfg, dosage_list, need, settings = NULL, focal = NULL) 
 #
 # If nothing clears both floors, fall back to best focal coverage: without focal lines there is
 # nothing to predict. `focal` NULL gives pure max-coverage, for callers with no focal set.
-.best_panel_index <- function(dosage_list, need, focal = NULL,
-                              min_test = 5L, min_train = 20L) {
+.best_panel_index <- function(dosage_list, need, focal = NULL, min_test, min_train) {
   if (length(dosage_list) == 1) return(1L)
   cover <- vapply(dosage_list, function(d) length(intersect(rownames(d), need)), integer(1))
   if (is.null(focal) || !length(focal)) return(which.max(cover))
@@ -775,8 +777,7 @@ build_kernel <- function(cfg, dosage_list, need, settings = NULL, focal = NULL) 
 }
 
 # The protocol group to build a single-panel kernel from.
-.best_panel <- function(dosage_list, need, focal = NULL,
-                        min_test = 5L, min_train = 20L) {
+.best_panel <- function(dosage_list, need, focal = NULL, min_test, min_train) {
   dosage_list[[.best_panel_index(dosage_list, need, focal, min_test, min_train)]]
 }
 

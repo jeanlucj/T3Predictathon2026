@@ -5,7 +5,8 @@
 #
 #   suspect          infeasible(suspect = TRUE) -- the funnel looks like a BUG (data that
 #                    should be visible isn't) rather than genuine infeasibility. Diagnosed.
-#   too_few_overlap  score_predictions() got <5 accessions in predictions n observations.
+#   too_few_overlap  score_predictions() got fewer than settings$min_test_acc accessions in
+#                    predictions n observations.
 #                    The pipeline RAN; the cliff is one step downstream of
 #                    insufficient_geno_overlap. Diagnosed.
 #   non_finite       predictions and observations JOINED on name, but every pair had a
