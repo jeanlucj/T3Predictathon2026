@@ -23,6 +23,7 @@ Every row is a file in this directory, and every file in this directory has a ro
 | when | script | question it answers | what it costs | safe while workers evaluate |
 |---|---|---|---|---|
 | before | `prepare_indices.R` | fill the local wizards so the pipeline needs no BrAPI call | ~7,700 BrAPI calls; writes the cache | `--only=projects` only |
+| before | `plan_multiple.R` | is this multi-setting plan runnable — do its settings files exist and parse, is any holdout inside its own target domain, and does the sequence fit the wall clock? Also emits the plan as TSV for `container/t3multi_ceres.sh` | a second; reads no store and no network | **yes** |
 | before | `check_backup.R` | what would a run start from — what is in the durable backup, and how much of it is in the target domain? | temp copy of the store, one `lmer` + one surrogate fit | yes, not free |
 | during | `watch_workers.R` | which workers are alive, what is each one evaluating, and has anything died? | trivial; read-only handle on the **live** store | **yes** |
 | during | `watch_memory.sh` | what is the machine as a whole doing right now, per worker pid? | trivial; `ps` plus the OS counters, appends a TSV | **yes** |

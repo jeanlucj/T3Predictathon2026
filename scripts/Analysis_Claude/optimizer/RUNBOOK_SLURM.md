@@ -614,6 +614,66 @@ moving until the optimizer stops. Read the result any time with
 **`dev/HOLDOUT.md` is the full walkthrough**: what calls what, how to size the worker count,
 how many trials to use and why, and how to read the output.
 
+### Several domains in one job
+
+Six settings — three domains x two CV schemes, say — done by hand means being at the keyboard
+for five handovers over three weeks. `multiple_settings.R` is that sequence written down, and
+`container/submit_multiple.local.sh` runs it in one allocation.
+
+**What it is.** A plan holds `days_per_setting` and one sublist per setting: a
+`settings.local.XYZ.R` file naming what to optimize, and the trials held OUT of it.
+
+``` bash
+cd <repo>/scripts/Analysis_Claude/optimizer
+cp multiple_settings.R.example multiple_settings.R          # then edit it
+Rscript tools/plan_multiple.R --check                       # a second, and worth it every time
+cd container
+cp submit_multiple.local.sh.example submit_multiple.local.sh && chmod +x submit_multiple.local.sh
+./submit_multiple.local.sh
+```
+
+**What the job then does**, per row of the plan, in order: launch the workers with
+`OPTIMIZER_DOMAIN_SETTINGS` set to that row's settings file; let them run for that row's days;
+touch the stop file and wait for every worker to finish the evaluation it is inside; run
+`dev/holdout_test.R` on that row's holdouts against the same settings file. One store
+throughout — each setting reads only its own domain and scheme slice of it — and one cache,
+restored once instead of six times, which is the actual saving.
+
+**The invariant `--check` enforces.** A holdout must not be in its own setting's
+`target_domain$trials`. If it is, the optimizer trains on the trial the test then "holds out"
+and the comparison with the submissions means nothing. `tools/plan_multiple.R` refuses such a
+plan, along with a settings file that is missing or sets a non-run-defining key, a setting with
+no holdouts, and two settings sharing one file (the holdout store is named after it). It also
+prints the wall-clock arithmetic: `days_per_setting x settings` plus about a day per holdout
+test has to fit `TIME`.
+
+**It stops rather than being cut off.** Before each setting the driver reads the job's own end
+time and either shortens that setting's window to leave the holdout reserve, or stops the plan
+and says how many hours were left. A `t3opt` job is *meant* to be killed at the wall clock; this
+one is not, because being killed during the last holdout test would waste it.
+
+**Stopping it.** Two files, because there are two things to stop:
+
+| file | effect |
+|---|---|
+| `state/STOP_PLAN` | the graceful one: the current setting and its holdout test finish, then the plan ends |
+| `state/STOP` | stops the workers now. The driver uses this file itself at the end of every window, so touching it by hand ends the current setting early — and the driver then ends the plan rather than guessing you meant only that one setting. The holdout is skipped and the command to run it by hand is printed |
+
+`scancel` is the third option and loses only the evaluations in flight (median 29 min each).
+
+**One setting, no plan.** The same layering works without any of this:
+
+``` bash
+OPTIMIZER_DOMAIN_SETTINGS=settings.local.24Crk_CV0.R nohup Rscript run_optimizer.R &
+```
+
+`read_domain_settings()` restricts such a file to keys that can *identify* a run, so it cannot
+also move the store or the cache: those stay in `settings.local.R`, shared by every setting.
+
+**`t3multi` and `t3opt` must not run together.** Both want the same node-local store, and
+because the job names differ — deliberately, so neither queues behind the other — nothing stops
+you submitting both. `squeue -u "$USER"` first.
+
 ### Filling the wizard indices
 
 `tools/prepare_indices.R` is the one script here that is worth a batch job of

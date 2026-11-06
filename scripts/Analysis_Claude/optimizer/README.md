@@ -135,6 +135,16 @@ the second run reuses all genotypes the first cached under `cache/`. `state/repo
 records which scheme it optimized. (`schemes` is separate -- it only lists which schemes the
 diagnostics sanity-check.)
 
+**Several domains, or both schemes, in one go.** The same argument scales past two runs, and
+doing them by hand means being present at every handover. `multiple_settings.R` is a PLAN --
+how many days each setting gets, which `settings.local.XYZ.R` file defines it, and which trials
+are held out of it -- and `container/submit_multiple.local.sh` runs the sequence in one
+allocation, optimizing each setting and then testing it on its holdouts. Check the plan first
+with `Rscript tools/plan_multiple.R --check`; the walkthrough is RUNBOOK_SLURM.md §6 "Several
+domains in one job". A single run under one of those settings files needs no plan at all:
+`OPTIMIZER_DOMAIN_SETTINGS=settings.local.XYZ.R nohup Rscript run_optimizer.R &` layers it over
+`settings.local.R` exactly as the driver does.
+
 ## Reading the output (`state/report.md`)
 
 - **Incumbent** -- the current best pipeline (its six subtask choices) and its

@@ -1,6 +1,6 @@
 # `container/` — the Apptainer image, and submitting jobs that use it
 
-The files here group into seven jobs, below. Nothing is optional scaffolding: every one of them
+The files here group into eight jobs, below. Nothing is optional scaffolding: every one of them
 is referenced from somewhere else in the tree.
 
 **Build the image.**
@@ -48,6 +48,20 @@ durable backup every 100 keys, so resubmitting after a wall-clock kill skips wha
 | `holdout_ceres.sh` | the `sbatch` script for `dev/run_holdout.sh`. Sized like the optimizer's job, not the diagnostic's: every cell of the (configuration x trial) grid is a real evaluation. |
 | `submit_holdout.sh` | queues it. Arguments after `--` reach the R script — `-- --trials=<ids>` is required. |
 
+**Submit several optimizations in sequence** — one allocation, several target domains, each
+followed by its own held-out test.
+
+| file | what it is |
+|---|---|
+| `t3multi_ceres.sh` | the `sbatch` script and the driver. For each row of `../multiple_settings.R`: launch the workers with `OPTIMIZER_DOMAIN_SETTINGS` set to that row's settings file, let them run for that row's days, stop them, then run `dev/run_holdout.sh` on that row's holdouts. Measures its own remaining wall clock before each setting and shortens or stops rather than being cut off mid-test. |
+| `lib_submit_multiple.sh` | the submission mechanism. Source it, call `submit_multiple`. Reuses `lib_submit.sh`'s `_renviron_get`. |
+| `submit_multiple.local.sh.example` | copy to `submit_multiple.local.sh` (untracked). Values only, like `submit.local.sh.example`. |
+
+Validate the plan before committing an allocation to it —
+`Rscript tools/plan_multiple.R --check` prints the sequence, the wall-clock arithmetic, and
+refuses a plan whose holdout sits inside its own target domain. RUNBOOK_SLURM.md §6 "Several
+domains in one job" is the walkthrough.
+
 **Submit the diagnostic.**
 
 | file | what it is |
@@ -60,11 +74,15 @@ durable backup every 100 keys, so resubmitting after a wall-clock kill skips wha
 here, not just the optimizer's — a fresh clone that has only ever run the diagnostic still has
 to create it.
 
-**The job names are deliberately distinct** — `t3opt`, `t3diag`, `t3prep`, `t3hold` — because each
-wrapper passes `--dependency=singleton`. That serialises repeat submissions of the *same* kind
-(two diagnostics would contend for one node-local cache; two prewarms would fetch the same keys
-twice and flush the durable tree against each other) without letting any of them block a
-different kind.
+**The job names are deliberately distinct** — `t3opt`, `t3diag`, `t3prep`, `t3hold`, `t3multi` —
+because each wrapper passes `--dependency=singleton`. That serialises repeat submissions of the
+*same* kind (two diagnostics would contend for one node-local cache; two prewarms would fetch
+the same keys twice and flush the durable tree against each other) without letting any of them
+block a different kind.
+
+The one pair that distinctness does **not** protect: `t3opt` and `t3multi` both want the same
+node-local store, and because their names differ neither queues behind the other. Check with
+`squeue -u "$USER"` before submitting one while the other is going.
 
 **No container at all.**
 

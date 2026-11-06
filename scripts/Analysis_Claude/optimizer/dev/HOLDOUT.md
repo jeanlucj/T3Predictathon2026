@@ -204,6 +204,15 @@ otherwise share:
 - **Shared, and safe to share:** the optimizer's store (each job reads its own copy) and the
   durable cache (additive rsync).
 
+**Several domains one after another, optimization included.** The above runs holdout tests
+side by side on domains already optimized. To *optimize* several domains in sequence and test
+each one as it finishes, write the sequence into `multiple_settings.R` and submit
+`container/submit_multiple.local.sh`: it runs each setting's workers for a stated number of
+days, stops them, and calls `dev/run_holdout.sh` with that setting's `--settings=` and
+`--trials=` before moving on. `Rscript tools/plan_multiple.R --check` validates the plan --
+including that no holdout sits inside its own target domain, which is the one mistake that
+makes this whole document pointless. RUNBOOK_SLURM.md §6 "Several domains in one job".
+
 ## Where things are written
 
 | | |

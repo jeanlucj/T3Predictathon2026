@@ -1,0 +1,88 @@
+#!/bin/bash
+# submit_multiple.local.sh -- YOUR account and node sizing, for a MULTI-SETTING plan: several
+# optimization targets in sequence, each followed by its own held-out test. Copy this file once:
+#
+#   cd <repo>/scripts/Analysis_Claude/optimizer/container
+#   cp submit_multiple.local.sh.example submit_multiple.local.sh
+#   chmod +x submit_multiple.local.sh
+#   # edit the values below, then:
+#   ./submit_multiple.local.sh
+#
+# FIRST, write the plan and check it -- it costs a second and it is the only chance to catch a
+# holdout that sits inside its own target domain before three weeks of compute rests on it:
+#
+#   cd <repo>/scripts/Analysis_Claude/optimizer
+#   cp multiple_settings.R.example multiple_settings.R     # then edit
+#   Rscript tools/plan_multiple.R --check
+#
+# VALUES ONLY. Everything mechanical -- paths, validation, the sbatch flags -- lives in the
+# TRACKED container/lib_submit_multiple.sh, sourced at the bottom, and the sequencing lives in
+# the tracked container/t3multi_ceres.sh. That split matters: this file is gitignored, so
+# `git pull` never updates it, and a copy made months ago would keep submitting the way it did
+# then. If you want to change HOW submission works, edit lib_submit_multiple.sh, not this file.
+#
+# ONE PLAN AT A TIME. lib_submit_multiple.sh passes --dependency=singleton, so SLURM will not
+# start this job while an earlier one of the same name and user is going.
+#
+# NOT AT THE SAME TIME AS t3opt. A plan and an ordinary optimizer job want the same store on
+# the same node-local disk. The job names are deliberately different -- so neither queues
+# behind the other -- which means nothing stops you running both by mistake. Check first:
+#
+#   squeue -u "$USER" -o '%.10i %.10j %.2t %.10M'
+#
+# Extra arguments pass straight through to sbatch. A one-hour shakeout of a real plan, which is
+# the cheapest way to prove the settings files, the credentials and the holdout trial names:
+#
+#   MULTI_MIN_OPT_HOURS=0 HOLDOUT_RESERVE_HOURS=0 MULTI_SKIP_HOLDOUT=1 \
+#     ./submit_multiple.local.sh --qos=debug --time=01:00:00 --ntasks=4 --mem=200G
+#
+# Dry run -- prints the allocation it WOULD get, queues nothing:
+#
+#   ./submit_multiple.local.sh --test-only
+
+set -euo pipefail
+
+# ---- who you are ---------------------------------------------------------
+# sacctmgr -Pns show user format=account,defaultaccount
+ACCOUNT=CHANGEME
+
+# singleton keys on this name. Keep it stable, or the one-plan-at-a-time guarantee is lost.
+JOB_NAME=t3multi
+
+# ---- the plan ------------------------------------------------------------
+# Absolute, or relative to the optimizer root. The default is the usual copy, so leaving this
+# commented out is normal; set it to run a second plan without disturbing the first.
+# export MULTIPLE_SETTINGS=multiple_settings.R
+
+# ---- how big -------------------------------------------------------------
+# Memory is the binding resource, not cores: measured 19 GB median and 82 GB peak per worker.
+# MEM should be at least N_WORKERS x 82 GB. Raise the worker count only after
+# tools/report_memory.R shows real headroom -- SLURM kills a job that exceeds its allocation,
+# it does not throttle it.
+#
+# N_WORKERS and N_THREADS are exported because they must reach the JOB, through --export=ALL.
+export N_WORKERS=22
+export N_THREADS=1
+NTASKS=32
+MEM=1800G
+
+# The ONLY wall-clock declaration. Unlike t3opt, this job is NOT meant to be killed here: the
+# driver measures its own remaining time before each setting and stops rather than being cut
+# off mid-holdout. TIME must cover (days_per_setting x settings) + a day per holdout test;
+# `Rscript tools/plan_multiple.R --check` prints that arithmetic.
+TIME=21-00:00:00          # 3 weeks, the ceres maximum
+
+# ---- the holdout tests ---------------------------------------------------
+# Defaults are fine. Uncomment to change them; each is read by t3multi_ceres.sh.
+#
+# export HOLD_WORKERS=12            # default: N_WORKERS (same allocation, same memory sums)
+# export HOLD_EXTRA="--max-equal=12"   # extra dev/holdout_test.R arguments
+# export HOLDOUT_RESERVE_HOURS=24   # wall clock kept back for each holdout test
+# export MULTI_MIN_OPT_HOURS=2      # the shortest optimization window worth starting
+# export MULTI_SKIP_HOLDOUT=1       # optimize only; test later with submit_holdout.sh
+
+# ---- submit --------------------------------------------------------------
+# OPTIMIZER_HOME comes from .Renviron and REPO from this file's location; neither is set here,
+# so neither can drift out of step. See lib_submit_multiple.sh.
+. "$(cd "$(dirname "$0")" && pwd)/lib_submit_multiple.sh"
+submit_multiple "$@"

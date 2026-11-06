@@ -296,5 +296,21 @@ run_optimizer <- function(settings = optimizer_settings(), conn = NULL) {
 # file is source()d by a test or another script. At the top level of a script
 # run, sys.nframe() == 0; inside a source() call it is > 0.
 if (sys.nframe() == 0L && !interactive()) {
-  run_optimizer(optimizer_settings())
+  # OPTIMIZER_DOMAIN_SETTINGS names a SECOND override file -- settings.local.XYZ.R, layered
+  # over settings.local.R -- holding the domain this worker optimizes: typically
+  # target_domain and optimize_scheme. Unset means settings.local.R alone, as before.
+  #
+  # An environment variable rather than an argument because run_workers.sh launches every
+  # worker as a bare `Rscript run_optimizer.R`, and sbatch --export=ALL already carries the
+  # environment into the job: one export reaches all N workers and the launcher needs no
+  # change. read_domain_settings() restricts the file to keys that can IDENTIFY a run, so a
+  # domain file cannot also move the store or the cache out from under the others (R/store.R).
+  dom <- trimws(Sys.getenv("OPTIMIZER_DOMAIN_SETTINGS"))
+  if (nzchar(dom)) {
+    path <- if (startsWith(dom, "/")) dom else here::here(dom)
+    message("domain settings: ", path)
+    run_optimizer(optimizer_settings(extra = read_domain_settings(path)))
+  } else {
+    run_optimizer(optimizer_settings())
+  }
 }

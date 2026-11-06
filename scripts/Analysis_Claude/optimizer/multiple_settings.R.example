@@ -1,5 +1,54 @@
-# File to specify multiple settings to run sequentially
+# multiple_settings.R -- a PLAN: several optimization targets, run one after another, each
+# followed by its own held-out test. Copy this file once:
 #
+#   cd <repo>/scripts/Analysis_Claude/optimizer
+#   cp multiple_settings.R.example multiple_settings.R
+#   # edit the values below, then check them before committing a job to them:
+#   Rscript tools/plan_multiple.R --check
+#
+# WHAT IT IS FOR. One optimization answers one question: "what pipeline is best for THIS
+# domain, under THIS CV scheme?" Several domains, or both schemes on one domain, are several
+# runs. They share the store -- every evaluation ever run lives in evals.sqlite, and each run
+# reads only its own domain and scheme slice of it (docs/SEARCH_ALGORITHM.md section 4.1) -- so
+# running them in sequence inside one allocation costs nothing but wall clock, and the cache is
+# shared, which is where the real saving is. This file is that sequence.
+#
+# STRUCTURE. Two objects, both read by tools/plan_multiple.R:
+#
+#   days_per_setting             how long each setting optimizes before it is stopped
+#   setting_file_names_holdouts  one sublist per setting: a settings file, and its holdouts
+#
+# `setting_file_name` is a SECOND override file (settings.local.XYZ.R), layered over
+# settings.local.R, naming what this setting optimizes -- typically target_domain and
+# optimize_scheme. It defines `settings_override <- list(...)` exactly as settings.local.R does,
+# and read_domain_settings() (R/store.R) restricts it to keys that can IDENTIFY a run, so it
+# cannot also move the store, the cache or the node sizing. Those stay in settings.local.R,
+# where every setting shares them. The files are gitignored (settings.local.*.R), so copy them
+# to the cluster checkout yourself.
+#
+# `holdouts` are trials deliberately kept OUT of that file's target domain, to be predicted by
+# the optimized configurations afterwards. Without them an incumbent's score is a maximum over
+# noisy means on the trials it was selected on -- optimistic by construction, so it cannot be
+# compared with the five submitted seeds (docs/BACKGROUND.md sec. 4, dev/HOLDOUT.md).
+#
+# THE ONE INVARIANT. A holdout must not be in its own setting's target domain. If it is, the
+# optimizer will have trained on the trial the holdout test then "holds out", and the comparison
+# is worthless. `tools/plan_multiple.R` checks this and refuses a plan that breaks it, for every
+# domain file that names its trials explicitly.
+#
+# Two settings may share holdouts -- the CV0/CV00 pairs below do -- because a different scheme
+# is a different task. They may not share a settings FILE: the holdout store is named after it.
+#
+# WALL CLOCK. days_per_setting x (number of settings), plus about a day per holdout test, has
+# to fit the job's --time. `--check` prints that arithmetic. The driver also measures its own
+# remaining time before each setting and shortens or stops rather than being killed mid-test.
+#
+# THE SIX SETTINGS BELOW DO NOT FIT ONE JOB AS WRITTEN: 6 x 3 = 18 days optimizing plus 6 days
+# of holdout tests is 24, against a 21-day Ceres maximum. `--check` says so. Either drop
+# days_per_setting to 2 (12 + 6 = 18), or split the plan in two -- the CV0 settings in one job
+# and the CV00 settings in a second, which also gets you a complete scheme if the first is cut
+# short. The numbers below are left as they are because the arithmetic is the point.
+
 # How many days to run each setting
 days_per_setting <- 3
 
@@ -34,3 +83,7 @@ setting_file_names_holdouts <- list(
     holdouts = c("YT_Urb_25", "YT_Addie_23")
   )
 )
+
+# OPTIONAL, per sublist: `days = 5` overrides days_per_setting for that one setting. Omit it and
+# the global value applies, which is the usual case -- a domain whose universe is much larger
+# than the others is the reason it exists.
